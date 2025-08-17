@@ -1,0 +1,9 @@
+{
+  "username": "admin",
+  "password_hash": "26c749aae4e749de56d43c872cf9ec0ebcbf9040853431b08bc134e713fe26e1",
+  "is_default_password": false,
+  "created_at": "2025-07-08T16:38:54.918698",
+  "last_login": "2025-07-09T10:41:33.285716",
+  "login_attempts": 0,
+  "last_password_change": "2025-07-09T10:42:37.030784"
+}
