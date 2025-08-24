@@ -21,24 +21,31 @@ from flask import (
 )
 
 # --------------------------------------------------------------------------------------
-# Load environment from .env / .env.local (if present)
+# Load environment from .env / .env.local next to this file
 # --------------------------------------------------------------------------------------
+import os, sys
+from pathlib import Path
 try:
     from dotenv import load_dotenv
-    load_dotenv(dotenv_path=os.getenv("ENV_FILE", ".env"))
-    # .env.local (optional) overrides .env – convenient for dev overrides
-    load_dotenv(dotenv_path=os.getenv("ENV_FILE_LOCAL", ".env.local"), override=True)
-except Exception:
-    pass
+    BASE_DIR = Path(__file__).resolve().parent
+    env_main  = BASE_DIR / os.getenv("ENV_FILE", ".env")
+    env_local = BASE_DIR / os.getenv("ENV_FILE_LOCAL", ".env.local")
 
-# --------------------------------------------------------------------------------------
-# Windows console: prefer UTF-8 to avoid UnicodeEncodeError in logging
-# --------------------------------------------------------------------------------------
-try:
-    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
-except Exception:
-    pass
+    # load .env first
+    if env_main.exists():
+        load_dotenv(env_main, override=False)
+        print(f"[dotenv] Loaded: {env_main}")
+    else:
+        print(f"[dotenv] Not found: {env_main}")
+
+    # then .env.local to override (if present)
+    if env_local.exists():
+        load_dotenv(env_local, override=True)
+        print(f"[dotenv] Loaded: {env_local} (override)")
+    else:
+        print(f"[dotenv] Not found: {env_local}")
+except Exception as e:
+    print(f"[dotenv] Skipped: {e}")
 
 # --------------------------------------------------------------------------------------
 # Flask app + logging
