@@ -46,62 +46,6 @@ Edit
 
 ### 1) `.env` (do NOT commit)
 
-All sensitive settings live here. Example:
-
-```env
-# Flask
-SECRET_KEY=REPLACE_WITH_LONG_RANDOM_STRING
-
-# Primary node (example)
-PRIMARY_NODE_IP=10.0.0.90
-PRIMARY_NODE_USER=nsroot
-PRIMARY_NODE_PASS=nsroot
-PRIMARY_NODE_PROTOCOL=http
-PRIMARY_NODE_PORT=80
-
-# Secondary node (example)
-SECONDARY_NODE_IP=10.0.0.92
-SECONDARY_NODE_USER=nsroot
-SECONDARY_NODE_PASS=nsroot
-SECONDARY_NODE_PROTOCOL=http
-SECONDARY_NODE_PORT=80
-
-# NITRO
-NITRO_VERIFY_SSL=0
-NITRO_TIMEOUT_SECS=15
-
-# Next-Gen
-NEXTGEN_VERIFY_SSL=0
-NEXTGEN_TIMEOUT_SECS=15
-
-# HTTPS (optional)
-ENABLE_HTTPS=0
-SSL_CERT_FILE=cert.pem
-SSL_KEY_FILE=key.pem
-SECRET_KEY must be long and random. Generate with one of:
-
-python -c "import secrets; print(secrets.token_urlsafe(64))"
-
-openssl rand -hex 64
-
-2) auth_config.json
-Runtime config for nodes and default API mode hints (the app still auto-detects capabilities):
-
-json
-Copy
-Edit
-{
-  "api_mode": {
-    "primary": "nitro",
-    "secondary": "nitro"
-  },
-  "nodes": {
-    "primary": { "ip": "10.0.0.90", "port": 80, "protocol": "http" },
-    "secondary": { "ip": "10.0.0.92", "port": 80, "protocol": "http" }
-  }
-}
-If this file is missing, it is created on first run.
-
 To reset the dashboard’s admin password/policy, delete auth_config.json, start the app, log in, and set a new password from Change Password.
 
 Install & Run
@@ -246,3 +190,4 @@ Edit
 Sources
 
 Ask ChatGPT
+
