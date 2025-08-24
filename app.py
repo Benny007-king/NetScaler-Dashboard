@@ -13,6 +13,7 @@ import hashlib
 import logging
 from datetime import datetime
 from functools import wraps
+from pathlib import Path
 
 import requests
 from flask import (
@@ -23,22 +24,18 @@ from flask import (
 # --------------------------------------------------------------------------------------
 # Load environment from .env / .env.local next to this file
 # --------------------------------------------------------------------------------------
-import os, sys
-from pathlib import Path
 try:
     from dotenv import load_dotenv
     BASE_DIR = Path(__file__).resolve().parent
     env_main  = BASE_DIR / os.getenv("ENV_FILE", ".env")
     env_local = BASE_DIR / os.getenv("ENV_FILE_LOCAL", ".env.local")
 
-    # load .env first
     if env_main.exists():
         load_dotenv(env_main, override=False)
         print(f"[dotenv] Loaded: {env_main}")
     else:
         print(f"[dotenv] Not found: {env_main}")
 
-    # then .env.local to override (if present)
     if env_local.exists():
         load_dotenv(env_local, override=True)
         print(f"[dotenv] Loaded: {env_local} (override)")
@@ -124,7 +121,6 @@ def login_required(fn):
             if request.is_json:
                 return jsonify({'error': 'Authentication required', 'redirect': url_for('login')}), 401
             return redirect(url_for('login'))
-        # force change if default password still active
         if auth_config.get('is_default_password', False) and request.endpoint not in ("change_password", "logout"):
             if request.is_json:
                 return jsonify({'error': 'Password change required', 'redirect': url_for('change_password')}), 403
@@ -195,6 +191,18 @@ class NetScalerAPI:
         except Exception:
             return {'service': []}
 
+    def get_servicegroups(self):
+        try:
+            return self._get('/config/servicegroup')
+        except Exception:
+            return {'servicegroup': []}
+
+    def get_servicegroup_bindings(self):
+        try:
+            return self._get('/config/servicegroup_service_binding')
+        except Exception:
+            return {'servicegroup_service_binding': []}
+
     def get_system_stats(self):
         try:
             return self._get('/stat/ns')
@@ -224,11 +232,9 @@ class NetScalerAPI:
           3) POST /config/aaauser/<u>?action=unlock {"aaauser": {"username": "<u>"}}
           4) POST /config/systemuser?action=unlock {"systemuser": {"username": "<u>"}}
         """
-        # Attempt 1
         primary_payload = {"aaauser": {"username": username, "unlockAccount": True}}
         try:
             resp = self._post("/config/aaauser", primary_payload)
-            # Some builds return 200 + errorcode!=0; fallback if unlockAccount not supported
             if isinstance(resp, dict) and str(resp.get("errorcode", "0")) not in ("0", "", "None"):
                 msg = str(resp.get("message", "")).lower()
                 if ("unlockaccount" in msg) or ("invalid" in msg) or ("unknown" in msg):
@@ -236,16 +242,13 @@ class NetScalerAPI:
                 return resp
             return resp
         except Exception as primary_err:
-            # Attempt 2
             try:
                 return self._post("/config/aaauser?action=unlock", {"aaauser": {"username": username}})
             except Exception as e1:
-                # Attempt 3
                 try:
                     return self._post(f"/config/aaauser/{username}?action=unlock",
                                       {"aaauser": {"username": username}})
                 except Exception as e2:
-                    # Attempt 4 (local system admin, not AAA)
                     try:
                         return self._post("/config/systemuser?action=unlock",
                                           {"systemuser": {"username": username}})
@@ -329,16 +332,16 @@ def _int(v, default):
 
 NETSCALER_CONFIG = {
     'primary': {
-        'ip': os.getenv('NS_PRIMARY_IP', ''),              # required via .env
-        'username': os.getenv('NS_PRIMARY_USER', ''),      # required via .env
-        'password': os.getenv('NS_PRIMARY_PASS', ''),      # required via .env
+        'ip': os.getenv('NS_PRIMARY_IP', ''),
+        'username': os.getenv('NS_PRIMARY_USER', ''),
+        'password': os.getenv('NS_PRIMARY_PASS', ''),
         'port': _int(os.getenv('NS_PRIMARY_PORT', '80'), 80),
         'protocol': os.getenv('NS_PRIMARY_PROTO', 'http'),
     },
     'secondary': {
-        'ip': os.getenv('NS_SECONDARY_IP', ''),            # required via .env
-        'username': os.getenv('NS_SECONDARY_USER', ''),    # required via .env
-        'password': os.getenv('NS_SECONDARY_PASS', ''),    # required via .env
+        'ip': os.getenv('NS_SECONDARY_IP', ''),
+        'username': os.getenv('NS_SECONDARY_USER', ''),
+        'password': os.getenv('NS_SECONDARY_PASS', ''),
         'port': _int(os.getenv('NS_SECONDARY_PORT', '80'), 80),
         'protocol': os.getenv('NS_SECONDARY_PROTO', 'http'),
     }
@@ -373,7 +376,6 @@ def _is_nextgen_supported(version_str: str) -> bool:
 
 
 def detect_api_mode_for_node(node_key: str, cfg: dict):
-    # Env overrides
     if os.getenv("NEXTGEN_FORCE", "0").lower() in ("1", "true", "yes"):
         API_MODE[node_key] = 'nextgen'
         logger.info(f"[{node_key}] API mode forced to NEXTGEN via env")
@@ -383,13 +385,11 @@ def detect_api_mode_for_node(node_key: str, cfg: dict):
         logger.info(f"[{node_key}] API mode forced to NITRO via env")
         return
 
-    # If minimal config is missing, stay with NITRO (will likely fail later if called)
     if not cfg.get('ip') or not cfg.get('username') or not cfg.get('password'):
         logger.warning(f"[{node_key}] Missing IP/username/password; leaving API mode as 'nitro'")
         API_MODE[node_key] = 'nitro'
         return
 
-    # 1) Ask version using NITRO
     nitro = NetScalerAPI(cfg['ip'], cfg['username'], cfg['password'], cfg['port'], cfg['protocol'])
     version_str = None
     try:
@@ -401,7 +401,6 @@ def detect_api_mode_for_node(node_key: str, cfg: dict):
         logger.warning(f"[{node_key}] Could not get version via NITRO: {e}")
 
     if version_str and _is_nextgen_supported(version_str):
-        # 2) Try Next-Gen login with HTTPS (port/proto via env)
         try:
             ng = NextGenAPI(
                 cfg['ip'], cfg['username'], cfg['password'],
@@ -470,7 +469,6 @@ def _build_node_overview(node_key: str) -> dict:
     roles, _ = _roles_from_ha()
     role = roles.get(ip, 'Unknown')
 
-    # Try to extract version
     version = None
     try:
         vi = nitro.get_version_info()
@@ -706,17 +704,22 @@ def api_services():
     if not node:
         try:
             nitro = get_nitro('primary')
-            data = nitro.get_services() or {}
-            return jsonify({'connected': True, 'data': {'service': data.get('service', []) if isinstance(data, dict) else []}})
+            svc  = nitro.get_services() or {}
+            sgrp = nitro.get_servicegroups() or {}
+            return jsonify({'connected': True, 'data': {
+                'service': svc.get('service', []) if isinstance(svc, dict) else [],
+                'servicegroup': sgrp.get('servicegroup', []) if isinstance(sgrp, dict) else []
+            }})
         except Exception:
-            return jsonify({'connected': False, 'data': {'service': []}})
+            return jsonify({'connected': False, 'data': {'service': [], 'servicegroup': []}})
     mode = API_MODE.get(node, 'nitro')
     if mode == 'nextgen':
         try:
             ng = get_nextgen(node)
             ng.login()
             apps = ng.list_applications()
-            return jsonify({'node': node, 'api_mode': 'nextgen', 'service': [], 'applications': apps})
+            return jsonify({'node': node, 'api_mode': 'nextgen',
+                            'service': [], 'servicegroup': [], 'applications': apps})
         except Exception:
             pass
         finally:
@@ -725,9 +728,11 @@ def api_services():
             except Exception:
                 pass
     nitro = get_nitro(node)
-    data = nitro.get_services()
+    svc  = nitro.get_services() or {}
+    sgrp = nitro.get_servicegroups() or {}
     return jsonify({'node': node, 'api_mode': 'nitro',
-                    **({'service': data.get('service', [])} if isinstance(data, dict) else {'service': []})})
+                    'service': svc.get('service', []) if isinstance(svc, dict) else [],
+                    'servicegroup': sgrp.get('servicegroup', []) if isinstance(sgrp, dict) else []})
 
 # Native Next-Gen endpoints (optional, richer data)
 @app.route('/api/applications')
@@ -861,7 +866,6 @@ if __name__ == '__main__':
     logger.info(f"Next-Gen timeout (s): {os.getenv('NEXTGEN_TIMEOUT_SECS', '15')}")
     logger.info("========================================")
 
-    # Optional HTTPS for the Flask dev server
     use_ssl = os.getenv('APP_SSL', '0').lower() in ('1', 'true', 'yes')
     ssl_context = 'adhoc' if use_ssl else None
 
