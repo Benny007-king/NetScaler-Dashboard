@@ -24,6 +24,7 @@ Tabs included: **Overview**, **Applications / Services**, **Failover History**, 
 
 ## Project Structure
 
+```
 netscaler-dashboard/
 ├── app.py
 ├── requirements.txt
@@ -31,163 +32,153 @@ netscaler-dashboard/
 ├── auth_config.json
 ├── netscaler_complete.log
 ├── templates/
-│ ├── dashboard.html
-│ ├── login.html
-│ └── change_password.html
+│   ├── dashboard.html
+│   ├── login.html
+│   └── change_password.html
 └── README.md
-
-makefile
-Copy
-Edit
+```
 
 ---
 
 ## Configuration
 
-### 1) `.env` (do NOT commit)
+> Environment variables are expected to be provided via a `.env` file, but the exact keys and values are **omitted here** per your request.  
+> Keep secrets in `.env` and never commit that file.
 
-To reset the dashboard’s admin password/policy, delete auth_config.json, start the app, log in, and set a new password from Change Password.
+### `auth_config.json`
 
-Install & Run
-Install dependencies:
+Runtime config for nodes and default API mode hints (the app also auto-detects capabilities at runtime):
 
-bash
-Copy
-Edit
-pip install -r requirements.txt
-Create/adjust .env and auth_config.json per the examples above.
+```json
+{
+  "api_mode": {
+    "primary": "nitro",
+    "secondary": "nitro"
+  },
+  "nodes": {
+    "primary": { "ip": "10.0.0.90", "port": 80, "protocol": "http" },
+    "secondary": { "ip": "10.0.0.92", "port": 80, "protocol": "http" }
+  }
+}
+```
 
-Start:
+- If this file is missing, it is created on first run.
+- To reset the dashboard’s admin password/policy, delete `auth_config.json`, start the app, log in, and set a new password from **Change Password**.
 
-bash
-Copy
-Edit
-python app.py
-If ENABLE_HTTPS=1 and SSL_CERT_FILE/SSL_KEY_FILE are valid, the server starts over HTTPS.
+---
 
-Open http://127.0.0.1:5000 (or https://... accordingly).
+## Install & Run
 
-Windows console note:
-If you ever see Unicode logging issues in classic cmd.exe, set:
+1. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
 
-bat
-Copy
-Edit
+2. Provide your environment variables in `.env` (not documented here) and adjust `auth_config.json` as needed.
+
+3. Start:
+   ```bash
+   python app.py
+   ```
+   - If HTTPS is enabled via your environment (certificate + key), the server starts over HTTPS.
+   - Open `http://127.0.0.1:5000` (or `https://...` accordingly).
+
+**Windows console note:**  
+If you ever see Unicode logging issues in classic `cmd.exe`, set:
+```bat
 set PYTHONIOENCODING=utf-8
+```
 (Or use PowerShell.)
 
-Using the Dashboard
-Overview
-System stats, versions, HA roles, CPU/Mem, HTTP rates.
+---
 
-HA table with status, sync, and route monitor state.
+## Using the Dashboard
 
-The capability bar shows the active API mode per node (nextgen / nitro).
+### Overview
+- System stats, versions, HA roles, CPU/Mem, HTTP rates.
+- HA table with status, sync, and route monitor state.
+- The capability bar shows the active API mode per node (`nextgen` / `nitro`).
 
-Applications & Services
-Next-Gen mode: Applications from the Next-Gen API.
+### Applications & Services
+- **Next-Gen** mode: Applications from the Next-Gen API.
+- **NITRO** mode: LB vservers and Services / Service Groups from NITRO.
 
-NITRO mode: LB vservers and Services / Service Groups from NITRO.
+### Failover History
+- Two date pickers (From/To). The pop-up stays open until you click **Apply** or **Cancel**.
+- Filter by Type (Automatic / Manual / Failure / Role change).
+- **Search** refreshes the table; **Export CSV** downloads results (when enabled server-side).
 
-Failover History
-Two date pickers (From/To). The pop-up stays open until you click Apply or Cancel.
+### User Sessions
+- Date range, User, Type (Web/VPN/Workspace), and Status (Active/Terminated).
+- **Search** and **Export CSV**.
 
-Filter by Type (Automatic / Manual / Failure / Role change).
+### Unlock Users
+- Select node (primary/secondary), enter username, click **Unlock**.
+- Uses NITRO `/nitro/v1/config/aaauser`, with automatic fallback to `?action=unlock`.
 
-Search refreshes the table; Export CSV downloads results (when enabled server-side).
+---
 
-User Sessions
-Date range, User, Type (Web/VPN/Workspace), and Status (Active/Terminated).
+## REST Endpoints (summary)
 
-Search and Export CSV.
+**Capabilities & system**
+- `GET /api/caps` — Next-Gen/NITRO capability report per node.
+- `GET /api/system-stats`
+- `GET /api/ha-status`
 
-Unlock Users
-Select node (primary/secondary), enter username, click Unlock.
+**Apps/Services**
+- `GET /api/applications?node=primary|secondary`  _(Next-Gen)_
+- `GET /api/lb-vservers?node=...`                   _(NITRO)_
+- `GET /api/services?node=...`                      _(NITRO)_
 
-Uses NITRO /nitro/v1/config/aaauser, with automatic fallback to ?action=unlock.
+**Failover**
+- `GET /api/failover-history?from=ISO&to=ISO&type=&node=...`
+- `GET /api/export/failover-history`  _(CSV)_
 
-REST Endpoints (summary)
-Capabilities & system
+**User Sessions**
+- `GET /api/user-sessions?from=ISO&to=ISO&user=&type=&status=&node=...`
+- `GET /api/export/user-sessions`      _(CSV)_
 
-GET /api/caps — Next-Gen/NITRO capability report per node.
+**Actions**
+- `POST /api/unlock-user`
+  ```json
+  { "node": "primary", "username": "user1" }
+  ```
 
-GET /api/system-stats
+---
 
-GET /api/ha-status
+## Security
 
-Apps/Services
+- Keep secrets in `.env`; do not hard-code credentials.
+- Optional local HTTPS (certificate + key).
+- Restrict access to NetScaler management networks (firewall/allowlist).
 
-GET /api/applications?node=primary|secondary (Next-Gen)
+---
 
-GET /api/lb-vservers?node=... (NITRO)
+## Troubleshooting
 
-GET /api/services?node=... (NITRO)
+- **Applications tab empty / disabled look:** The node likely does not support Next-Gen (cap bar shows `nitro`). In NITRO mode you’ll see LB vservers/Services instead.
+- **No Failover / Sessions listed:** Verify the selected date range. Empty results can be normal if there were no events or sessions in that window.
+- **SSL verification errors in lab:** Temporarily disable verification via env (not documented here).
+- **Secondary name shows as `node-2`:** The UI displays names as provided by the API; if the device doesn’t return a friendly label, a fallback like `node-2` is shown.
 
-Failover
+---
 
-GET /api/failover-history?from=ISO&to=ISO&type=&node=...
+## Logging
 
-GET /api/export/failover-history (CSV)
+- Runtime logs go to stdout and to `netscaler_complete.log` by default.
+- For production, prefer running behind a process manager (e.g., `gunicorn`, `supervisor`) and reverse proxy.
 
-User Sessions
+---
 
-GET /api/user-sessions?from=ISO&to=ISO&user=&type=&status=&node=...
+## Production Recommendations
 
-GET /api/export/user-sessions (CSV)
+- Reverse proxy (Nginx/Apache) with a real certificate.
+- Gunicorn/uWSGI instead of Flask dev server.
+- Persist historical data (failover/sessions) in a proper datastore if you need long-term reports.
+- CI/CD and basic tests as needed.
 
-Actions
+---
 
-POST /api/unlock-user
+## License
 
-json
-Copy
-Edit
-{ "node": "primary", "username": "user1" }
-Security
-Keep secrets in .env; do not hard-code credentials.
-
-Optional local HTTPS via ENABLE_HTTPS=1 and certificate/key files.
-
-Restrict access to NetScaler management networks (firewall/allowlist).
-
-Troubleshooting
-Applications tab empty / disabled look: The node likely does not support Next-Gen (cap bar shows nitro). In NITRO mode you’ll see LB vservers/Services instead.
-
-No Failover / Sessions listed: Check the selected date range. Empty results can be normal if there were no events or sessions in that window.
-
-SSL verification errors in lab: Set NITRO_VERIFY_SSL=0 / NEXTGEN_VERIFY_SSL=0 for testing.
-
-Secondary name shows as node-2: The UI displays names as provided by the API; if the device doesn’t return a human-friendly label, a fallback like node-2 is shown. Adjust naming in your environment if desired.
-
-Logging
-Runtime logs go to stdout and to netscaler_complete.log by default.
-
-For production, prefer running behind a process manager (e.g., gunicorn, supervisor) and reverse proxy.
-
-Production Recommendations
-Run behind Nginx/Apache with a real certificate.
-
-Use Gunicorn/uWSGI instead of Flask’s dev server.
-
-Persist historical data (failover/sessions) in a proper datastore if you need long-term reports.
-
-Add CI/CD and basic tests as needed.
-
-License
 Private / Internal. All rights reserved by the repository owner.
-
-makefile
-Copy
-Edit
-
-::contentReference[oaicite:0]{index=0}
-
-
-
-
-
-
-Sources
-
-Ask ChatGPT
-
