@@ -45,6 +45,15 @@ except Exception as e:
     print(f"[dotenv] Skipped: {e}")
 
 # --------------------------------------------------------------------------------------
+# (Optional) Set console encoding to UTF-8 on Windows to avoid UnicodeEncodeError
+# --------------------------------------------------------------------------------------
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+    sys.stderr.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
+# --------------------------------------------------------------------------------------
 # Flask app + logging
 # --------------------------------------------------------------------------------------
 app = Flask(__name__)
@@ -220,6 +229,20 @@ class NetScalerAPI:
             return self._get('/config/hanode')
         except Exception:
             return {'hanode': []}
+
+    def get_hostname(self):
+        """Return device hostname (nshostname)."""
+        try:
+            res = self._get('/config/nshostname')
+            if isinstance(res, dict):
+                obj = res.get('nshostname')
+                if isinstance(obj, list) and obj:
+                    obj = obj[0]
+                if isinstance(obj, dict):
+                    return obj.get('hostname') or obj.get('name')
+        except Exception:
+            pass
+        return None
 
     # AAA unlock with robust fallbacks
     def unlock_user(self, username: str) -> dict:
@@ -595,15 +618,51 @@ def api_system_stats():
 @login_required
 def api_ha_status():
     node = request.args.get('node')
+
+    # Build hostname map (IP -> hostname) from both nodes
+    hostnames = {}
+    for nk in ('primary', 'secondary'):
+        try:
+            nit = get_nitro(nk)
+            hn = nit.get_hostname()
+            if hn:
+                hostnames[nit.ip] = hn
+        except Exception:
+            pass
+
+    def enrich(nodes):
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            ip = n.get('ipaddress') or n.get('ip') or n.get('nsip')
+            # Inject hostname as name if missing
+            if ip and not n.get('name') and hostnames.get(ip):
+                n['name'] = hostnames[ip]
+            # Last-resort fallback: use role to derive label
+            if not n.get('name'):
+                st = str(n.get('state', '')).upper()
+                n['name'] = 'Primary' if 'PRIMARY' in st else ('Secondary' if 'SECONDARY' in st else (hostnames.get(ip) or 'node'))
+        return nodes
+
     if node:
         nitro = get_nitro(node)
-        data = nitro.get_ha_status()
-        return jsonify({'node': node, 'api_mode': API_MODE.get(node, 'nitro'),
-                        'hanode': data.get('hanode', []) if isinstance(data, dict) else []})
+        data = nitro.get_ha_status() or {}
+        nodes = data.get('hanode', []) if isinstance(data, dict) else []
+        return jsonify({
+            'node': node,
+            'api_mode': API_MODE.get(node, 'nitro'),
+            'hanode': enrich(nodes)
+        })
+
     roles, raw = _roles_from_ha()
+    nodes = raw.get('hanode', []) if isinstance(raw, dict) else []
     primary = _build_node_overview('primary')
     secondary = _build_node_overview('secondary')
-    return jsonify({'primary': primary, 'secondary': secondary, 'hanode': raw.get('hanode', [])})
+    return jsonify({
+        'primary': primary,
+        'secondary': secondary,
+        'hanode': enrich(nodes)
+    })
 
 
 @app.route('/api/system-info')
