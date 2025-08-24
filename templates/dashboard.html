@@ -7,15 +7,17 @@
   <style>
     :root {
       --bg:#0b1220; --panel:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#60a5fa; --success:#34d399; --danger:#f87171; --warn:#fbbf24;
-      --border:#1f2937; --chip:#0ea5e9;
+      --border:#1f2937; --chip:#0ea5e9; --input:#0f172a;
     }
-    *{box-sizing:border-box} body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text)}
+    *{box-sizing:border-box}
+    body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text)}
     header{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border); background:linear-gradient(180deg,#0b1220,#0b1220 60%,#0e1729)}
     .brand{display:flex; gap:10px; align-items:center; font-weight:700; letter-spacing:.2px}
     .brand .dot{width:10px;height:10px;border-radius:999px;background:var(--accent);display:inline-block}
     .sub{font-size:12px;color:var(--muted)}
     .controls{display:flex; gap:10px; align-items:center}
-    select,button,input{background:#0f172a; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:8px 10px}
+    select,button,input{background:var(--input); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:8px 10px}
+    input[readonly]{cursor:pointer}
     button.primary{background:var(--accent); border-color:#2563eb; color:#081225; font-weight:600}
     main{padding:16px}
     .tabs{display:flex; gap:8px; border-bottom:1px solid var(--border)}
@@ -35,6 +37,27 @@
     .hidden{display:none}
     .spacer{height:8px}
     .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background:#0b1a2c; border:1px solid #1c314f; padding:2px 6px; border-radius:6px; font-size:12px}
+
+    /* DateRange Picker */
+    .dp-input{min-width:220px}
+    .dp-wrap{position:relative; display:flex; gap:6px; align-items:center}
+    .iconBtn{padding:8px 10px; border-radius:10px}
+    .dp{position:fixed; z-index:9999; background:#0c1426; border:1px solid var(--border); border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.4); width:320px; padding:10px}
+    .dp.hidden{display:none}
+    .dp-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px}
+    .dp-header button{padding:6px 10px; border-radius:8px}
+    .dp-title{font-weight:600}
+    .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px}
+    .cal-grid .dow{font-size:12px; color:var(--muted); text-align:center; padding:4px 0}
+    .cal-grid .day{padding:6px 0; text-align:center; border-radius:8px; cursor:pointer; user-select:none}
+    .day:hover{background:#12203a}
+    .day.disabled{opacity:.35; cursor:default}
+    .day.selected{background:#1e3a8a}
+    .dp-footer{display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:10px}
+    .dp-footer .time{display:flex; gap:6px; align-items:center}
+    .dp-footer select{padding:6px 8px; border-radius:8px}
+    .dp-quick{display:flex; gap:6px; margin-top:6px}
+    .dp-quick button{padding:4px 8px; border-radius:8px; font-size:12px}
   </style>
 </head>
 <body>
@@ -46,7 +69,7 @@
       <option value="primary">primary</option>
       <option value="secondary">secondary</option>
     </select>
-    <button id="refreshBtn" class="primary">Refresh</button>
+    <button id="refreshBtn" class="primary" type="button">Refresh</button>
   </div>
 </header>
 <main>
@@ -122,18 +145,27 @@
       <div class="row" style="margin-bottom:10px">
         <strong>Filters:</strong>
         <label class="muted">From</label>
-        <input id="failFrom" type="datetime-local" />
+        <div class="dp-wrap">
+          <input id="failFrom" type="hidden" />
+          <input id="failFromDisplay" class="dp-input" type="text" placeholder="dd/mm/yyyy hh:mm" readonly />
+          <button class="iconBtn" id="failFromBtn" title="Pick date" type="button">📅</button>
+        </div>
         <label class="muted">To</label>
-        <input id="failTo" type="datetime-local" />
+        <div class="dp-wrap">
+          <input id="failTo" type="hidden" />
+          <input id="failToDisplay" class="dp-input" type="text" placeholder="dd/mm/yyyy hh:mm" readonly />
+          <button class="iconBtn" id="failToBtn" title="Pick date" type="button">📅</button>
+        </div>
         <label class="muted">Type</label>
         <select id="failType">
           <option value="">All</option>
           <option value="automatic">Automatic</option>
           <option value="manual">Manual</option>
           <option value="failure">Failure</option>
+          <option value="role-change">Role change</option>
         </select>
-        <button id="failSearch" class="primary">Search</button>
-        <button id="failExport">Export CSV</button>
+        <button id="failSearch" class="primary" type="button">Search</button>
+        <button id="failExport" type="button">Export CSV</button>
       </div>
       <table>
         <thead>
@@ -155,9 +187,17 @@
       <div class="row" style="margin-bottom:10px">
         <strong>Filters:</strong>
         <label class="muted">From</label>
-        <input id="sessFrom" type="datetime-local" />
+        <div class="dp-wrap">
+          <input id="sessFrom" type="hidden" />
+          <input id="sessFromDisplay" class="dp-input" type="text" placeholder="dd/mm/yyyy hh:mm" readonly />
+          <button class="iconBtn" id="sessFromBtn" title="Pick date" type="button">📅</button>
+        </div>
         <label class="muted">To</label>
-        <input id="sessTo" type="datetime-local" />
+        <div class="dp-wrap">
+          <input id="sessTo" type="hidden" />
+          <input id="sessToDisplay" class="dp-input" type="text" placeholder="dd/mm/yyyy hh:mm" readonly />
+          <button class="iconBtn" id="sessToBtn" title="Pick date" type="button">📅</button>
+        </div>
         <label class="muted">User</label>
         <input id="sessUser" type="text" placeholder="user@domain" />
         <label class="muted">Type</label>
@@ -173,8 +213,8 @@
           <option value="active">Active</option>
           <option value="terminated">Terminated</option>
         </select>
-        <button id="sessSearch" class="primary">Search</button>
-        <button id="sessExport">Export CSV</button>
+        <button id="sessSearch" class="primary" type="button">Search</button>
+        <button id="sessExport" type="button">Export CSV</button>
       </div>
       <table>
         <thead>
@@ -205,13 +245,39 @@
         </select>
         <label class="muted">Username</label>
         <input id="unlockUsername" type="text" placeholder="user1" />
-        <button id="unlockBtn" class="primary">Unlock</button>
+        <button id="unlockBtn" class="primary" type="button">Unlock</button>
       </div>
       <div id="unlockMsg" class="muted" style="min-height:20px"></div>
       <div class="hint">Note: operation uses NITRO <code>/nitro/v1/config/aaauser</code> with automatic fallback to <code>?action=unlock</code>.</div>
     </div>
   </section>
 </main>
+
+<!-- Date Picker Popover -->
+<div id="datePicker" class="dp hidden" role="dialog" aria-modal="true">
+  <div class="dp-header">
+    <button id="dpPrev" title="Prev month" type="button">‹</button>
+    <div class="dp-title" id="dpTitle">Month YYYY</div>
+    <button id="dpNext" title="Next month" type="button">›</button>
+  </div>
+  <div class="cal-grid" id="dpGrid"></div>
+  <div class="dp-quick">
+    <button data-range="24h" type="button">Last 24h</button>
+    <button data-range="7d" type="button">Last 7d</button>
+    <button data-range="today" type="button">Today</button>
+    <button data-clear="1" type="button">Clear</button>
+  </div>
+  <div class="dp-footer">
+    <div class="time">
+      <span class="muted">Time</span>
+      <select id="dpHour"></select>:<select id="dpMin"></select>
+    </div>
+    <div>
+      <button id="dpCancel" type="button">Cancel</button>
+      <button id="dpApply" class="primary" type="button">Apply</button>
+    </div>
+  </div>
+</div>
 
 <script>
 const state = {
@@ -224,6 +290,7 @@ const state = {
 function $(sel){return document.querySelector(sel)}
 function $all(sel){return Array.from(document.querySelectorAll(sel))}
 
+/* ---------- helpers ---------- */
 async function getJSON(url, opts){
   const res = await fetch(url, {headers:{'Accept':'application/json'}, ...(opts||{})});
   const text = await res.text();
@@ -237,7 +304,10 @@ function qs(params){
     .map(([k,v])=>`${esc(k)}=${esc(v)}`)
     .join('&');
 }
+function fmt(v){ if(!v) return ''; try{ return new Date(v).toLocaleString(); }catch(e){ return String(v); } }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
+/* ---------- tabs + caps ---------- */
 function setActiveTab(name){
   $all('.tab').forEach(t=>{
     const active = t.dataset.tab===name;
@@ -262,7 +332,6 @@ async function fetchCaps(){
   $('#capsLine').innerHTML = `Capabilities — primary: <span class="kbd">${p}</span>, secondary: <span class="kbd">${s}</span>`;
   updateAppsTabAvailability();
 }
-
 function updateAppsTabAvailability(){
   const mode = state.apiModes[state.node] || 'nitro';
   const note = $('#appsNotice');
@@ -275,12 +344,12 @@ function updateAppsTabAvailability(){
   }
 }
 
+/* ---------- Overview ---------- */
 async function loadOverview(){
   const [statsAll, haAll] = await Promise.all([
     getJSON('/api/system-stats'),
     getJSON('/api/ha-status')
   ]);
-
   const get = (obj, keys, def='')=>{
     for(const k of keys){ if(obj && obj[k]!==undefined && obj[k]!==null) return obj[k]; }
     return def;
@@ -349,10 +418,10 @@ async function loadOverview(){
   }
 }
 
+/* ---------- Applications / Services ---------- */
 async function loadApplications(){
   const mode = state.apiModes[state.node] || 'nitro';
-  const chipEl = $('#appsMode');
-  if (chipEl) chipEl.textContent = mode;
+  const chipEl = $('#appsMode'); if (chipEl) chipEl.textContent = mode;
 
   if(mode === 'nextgen'){
     const r = await getJSON(`/api/applications?node=${encodeURIComponent(state.node)}`);
@@ -390,7 +459,6 @@ async function loadApplications(){
     return;
   }
 
-  // Fallback for NITRO: show LB vservers as "applications"
   const r = await getJSON(`/api/lb-vservers?node=${encodeURIComponent(state.node)}`);
   if(!r.ok){
     $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">Failed to load LB vservers (HTTP ${r.status})</td></tr>`;
@@ -467,6 +535,14 @@ async function loadServices(){
   $('#svcTable').innerHTML = rowsSvc.concat(rowsGrp).join('');
 }
 
+/* ---------- Failover ---------- */
+function collectFailoverFilters(){
+  return {
+    from: $('#failFrom').value || '',
+    to:   $('#failTo').value   || '',
+    type: $('#failType').value
+  };
+}
 async function loadFailover(){
   const node = state.node;
   const p = collectFailoverFilters();
@@ -482,13 +558,13 @@ async function loadFailover(){
     return;
   }
   const rows = arr.map((e,i)=>{
-    const ts = fmt(e.timestamp || e.time || e.occurred_at || e.when);
+    const ts = (e.timestamp || e.time || e.occurred_at || e.when);
     const typ = (e.type || e.eventType || '').toString();
     const reason = (e.reason || e.cause || '').toString();
-    const role = (e.role_change || e.role || '').toString();
+    const role = (e.role_change || (e.from && e.to ? `${e.from} → ${e.to}` : '')).toString();
     return `<tr>
       <td class="muted">${i+1}</td>
-      <td>${escapeHtml(ts)}</td>
+      <td>${escapeHtml(new Date(ts).toLocaleString())}</td>
       <td>${escapeHtml(typ)}</td>
       <td>${escapeHtml(reason)}</td>
       <td>${escapeHtml(role)}</td>
@@ -497,6 +573,16 @@ async function loadFailover(){
   $('#failTable').innerHTML = rows;
 }
 
+/* ---------- Sessions (placeholder) ---------- */
+function collectSessionFilters(){
+  return {
+    from: $('#sessFrom').value || '',
+    to:   $('#sessTo').value   || '',
+    user: $('#sessUser').value.trim(),
+    type: $('#sessType').value,
+    status: $('#sessStatus').value
+  };
+}
 async function loadSessions(){
   const node = state.node;
   const p = collectSessionFilters();
@@ -519,7 +605,7 @@ async function loadSessions(){
     const dur = s.duration || s.elapsed || '';
     const ip = s.client_ip || s.ip || s.src || '';
     const nodeName = s.node || s.device || '';
-    const start = fmt(s.start_time || s.started_at || s.login_time || '');
+    const start = (s.start_time || s.started_at || s.login_time || '');
     const cls = /active|up/i.test(status)? 'ok' : /term|down|fail/i.test(status)? 'bad' : 'warn';
     return `<tr>
       <td class="muted">${i+1}</td>
@@ -529,44 +615,168 @@ async function loadSessions(){
       <td>${escapeHtml((dur+'')||'')}</td>
       <td>${escapeHtml(ip+'')}</td>
       <td>${escapeHtml(nodeName+'')}</td>
-      <td>${escapeHtml(start+'')}</td>
+      <td>${escapeHtml(new Date(start).toLocaleString())}</td>
     </tr>`
   }).join('');
   $('#sessTable').innerHTML = rows;
 }
 
-function collectFailoverFilters(){
-  return {
-    from: toISO($('#failFrom').value),
-    to: toISO($('#failTo').value),
-    type: $('#failType').value
-  };
-}
-function collectSessionFilters(){
-  return {
-    from: toISO($('#sessFrom').value),
-    to: toISO($('#sessTo').value),
-    user: $('#sessUser').value.trim(),
-    type: $('#sessType').value,
-    status: $('#sessStatus').value
-  };
-}
-function toISO(v){ if(!v) return ''; const d = new Date(v); return isNaN(d)? '': d.toISOString(); }
-function fmt(v){ if(!v) return ''; try{ return new Date(v).toLocaleString(); }catch(e){ return String(v); } }
-function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
+/* ---------- Date Picker logic ---------- */
+const dp = {
+  el: $('#datePicker'),
+  grid: $('#dpGrid'),
+  title: $('#dpTitle'),
+  hour: $('#dpHour'),
+  min: $('#dpMin'),
+  target: null,
+  display: null,
+  view: new Date(),
+  selected: null
+};
+dp.el.addEventListener('click', (e)=> e.stopPropagation()); // prevent auto-close on inner clicks
 
-function startAutoRefresh(){
-  if(state.interval) clearInterval(state.interval);
-  state.interval = setInterval(()=>{
-    const active = document.querySelector('.tab.active')?.dataset.tab;
-    if(active==='overview') loadOverview();
-    if(active==='applications') { loadApplications(); loadServices(); }
-    if(active==='failover') loadFailover();
-    if(active==='sessions') loadSessions();
-  }, state.refreshMs);
+// init hour/min options
+(function initTime(){
+  for(let h=0; h<24; h++){ const o=document.createElement('option'); o.value=h; o.textContent=String(h).padStart(2,'0'); dp.hour.appendChild(o); }
+  for(let m=0; m<60; m+=5){ const o=document.createElement('option'); o.value=m; o.textContent=String(m).padStart(2,'0'); dp.min.appendChild(o); }
+})();
+
+function formatDisplay(d){
+  const dd=String(d.getDate()).padStart(2,'0');
+  const mm=String(d.getMonth()+1).padStart(2,'0');
+  const yyyy=d.getFullYear();
+  const hh=String(d.getHours()).padStart(2,'0');
+  const min=String(d.getMinutes()).padStart(2,'0');
+  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
+}
+function setPair(hiddenId, displayId, dateObj){
+  const hid = document.getElementById(hiddenId);
+  const dsp = document.getElementById(displayId);
+  if(!hid || !dsp) return;
+  hid.value  = dateObj.toISOString();
+  dsp.value  = formatDisplay(dateObj);
+}
+function setInitialDateFields(){
+  const now  = new Date(); // ברירת מחדל: NOW לשני השדות
+  setPair('failFrom','failFromDisplay', now);
+  setPair('failTo',  'failToDisplay',   now);
+  setPair('sessFrom','sessFromDisplay', now);
+  setPair('sessTo',  'sessToDisplay',   now);
 }
 
-// Unlock tab
+function openPicker(hiddenId, displayId){
+  dp.target = document.getElementById(hiddenId);
+  dp.display = document.getElementById(displayId);
+
+  const now = new Date();
+  dp.view = new Date(now.getFullYear(), now.getMonth(), 1);
+  const existingISO = dp.target.value;
+  if(existingISO){
+    const d = new Date(existingISO);
+    if(!isNaN(d)) {
+      dp.view = new Date(d.getFullYear(), d.getMonth(), 1);
+      dp.selected = new Date(d);
+      dp.hour.value = d.getHours();
+      dp.min.value  = Math.round(d.getMinutes()/5)*5 % 60;
+    }
+  } else {
+    dp.selected = new Date();
+    dp.hour.value = dp.selected.getHours();
+    dp.min.value  = Math.round(dp.selected.getMinutes()/5)*5 % 60;
+  }
+  renderCalendar();
+
+  const rect = dp.display.getBoundingClientRect();
+  dp.el.style.left = Math.min(rect.left, window.innerWidth - 340) + 'px';
+  dp.el.style.top  = (rect.bottom + 6) + 'px';
+  dp.el.classList.remove('hidden');
+}
+function closePicker(){ dp.el.classList.add('hidden'); dp.target = null; dp.display = null; }
+
+function renderCalendar(){
+  const y = dp.view.getFullYear(), m = dp.view.getMonth();
+  dp.title.textContent = `${dp.view.toLocaleString(undefined,{month:'long'})} ${y}`;
+
+  dp.grid.innerHTML = '';
+  const dows = ['Su','Mo','Tu','We','Th','Fr','Sa'];
+  dows.forEach(d => {
+    const el = document.createElement('div');
+    el.className='dow';
+    el.textContent=d;
+    dp.grid.appendChild(el);
+  });
+
+  const first = new Date(y, m, 1);
+  const startDow = first.getDay();
+  const daysInMonth = new Date(y, m+1, 0).getDate();
+
+  for(let i=0;i<startDow;i++){
+    const b = document.createElement('div'); b.className='day disabled'; b.textContent=''; dp.grid.appendChild(b);
+  }
+  for(let d=1; d<=daysInMonth; d++){
+    const el = document.createElement('div');
+    el.className = 'day';
+    el.textContent = d;
+    const candidate = new Date(y, m, d);
+    if(dp.selected && candidate.toDateString() === dp.selected.toDateString()) el.classList.add('selected');
+    el.addEventListener('click', ()=>{
+      dp.selected = new Date(y, m, d, Number(dp.hour.value), Number(dp.min.value));
+      renderCalendar(); // keep open until Apply
+    });
+    dp.grid.appendChild(el);
+  }
+}
+
+$('#dpPrev').addEventListener('click', ()=>{ dp.view = new Date(dp.view.getFullYear(), dp.view.getMonth()-1, 1); renderCalendar(); });
+$('#dpNext').addEventListener('click', ()=>{ dp.view = new Date(dp.view.getFullYear(), dp.view.getMonth()+1, 1); renderCalendar(); });
+$('#dpCancel').addEventListener('click', closePicker);
+$('#dpApply').addEventListener('click', ()=>{
+  if(!dp.selected){ dp.selected = new Date(dp.view.getFullYear(), dp.view.getMonth(), 1, Number(dp.hour.value), Number(dp.min.value)); }
+  dp.selected.setHours(Number(dp.hour.value), Number(dp.min.value), 0, 0);
+  dp.target.value  = dp.selected.toISOString();
+  dp.display.value = formatDisplay(dp.selected);
+  closePicker();
+});
+
+// Quick ranges
+$all('.dp-quick button').forEach(btn=>{
+  if(btn.dataset.clear){ btn.addEventListener('click', ()=>{ if(!dp.target) return; dp.target.value=''; dp.display.value=''; closePicker(); }); return; }
+  btn.addEventListener('click', ()=>{
+    const now = new Date();
+    let from;
+    if(btn.dataset.range==='24h'){ from = new Date(now.getTime()-24*3600*1000); }
+    else if(btn.dataset.range==='7d'){ from = new Date(now.getTime()-7*24*3600*1000); }
+    else if(btn.dataset.range==='today'){ from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0); }
+    if(!dp.target) return;
+    if(dp.target.id.endsWith('From')){
+      dp.target.value = from.toISOString();
+      dp.display.value = formatDisplay(from);
+    } else if(dp.target.id.endsWith('To')){
+      dp.target.value = now.toISOString();
+      dp.display.value = formatDisplay(now);
+    }
+    closePicker();
+  });
+});
+
+// openers
+[['failFrom','failFromDisplay','failFromBtn'],
+ ['failTo','failToDisplay','failToBtn'],
+ ['sessFrom','sessFromDisplay','sessFromBtn'],
+ ['sessTo','sessToDisplay','sessToBtn']].forEach(([hid,disp,btn])=>{
+  const open = ()=>openPicker(hid, disp);
+  document.getElementById(disp)?.addEventListener('click', open);
+  document.getElementById(btn)?.addEventListener('click', open);
+});
+
+// close on outside click / ESC
+document.addEventListener('click', (e)=>{
+  if(dp.el.classList.contains('hidden')) return;
+  if(!dp.el.contains(e.target) && e.target!==dp.display){ closePicker(); }
+});
+document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closePicker(); });
+
+/* ---------- Unlock ---------- */
 function loadUnlock(){
   const sel = $('#unlockNode'); if(sel) sel.value = state.node;
   const msg = $('#unlockMsg'); if(msg) msg.textContent='';
@@ -609,8 +819,19 @@ async function doUnlock(){
   }
 }
 
-// Events
-$('#nodeSelect').addEventListener('change', (e)=>{
+/* ---------- glue ---------- */
+function startAutoRefresh(){
+  if(state.interval) clearInterval(state.interval);
+  state.interval = setInterval(()=>{
+    const active = document.querySelector('.tab.active')?.dataset.tab;
+    if(active==='overview') loadOverview();
+    if(active==='applications') { loadApplications(); loadServices(); }
+    if(active==='failover') loadFailover();
+    if(active==='sessions') loadSessions();
+  }, state.refreshMs);
+}
+
+document.getElementById('nodeSelect')?.addEventListener('change', (e)=>{
   state.node = e.target.value;
   updateAppsTabAvailability();
   const active = document.querySelector('.tab.active')?.dataset.tab;
@@ -620,7 +841,7 @@ $('#nodeSelect').addEventListener('change', (e)=>{
   if(active==='sessions') loadSessions();
   if(active==='unlock') loadUnlock();
 });
-$('#refreshBtn').addEventListener('click', ()=>{
+document.getElementById('refreshBtn')?.addEventListener('click', ()=>{
   fetchCaps();
   const active = document.querySelector('.tab.active')?.dataset.tab;
   if(active==='overview') loadOverview();
@@ -628,18 +849,16 @@ $('#refreshBtn').addEventListener('click', ()=>{
   if(active==='failover') loadFailover();
   if(active==='sessions') loadSessions();
 });
-$all('.tab').forEach(t=>{
-  t.addEventListener('click', ()=>{
-    setActiveTab(t.dataset.tab);
-  });
-});
-$('#failSearch').addEventListener('click', loadFailover);
-$('#sessSearch').addEventListener('click', loadSessions);
-$('#failExport').addEventListener('click', ()=>window.open(`/api/export/failover-history`,'_blank'));
-$('#sessExport').addEventListener('click', ()=>window.open(`/api/export/user-sessions`,'_blank'));
+
+$all('.tab').forEach(t=> t.addEventListener('click', ()=> setActiveTab(t.dataset.tab)));
+document.getElementById('failSearch')?.addEventListener('click', loadFailover);
+document.getElementById('sessSearch')?.addEventListener('click', loadSessions);
+document.getElementById('failExport')?.addEventListener('click', ()=>window.open(`/api/export/failover-history`,'_blank'));
+document.getElementById('sessExport')?.addEventListener('click', ()=>window.open(`/api/export/user-sessions`,'_blank'));
 
 // Init
 (async function init(){
+  setInitialDateFields();     // default: NOW for both fields
   await fetchCaps();
   setActiveTab('overview');
   startAutoRefresh();
