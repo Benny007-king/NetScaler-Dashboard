@@ -1,1503 +1,586 @@
 <!DOCTYPE html>
-<html lang="en" dir="ltr">
+<html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>NetScaler Enhanced Dashboard</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>
-        body { 
-            margin: 0; 
-            padding: 0; 
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Inter', sans-serif;
-            background: #000;
-            min-height: 100vh;
-        }
-        
-        .glass-effect {
-            background: rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            border: 1px solid rgba(255, 255, 255, 0.2);
-        }
-        
-        .card-hover {
-            transition: all 0.3s ease;
-        }
-        
-        .card-hover:hover {
-            transform: translateY(-5px);
-            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
-        }
-        
-        .pulse-animation {
-            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: .5; }
-        }
-        
-        .fade-in {
-            animation: fadeIn 0.6s ease-out forwards;
-        }
-        
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        
-        .spin-slow {
-            animation: spin 3s linear infinite;
-        }
-        
-        .glow {
-            box-shadow: 0 0 20px rgba(102, 126, 234, 0.3);
-        }
-        
-        .progress-bar {
-            background: linear-gradient(90deg, #4ade80, #22c55e, #16a34a);
-            background-size: 200% 100%;
-            animation: progressShine 2s ease-in-out infinite;
-        }
-        
-        @keyframes progressShine {
-            0% { background-position: 200% 0; }
-            100% { background-position: -200% 0; }
-        }
-        
-        .tab-active {
-            background: rgba(255, 255, 255, 0.2);
-            border-bottom: 2px solid #60a5fa;
-        }
-        
-        .hidden { display: none; }
-        
-        .filter-input {
-            background: rgba(255, 255, 255, 0.1);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            color: white;
-        }
-        
-        .filter-input::placeholder {
-            color: rgba(255, 255, 255, 0.7);
-        }
-        
-        .filter-input option {
-            background: #1e293b;
-            color: white;
-            padding: 8px;
-        }
-        
-        .filter-input:focus {
-            background: rgba(255, 255, 255, 0.15);
-            border-color: #60a5fa;
-            outline: none;
-        }
-        
-        select.filter-input {
-            background: rgba(255, 255, 255, 0.1);
-            color: white;
-        }
-        
-        select.filter-input option {
-            background: #1e293b;
-            color: white;
-        }
-        
-        select.filter-input option:hover {
-            background: #334155;
-        }
-    </style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>NetScaler Dashboard — Dual-Stack (NITRO + Next-Gen)</title>
+  <style>
+    :root {
+      --bg: #0b1220; --panel:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#60a5fa; --success:#34d399; --danger:#f87171; --warn:#fbbf24;
+      --border:#1f2937; --chip:#0ea5e9;
+    }
+    *{box-sizing:border-box} body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text)}
+    header{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border); background:linear-gradient(180deg,#0b1220,#0b1220 60%,#0e1729)}
+    .brand{display:flex; gap:10px; align-items:center; font-weight:700; letter-spacing:.2px}
+    .brand .dot{width:10px;height:10px;border-radius:999px;background:var(--accent);display:inline-block}
+    .sub{font-size:12px;color:var(--muted)}
+    .controls{display:flex; gap:10px; align-items:center}
+    select,button,input{background:#0f172a; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:8px 10px}
+    input[type="datetime-local"], input[type="text"]{padding:8px 10px}
+    button.primary{background:var(--accent); border-color:#2563eb; color:#081225; font-weight:600}
+    main{padding:16px}
+    .tabs{display:flex; gap:8px; border-bottom:1px solid var(--border)}
+    .tab{padding:10px 12px; border:1px solid var(--border); border-bottom:none; border-radius:10px 10px 0 0; background:#0c1426; color:var(--muted); cursor:pointer}
+    .tab.active{background:#101a31; color:var(--text); font-weight:600}
+    .tab.disabled{opacity:.5; cursor:not-allowed}
+    .panel{border:1px solid var(--border); border-top:none; border-radius:0 12px 12px 12px; padding:16px; background:#0c1426; margin-bottom:20px}
+    .grid{display:grid; gap:12px}
+    .grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
+    .card{background:#0e172a; border:1px solid var(--border); border-radius:12px; padding:12px}
+    .row{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
+    .row > *{flex:0 0 auto}
+    table{width:100%; border-collapse:collapse}
+    th,td{padding:10px; border-bottom:1px solid var(--border); text-align:left; font-size:14px}
+    th{color:#cbd5e1; font-weight:600}
+    .muted{color:var(--muted)}
+    .chip{display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; background:#0a1a2a; border:1px solid #12324f; font-size:12px}
+    .ok{color:var(--success)} .bad{color:var(--danger)} .warn{color:var(--warn)}
+    .hint{font-size:13px; color:var(--muted)}
+    .hidden{display:none}
+    .spacer{height:8px}
+    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background:#0b1a2c; border:1px solid #1c314f; padding:2px 6px; border-radius:6px; font-size:12px}
+  </style>
 </head>
 <body>
-    <div class="min-h-screen p-6">
-        <div class="max-w-7xl mx-auto">
-            
-            <!-- Header Section -->
-            <div class="mb-8 fade-in">
-                <div class="glass-effect rounded-2xl p-8 glow relative">
-                    <div class="flex items-center justify-between">
-                        <div class="flex items-center space-x-6">
-                            <div class="relative">
-                                <div class="w-16 h-16 bg-gradient-to-br from-blue-500 to-purple-600 rounded-2xl flex items-center justify-center">
-                                    <svg class="w-8 h-8 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 002-2V7a2 2 0 00-2-2H7a2 2 0 00-2 2v10a2 2 0 002 2zM9 9h6v6H9V9z"></path>
-                                    </svg>
-                                </div>
-                                <div id="connectionIndicator" class="absolute -top-1 -right-1 w-6 h-6 bg-gray-500 rounded-full flex items-center justify-center">
-                                    <div class="w-3 h-3 bg-white rounded-full"></div>
-                                </div>
-                            </div>
-                            
-                            <div>
-                                <h1 class="text-4xl font-bold text-white mb-2">NetScaler Enhanced Dashboard</h1>
-                                <p class="text-blue-100 text-lg">Live monitoring with failover tracking & user sessions</p>
-                                <div class="flex items-center mt-2 space-x-4">
-                                    <div class="flex items-center space-x-2">
-                                        <div id="primaryStatus" class="w-3 h-3 bg-gray-400 rounded-full"></div>
-                                        <span class="text-blue-200 font-medium">Node 1: 10.0.0.100</span>
-                                        <span class="text-blue-300 text-xs" id="primaryRole">Unknown</span>
-                                    </div>
-                                    <div class="text-blue-200">|</div>
-                                    <div class="flex items-center space-x-2">
-                                        <div id="secondaryStatus" class="w-3 h-3 bg-gray-400 rounded-full"></div>
-                                        <span class="text-blue-200 font-medium">Node 2: 10.0.0.200</span>
-                                        <span class="text-blue-300 text-xs" id="secondaryRole">Unknown</span>
-                                    </div>
-                                    <div class="text-blue-200">|</div>
-                                    <span class="text-blue-200" id="currentTime">Loading...</span>
-                                </div>
-                            </div>
-                        </div>
-                        
-                        <!-- Quick Actions -->
-                        <div class="flex items-center space-x-4">
-                            <button onclick="refreshData()" class="glass-effect px-6 py-3 rounded-xl text-white hover:bg-white hover:bg-opacity-20 transition-all duration-300 flex items-center space-x-2 card-hover">
-                                <svg id="refreshIcon" class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                                </svg>
-                                <span>Refresh</span>
-                            </button>
-                            
-                            <div class="glass-effect px-4 py-3 rounded-xl text-white flex items-center space-x-2">
-                                <span class="text-sm">Auto: 30s</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
+<header>
+  <div class="brand"><span class="dot"></span> NetScaler Dashboard <span class="sub">Dual-Stack</span></div>
+  <div class="controls">
+    <label class="muted">Node:</label>
+    <select id="nodeSelect">
+      <option value="primary">primary</option>
+      <option value="secondary">secondary</option>
+    </select>
+    <button id="refreshBtn" class="primary">Refresh</button>
+  </div>
+</header>
+<main>
+  <div class="hint" id="capsLine">Detecting capabilities…</div>
+  <div class="tabs" role="tablist">
+    <div class="tab active" data-tab="overview" role="tab" aria-selected="true">Overview</div>
+    <div class="tab" data-tab="applications" role="tab">Applications</div>
+    <div class="tab" data-tab="failover" role="tab">Failover History</div>
+    <div class="tab" data-tab="sessions" role="tab">User Sessions</div>
+    <div class="tab" data-tab="unlock" role="tab">Unlock Users</div>
+  </div>
 
-            <!-- Navigation Tabs -->
-            <div class="mb-8 fade-in">
-                <div class="glass-effect rounded-2xl p-2">
-                    <div class="flex space-x-2">
-                        <button onclick="showTab('overview')" id="overviewTab" class="tab-active px-6 py-3 rounded-xl text-white font-medium transition-all duration-300">
-                            📊 Overview
-                        </button>
-                        <button onclick="showTab('failover')" id="failoverTab" class="px-6 py-3 rounded-xl text-white font-medium hover:bg-white hover:bg-opacity-10 transition-all duration-300">
-                            🔄 Failover History
-                        </button>
-                        <button onclick="showTab('sessions')" id="sessionsTab" class="px-6 py-3 rounded-xl text-white font-medium hover:bg-white hover:bg-opacity-10 transition-all duration-300">
-                            👥 User Sessions
-                        </button>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Overview Tab Content -->
-            <div id="overviewContent" class="tab-content">
-                <!-- Status Cards Grid -->
-                <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
-                    <!-- Primary Node CPU -->
-                    <div class="glass-effect rounded-2xl p-6 card-hover fade-in">
-                        <div class="flex items-center justify-between mb-4">
-                            <div class="w-12 h-12 bg-gradient-to-br from-red-500 to-orange-500 rounded-xl flex items-center justify-center">
-                                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                                </svg>
-                            </div>
-                            <div class="text-right">
-                                <p class="text-white text-3xl font-bold" id="primaryCpuUsage">--</p>
-                                <p class="text-blue-200 text-sm">Node 1 CPU</p>
-                            </div>
-                        </div>
-                        <div class="w-full bg-gray-700 rounded-full h-3 mb-2">
-                            <div id="primaryCpuBar" class="progress-bar h-3 rounded-full transition-all duration-1000" style="width: 0%"></div>
-                        </div>
-                        <p class="text-blue-200 text-xs" id="primaryCpuLabel">Node 1 CPU usage</p>
-                    </div>
-
-                    <!-- Primary Node Memory -->
-                    <div class="glass-effect rounded-2xl p-6 card-hover fade-in">
-                        <div class="flex items-center justify-between mb-4">
-                            <div class="w-12 h-12 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-xl flex items-center justify-center">
-                                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
-                                </svg>
-                            </div>
-                            <div class="text-right">
-                                <p class="text-white text-3xl font-bold" id="primaryMemoryUsage">--</p>
-                                <p class="text-blue-200 text-sm">Node 1 Memory</p>
-                            </div>
-                        </div>
-                        <div class="w-full bg-gray-700 rounded-full h-3 mb-2">
-                            <div id="primaryMemoryBar" class="bg-gradient-to-r from-blue-500 to-cyan-500 h-3 rounded-full transition-all duration-1000" style="width: 0%"></div>
-                        </div>
-                        <p class="text-blue-200 text-xs" id="primaryMemoryLabel">Node 1 memory usage</p>
-                    </div>
-
-                    <!-- Secondary Node CPU -->
-                    <div class="glass-effect rounded-2xl p-6 card-hover fade-in">
-                        <div class="flex items-center justify-between mb-4">
-                            <div class="w-12 h-12 bg-gradient-to-br from-purple-500 to-pink-500 rounded-xl flex items-center justify-center">
-                                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path>
-                                </svg>
-                            </div>
-                            <div class="text-right">
-                                <p class="text-white text-3xl font-bold" id="secondaryCpuUsage">--</p>
-                                <p class="text-blue-200 text-sm">Node 2 CPU</p>
-                            </div>
-                        </div>
-                        <div class="w-full bg-gray-700 rounded-full h-3 mb-2">
-                            <div id="secondaryCpuBar" class="bg-gradient-to-r from-purple-500 to-pink-500 h-3 rounded-full transition-all duration-1000" style="width: 0%"></div>
-                        </div>
-                        <p class="text-blue-200 text-xs" id="secondaryCpuLabel">Node 2 CPU usage</p>
-                    </div>
-
-                    <!-- Secondary Node Memory -->
-                    <div class="glass-effect rounded-2xl p-6 card-hover fade-in">
-                        <div class="flex items-center justify-between mb-4">
-                            <div class="w-12 h-12 bg-gradient-to-br from-green-500 to-emerald-500 rounded-xl flex items-center justify-center">
-                                <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path>
-                                </svg>
-                            </div>
-                            <div class="text-right">
-                                <p class="text-white text-3xl font-bold" id="secondaryMemoryUsage">--</p>
-                                <p class="text-blue-200 text-sm">Node 2 Memory</p>
-                            </div>
-                        </div>
-                        <div class="w-full bg-gray-700 rounded-full h-3 mb-2">
-                            <div id="secondaryMemoryBar" class="bg-gradient-to-r from-green-500 to-emerald-500 h-3 rounded-full transition-all duration-1000" style="width: 0%"></div>
-                        </div>
-                        <p class="text-blue-200 text-xs" id="secondaryMemoryLabel">Node 2 memory usage</p>
-                    </div>
-                </div>
-
-                <!-- Main Dashboard Grid -->
-                <div class="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                    
-                    <!-- Left Column - Virtual Servers -->
-                    <div class="lg:col-span-2">
-                        <div class="glass-effect rounded-2xl p-6">
-                            <div class="flex items-center justify-between mb-6">
-                                <div class="flex items-center space-x-3">
-                                    <h3 class="text-white text-xl font-bold">Load Balancing Virtual Servers</h3>
-                                    <span class="bg-blue-500 text-white text-xs px-2 py-1 rounded-full" id="vserverCount">0</span>
-                                </div>
-                                
-                                <div class="flex items-center space-x-3">
-                                    <select id="vserverFilter" onchange="filterVservers()" class="filter-input px-4 py-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                        <option value="">All States</option>
-                                        <option value="UP">UP</option>
-                                        <option value="DOWN">DOWN</option>
-                                        <option value="OUT OF SERVICE">OUT OF SERVICE</option>
-                                    </select>
-                                </div>
-                            </div>
-
-                            <div class="space-y-3 max-h-96 overflow-y-auto" id="vserversContainer">
-                                <div class="text-center text-blue-200 py-8">
-                                    <p>Loading virtual servers...</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <!-- Right Column - System Status & HA Info -->
-                    <div class="space-y-6">
-                        
-                        <!-- HA Status -->
-                        <div class="glass-effect rounded-2xl p-6">
-                            <div class="flex items-center justify-between mb-4">
-                                <h3 class="text-white text-lg font-bold">High Availability Status</h3>
-                                <div id="haIndicator" class="w-3 h-3 bg-gray-400 rounded-full"></div>
-                            </div>
-                            
-                            <div class="space-y-4" id="haStatusContainer">
-                                <div class="text-center text-blue-200 py-4">
-                                    <p>Loading HA status...</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- System Information -->
-                        <div class="glass-effect rounded-2xl p-6">
-                            <h3 class="text-white text-lg font-bold mb-4">System Information</h3>
-                            
-                            <div class="space-y-4" id="systemInfoContainer">
-                                <div class="text-center text-blue-200 py-4">
-                                    <p>Loading system info...</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <!-- Services Status -->
-                        <div class="glass-effect rounded-2xl p-6">
-                            <div class="flex items-center justify-between mb-4">
-                                <h3 class="text-white text-lg font-bold">Services</h3>
-                                <span class="bg-green-500 text-white text-xs px-2 py-1 rounded-full" id="servicesCount">0</span>
-                            </div>
-                            
-                            <div class="space-y-2 max-h-40 overflow-y-auto" id="servicesContainer">
-                                <div class="text-center text-blue-200 py-4">
-                                    <p>Loading services...</p>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Failover History Tab Content -->
-            <div id="failoverContent" class="tab-content hidden">
-                <div class="glass-effect rounded-2xl p-6">
-                    <div class="flex items-center justify-between mb-6">
-                        <div class="flex items-center space-x-3">
-                            <h3 class="text-white text-xl font-bold">🔄 Failover Events History</h3>
-                            <span class="bg-orange-500 text-white text-xs px-2 py-1 rounded-full" id="failoverCount">0</span>
-                        </div>
-                        
-                        <div class="flex items-center space-x-3">
-                            <input type="datetime-local" id="failoverFromDate" class="filter-input px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <span class="text-white text-sm">to</span>
-                            <input type="datetime-local" id="failoverToDate" class="filter-input px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                            <button onclick="filterFailoverEvents()" class="bg-blue-500 hover:bg-blue-600 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors">
-                                Filter
-                            </button>
-                            <button onclick="exportFailoverHistory()" class="bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors">
-                                📊 Export CSV
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="space-y-3 max-h-96 overflow-y-auto" id="failoverEventsContainer">
-                        <div class="text-center text-blue-200 py-8">
-                            <p>Loading failover events...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- User Sessions Tab Content -->
-            <div id="sessionsContent" class="tab-content hidden">
-                <div class="glass-effect rounded-2xl p-6">
-                    <div class="flex items-center justify-between mb-6">
-                        <div class="flex items-center space-x-3">
-                            <h3 class="text-white text-xl font-bold">👥 User Sessions</h3>
-                            <span class="bg-cyan-500 text-white text-xs px-2 py-1 rounded-full" id="sessionsCount">0</span>
-                        </div>
-                        
-                        <div class="flex items-center space-x-3">
-                            <button onclick="exportUserSessions()" class="bg-green-500 hover:bg-green-600 px-4 py-2 rounded-lg text-white text-sm font-medium transition-colors">
-                                📊 Export CSV
-                            </button>
-                        </div>
-                    </div>
-
-                    <!-- Session Filters -->
-                    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
-                        <div>
-                            <label class="text-blue-200 text-sm mb-2 block">From Date</label>
-                            <input type="datetime-local" id="sessionsFromDate" class="filter-input w-full px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                        <div>
-                            <label class="text-blue-200 text-sm mb-2 block">To Date</label>
-                            <input type="datetime-local" id="sessionsToDate" class="filter-input w-full px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                        <div>
-                            <label class="text-blue-200 text-sm mb-2 block">Connection Type</label>
-                            <select id="connectionTypeFilter" class="filter-input w-full px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">All Types</option>
-                                <option value="Web">Web</option>
-                                <option value="VPN">VPN</option>
-                                <option value="Workspace">Workspace</option>
-                            </select>
-                        </div>
-                        <div>
-                            <label class="text-blue-200 text-sm mb-2 block">Username</label>
-                            <input type="text" id="usernameFilter" placeholder="Filter by username" class="filter-input w-full px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                        </div>
-                        <div>
-                            <label class="text-blue-200 text-sm mb-2 block">Status</label>
-                            <select id="statusFilter" class="filter-input w-full px-3 py-2 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500">
-                                <option value="">All Status</option>
-                                <option value="Active">Active</option>
-                                <option value="Completed">Completed</option>
-                            </select>
-                        </div>
-                    </div>
-
-                    <div class="flex justify-center mb-6">
-                        <button onclick="filterUserSessions()" class="bg-blue-500 hover:bg-blue-600 px-6 py-2 rounded-lg text-white font-medium transition-colors">
-                            🔍 Apply Filters
-                        </button>
-                    </div>
-
-                    <!-- Session Statistics -->
-                    <div class="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4 mb-6" id="sessionStatsContainer">
-                        <!-- Stats will be populated here -->
-                    </div>
-
-                    <div class="space-y-3 max-h-96 overflow-y-auto" id="userSessionsContainer">
-                        <div class="text-center text-blue-200 py-8">
-                            <p>Loading user sessions...</p>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Footer -->
-            <div class="mt-8 text-center">
-                <div class="glass-effect rounded-xl p-4 inline-block">
-                    <div class="flex items-center justify-center space-x-6 text-blue-200 text-sm">
-                        <div class="flex items-center space-x-2">
-                            <div id="overallStatus" class="w-2 h-2 bg-gray-400 rounded-full"></div>
-                            <span id="overallStatusText">Connecting...</span>
-                        </div>
-                        <span>•</span>
-                        <span id="lastUpdate">Last update: --</span>
-                        <span>•</span>
-                        <span>NITRO API v1 Enhanced</span>
-                    </div>
-                </div>
-            </div>
-        </div>
+  <section class="panel" id="panel-overview">
+    <div class="grid cols-2">
+      <div class="card">
+        <h3>System Stats</h3>
+        <div id="sysStats" class="muted">Loading…</div>
+      </div>
+      <div class="card">
+        <h3>HA Status</h3>
+        <div id="haStatus" class="muted">Loading…</div>
+      </div>
     </div>
+  </section>
 
-    <script>
-        console.log('🌟 NetScaler Enhanced Dashboard Started');
-        
-        // Global variables
-        let autoRefreshInterval = null;
-        let systemData = {};
-        let vserversData = [];
-        let servicesData = [];
-        let failoverEvents = [];
-        let userSessions = [];
-        let currentTab = 'overview';
+  <section class="panel hidden" id="panel-applications">
+    <div class="spacer"></div>
+    <div id="appsNotice" class="hint muted"></div>
+    <div class="spacer"></div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px">
+        <h3 style="margin:0">Applications</h3>
+        <div class="chip" id="appsModeChip">mode: <span id="appsMode">…</span></div>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px">#</th>
+            <th>Name</th>
+            <th>VIP</th>
+            <th>Port</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody id="appsTable"><tr><td class="muted" colspan="5">Loading…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
 
-        // Tab management
-        function showTab(tabName) {
-            // Hide all tab contents
-            document.getElementById('overviewContent').classList.add('hidden');
-            document.getElementById('failoverContent').classList.add('hidden');
-            document.getElementById('sessionsContent').classList.add('hidden');
-            
-            // Remove active class from all tabs
-            document.getElementById('overviewTab').classList.remove('tab-active');
-            document.getElementById('failoverTab').classList.remove('tab-active');
-            document.getElementById('sessionsTab').classList.remove('tab-active');
-            
-            // Show selected tab content and mark tab as active
-            document.getElementById(tabName + 'Content').classList.remove('hidden');
-            document.getElementById(tabName + 'Tab').classList.add('tab-active');
-            
-            currentTab = tabName;
-            
-            // Load data for the selected tab
-            if (tabName === 'failover') {
-                fetchFailoverHistory();
-            } else if (tabName === 'sessions') {
-                fetchUserSessions();
-            }
-            
-            console.log(`📋 Switched to ${tabName} tab`);
-        }
+  <section class="panel hidden" id="panel-failover">
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <strong>Filters:</strong>
+        <label class="muted">From</label>
+        <input id="failFrom" type="datetime-local" />
+        <label class="muted">To</label>
+        <input id="failTo" type="datetime-local" />
+        <label class="muted">Type</label>
+        <select id="failType">
+          <option value="">All</option>
+          <option value="automatic">Automatic</option>
+          <option value="manual">Manual</option>
+          <option value="failure">Failure</option>
+        </select>
+        <button id="failSearch" class="primary">Search</button>
+        <button id="failExport">Export CSV</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px">#</th>
+            <th>Timestamp</th>
+            <th>Event Type</th>
+            <th>Reason</th>
+            <th>Role Change</th>
+          </tr>
+        </thead>
+        <tbody id="failTable"><tr><td class="muted" colspan="5">Set filters and click Search…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
 
-        // Update current time
-        function updateCurrentTime() {
-            document.getElementById('currentTime').textContent = new Date().toLocaleString();
-        }
+  <section class="panel hidden" id="panel-sessions">
+    <div class="card">
+      <div class="row" style="margin-bottom:10px">
+        <strong>Filters:</strong>
+        <label class="muted">From</label>
+        <input id="sessFrom" type="datetime-local" />
+        <label class="muted">To</label>
+        <input id="sessTo" type="datetime-local" />
+        <label class="muted">User</label>
+        <input id="sessUser" type="text" placeholder="user@domain" />
+        <label class="muted">Type</label>
+        <select id="sessType">
+          <option value="">All</option>
+          <option value="web">Web</option>
+          <option value="vpn">VPN</option>
+          <option value="workspace">Workspace</option>
+        </select>
+        <label class="muted">Status</label>
+        <select id="sessStatus">
+          <option value="">All</option>
+          <option value="active">Active</option>
+          <option value="terminated">Terminated</option>
+        </select>
+        <button id="sessSearch" class="primary">Search</button>
+        <button id="sessExport">Export CSV</button>
+      </div>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px">#</th>
+            <th>User</th>
+            <th>Type</th>
+            <th>Status</th>
+            <th>Duration</th>
+            <th>Client IP</th>
+            <th>Node</th>
+            <th>Start Time</th>
+          </tr>
+        </thead>
+        <tbody id="sessTable"><tr><td class="muted" colspan="8">Set filters and click Search…</td></tr></tbody>
+      </table>
+    </div>
+  </section>
 
-        // Update connection status indicators
-        function updateConnectionStatus(data) {
-            const primaryStatus = document.getElementById('primaryStatus');
-            const secondaryStatus = document.getElementById('secondaryStatus');
-            const connectionIndicator = document.getElementById('connectionIndicator');
-            const overallStatus = document.getElementById('overallStatus');
-            const overallStatusText = document.getElementById('overallStatusText');
-            
-            const primaryConnected = data.primary && data.primary.connected;
-            const secondaryConnected = data.secondary && data.secondary.connected;
-            
-            if (primaryConnected) {
-                primaryStatus.className = 'w-3 h-3 bg-green-400 rounded-full pulse-animation';
-            } else {
-                primaryStatus.className = 'w-3 h-3 bg-red-400 rounded-full';
-            }
-            
-            if (secondaryConnected) {
-                secondaryStatus.className = 'w-3 h-3 bg-green-400 rounded-full pulse-animation';
-            } else {
-                secondaryStatus.className = 'w-3 h-3 bg-red-400 rounded-full';
-            }
-            
-            if (primaryConnected || secondaryConnected) {
-                connectionIndicator.className = 'absolute -top-1 -right-1 w-6 h-6 bg-green-500 rounded-full flex items-center justify-center pulse-animation';
-                overallStatus.className = 'w-2 h-2 bg-green-400 rounded-full pulse-animation';
-                overallStatusText.textContent = 'Connected';
-            } else {
-                connectionIndicator.className = 'absolute -top-1 -right-1 w-6 h-6 bg-red-500 rounded-full flex items-center justify-center';
-                overallStatus.className = 'w-2 h-2 bg-red-400 rounded-full';
-                overallStatusText.textContent = 'Disconnected';
-            }
-        }
+  <section class="panel hidden" id="panel-unlock">
+    <div class="card">
+      <h3>Unlock AAA User</h3>
+      <div class="row" style="margin-bottom:10px">
+        <label class="muted">Node</label>
+        <select id="unlockNode">
+          <option value="primary">primary</option>
+          <option value="secondary">secondary</option>
+        </select>
+        <label class="muted">Username</label>
+        <input id="unlockUsername" type="text" placeholder="user1" />
+        <button id="unlockBtn" class="primary">Unlock</button>
+      </div>
+      <div id="unlockMsg" class="muted" style="min-height:20px"></div>
+      <div class="hint">Note: operation uses NITRO <code>/nitro/v1/config/aaauser</code> under the hood, with automatic fallback to <code>?action=unlock</code> if required.</div>
+    </div>
+  </section>
+</main>
 
-        // Update HA roles
-        function updateHARoles(data) {
-            const primaryRole = document.getElementById('primaryRole');
-            const secondaryRole = document.getElementById('secondaryRole');
-            
-            if (primaryRole && data.primary && data.primary.ha_role) {
-                primaryRole.textContent = `(${data.primary.ha_role})`;
-            }
-            
-            if (secondaryRole && data.secondary && data.secondary.ha_role) {
-                secondaryRole.textContent = `(${data.secondary.ha_role})`;
-            }
-        }
+<script>
+const state = {
+  node: 'primary',
+  apiModes: {},
+  interval: null,
+  refreshMs: 30000
+};
 
-        // Update node statistics
-        function updateNodeStats(nodeType, nodeData) {
-            if (!nodeData || !nodeData.connected || !nodeData.ns_stats || !nodeData.ns_stats.ns) {
-                // Reset display
-                document.getElementById(`${nodeType}CpuUsage`).textContent = '--';
-                document.getElementById(`${nodeType}MemoryUsage`).textContent = '--';
-                document.getElementById(`${nodeType}CpuBar`).style.width = '0%';
-                document.getElementById(`${nodeType}MemoryBar`).style.width = '0%';
-                document.getElementById(`${nodeType}CpuLabel`).textContent = `${nodeType} CPU (Offline)`;
-                document.getElementById(`${nodeType}MemoryLabel`).textContent = `${nodeType} Memory (Offline)`;
-                return;
-            }
+function $(sel){return document.querySelector(sel)}
+function $all(sel){return Array.from(document.querySelectorAll(sel))}
 
-            const stats = Array.isArray(nodeData.ns_stats.ns) ? nodeData.ns_stats.ns[0] : nodeData.ns_stats.ns;
-            
-            // Update CPU
-            const cpuUsage = parseFloat(stats.cpuusagepcnt || 0);
-            document.getElementById(`${nodeType}CpuUsage`).textContent = `${cpuUsage.toFixed(1)}%`;
-            document.getElementById(`${nodeType}CpuBar`).style.width = `${Math.min(cpuUsage, 100)}%`;
-            
-            // Update Memory
-            const memUsage = parseFloat(stats.memusagepcnt || 0);
-            document.getElementById(`${nodeType}MemoryUsage`).textContent = `${memUsage.toFixed(1)}%`;
-            document.getElementById(`${nodeType}MemoryBar`).style.width = `${Math.min(memUsage, 100)}%`;
-            
-            // Update labels
-            const role = nodeData.ha_role || nodeType;
-            document.getElementById(`${nodeType}CpuLabel`).textContent = `${role} CPU usage`;
-            document.getElementById(`${nodeType}MemoryLabel`).textContent = `${role} memory usage`;
-        }
+async function getJSON(url, opts){
+  const res = await fetch(url, {headers:{'Accept':'application/json'}, ...(opts||{})});
+  const text = await res.text();
+  try { return {ok: res.ok, status: res.status, data: text? JSON.parse(text): {}}; }
+  catch(e){ return {ok: res.ok, status: res.status, data: {raw:text}}; }
+}
 
-        // Fetch system statistics
-        async function fetchSystemStats() {
-            try {
-                console.log('📡 Fetching system stats...');
-                const response = await fetch('/api/system-stats');
-                const data = await response.json();
-                
-                console.log('✅ System stats received');
-                systemData = data;
-                
-                updateNodeStats('primary', data.primary);
-                updateNodeStats('secondary', data.secondary);
-                updateConnectionStatus(data);
-                updateHARoles(data);
-                
-                document.getElementById('lastUpdate').textContent = `Last update: ${new Date().toLocaleTimeString()}`;
-                
-            } catch (error) {
-                console.error('❌ Error fetching system stats:', error);
-                updateConnectionStatus({primary: {connected: false}, secondary: {connected: false}});
-            }
-        }
+function qs(params){
+  const esc = encodeURIComponent;
+  return Object.entries(params)
+    .filter(([_,v])=> v!==undefined && v!==null && v!=='')
+    .map(([k,v])=>`${esc(k)}=${esc(v)}`)
+    .join('&');
+}
 
-        // Fetch virtual servers
-        async function fetchVservers() {
-            try {
-                console.log('📡 Fetching virtual servers...');
-                const response = await fetch('/api/lb-vservers');
-                const data = await response.json();
-                
-                console.log('✅ Virtual servers received', data);
-                
-                if (data.connected && data.data && data.data.lbvserver) {
-                    vserversData = data.data.lbvserver;
-                    console.log('🔍 VServers data loaded:', vserversData.length, 'servers');
-                    updateVserversDisplay();
-                } else {
-                    console.log('❌ No vserver data found');
-                    document.getElementById('vserversContainer').innerHTML = 
-                        '<div class="text-center text-red-200 py-8"><p>Unable to load virtual servers</p></div>';
-                }
-                
-            } catch (error) {
-                console.error('❌ Error fetching vservers:', error);
-                document.getElementById('vserversContainer').innerHTML = 
-                    '<div class="text-center text-red-200 py-8"><p>Error loading virtual servers</p></div>';
-            }
-        }
+function setActiveTab(name){
+  $all('.tab').forEach(t=>{
+    const active = t.dataset.tab===name;
+    t.classList.toggle('active', active);
+    t.setAttribute('aria-selected', active?'true':'false');
+  });
+  $all('section.panel').forEach(p=>p.classList.add('hidden'));
+  $(`#panel-${name}`).classList.remove('hidden');
+  if(name==='overview') loadOverview();
+  if(name==='applications') loadApplications();
+  if(name==='failover') loadFailover();
+  if(name==='sessions') loadSessions();
+  if(name==='unlock') loadUnlock();
+}
 
-        // Update virtual servers display
-        function updateVserversDisplay() {
-            console.log('🖥️ updateVserversDisplay called');
-            const container = document.getElementById('vserversContainer');
-            const filterElement = document.getElementById('vserverFilter');
-            
-            if (!vserversData || vserversData.length === 0) {
-                console.log('❌ No vservers data available');
-                container.innerHTML = '<div class="text-center text-blue-200 py-8"><p>No virtual servers configured</p></div>';
-                document.getElementById('vserverCount').textContent = '0';
-                return;
-            }
-            
-            // Apply current filter
-            const filterValue = filterElement ? filterElement.value : '';
-            console.log('🔽 Current filter value:', filterValue);
-            
-            let filteredVservers = vserversData;
-            
-            if (filterValue) {
-                filteredVservers = vserversData.filter(vserver => {
-                    console.log(`🔍 Checking vserver ${vserver.name}: state=${vserver.curstate}, filter=${filterValue}`);
-                    return vserver.curstate === filterValue;
-                });
-                console.log(`✅ Filtered ${vserversData.length} → ${filteredVservers.length} vservers`);
-            } else {
-                console.log('📄 No filter applied, showing all vservers');
-            }
-            
-            document.getElementById('vserverCount').textContent = filteredVservers.length;
-            container.innerHTML = '';
-            
-            if (filteredVservers.length === 0) {
-                const message = filterValue ? 
-                    `No virtual servers with state: ${filterValue}` : 
-                    'No virtual servers configured';
-                container.innerHTML = `<div class="text-center text-blue-200 py-8"><p>${message}</p></div>`;
-                console.log('📭 No vservers to display:', message);
-                return;
-            }
-            
-            console.log(`🎨 Rendering ${filteredVservers.length} vservers`);
-            filteredVservers.slice(0, 10).forEach((vserver, index) => {
-                const vserverElement = document.createElement('div');
-                vserverElement.className = 'glass-effect rounded-xl p-4 mb-3 cursor-pointer hover:bg-white hover:bg-opacity-5';
-                
-                const stateColor = vserver.curstate === 'UP' ? 'text-green-400 bg-green-500 bg-opacity-20' : 
-                                  vserver.curstate === 'DOWN' ? 'text-red-400 bg-red-500 bg-opacity-20' : 
-                                  'text-yellow-400 bg-yellow-500 bg-opacity-20';
-                
-                vserverElement.innerHTML = `
-                    <div class="flex items-center justify-between">
-                        <div>
-                            <div class="text-white font-semibold">${vserver.name}</div>
-                            <div class="text-blue-200 text-sm">${vserver.ipv46}:${vserver.port}</div>
-                        </div>
-                        <span class="px-2 py-1 text-xs font-semibold rounded-full ${stateColor}">
-                            ${vserver.curstate}
-                        </span>
-                    </div>
-                `;
-                
-                container.appendChild(vserverElement);
-            });
-            
-            if (filteredVservers.length > 10) {
-                const moreElement = document.createElement('div');
-                moreElement.className = 'text-center text-blue-300 text-sm py-2';
-                moreElement.textContent = `... and ${filteredVservers.length - 10} more virtual servers`;
-                container.appendChild(moreElement);
-            }
-            
-            console.log('✅ VServers display updated successfully');
-        }
+async function fetchCaps(){
+  const r = await getJSON('/api/caps');
+  if(!r.ok){ $('#capsLine').textContent = 'Capabilities: unavailable'; return; }
+  state.apiModes = r.data.api_mode || {};
+  const p = state.apiModes.primary || 'nitro';
+  const s = state.apiModes.secondary || 'nitro';
+  $('#capsLine').innerHTML = `Capabilities — primary: <span class="kbd">${p}</span>, secondary: <span class="kbd">${s}</span>`;
+  updateAppsTabAvailability();
+}
 
-        // Filter virtual servers
-        function filterVservers() {
-            console.log('🔍 Filter triggered');
-            const filterValue = document.getElementById('vserverFilter').value;
-            console.log('📋 Filter value:', filterValue);
-            console.log('📊 VServers data:', vserversData ? vserversData.length : 'null');
-            updateVserversDisplay();
-        }
+function updateAppsTabAvailability(){
+  const mode = state.apiModes[state.node] || 'nitro';
+  const tab = $(`.tab[data-tab="applications"]`);
+  const note = $('#appsNotice');
+  const chip = $('#appsMode');
+  if(chip) chip.textContent = mode;
+  if(!tab) return;
+  if(mode!=='nextgen'){
+    tab.classList.add('disabled');
+    if(note) note.textContent = 'Applications require Next-Gen API (available from NetScaler 14.1). This node is in NITRO mode, so the Applications tab is disabled.';
+  } else {
+    tab.classList.remove('disabled');
+    if(note) note.textContent = '';
+  }
+}
 
-        // Fetch HA status
-        async function fetchHAStatus() {
-            try {
-                console.log('📡 Fetching HA status...');
-                const response = await fetch('/api/ha-status');
-                const data = await response.json();
-                
-                console.log('✅ HA status received');
-                updateHADisplay(data);
-                
-            } catch (error) {
-                console.error('❌ Error fetching HA status:', error);
-                document.getElementById('haStatusContainer').innerHTML = 
-                    '<div class="text-center text-red-200 py-4"><p>Error loading HA status</p></div>';
-            }
-        }
+async function loadOverview(){
+  const [statsAll, haAll] = await Promise.all([
+    getJSON('/api/system-stats'),
+    getJSON('/api/ha-status')
+  ]);
 
-        // Update HA display
-        function updateHADisplay(data) {
-            const container = document.getElementById('haStatusContainer');
-            const indicator = document.getElementById('haIndicator');
-            
-            const node1Status = data.primary?.connected || false;
-            const node2Status = data.secondary?.connected || false;
-            const node1Role = data.primary?.ha_role || 'Unknown';
-            const node2Role = data.secondary?.ha_role || 'Unknown';
-            
-            let haState, haColor;
-            if (node1Status && node2Status) {
-                haState = 'Fully Redundant';
-                haColor = 'text-green-400';
-                indicator.className = 'w-3 h-3 bg-green-400 rounded-full pulse-animation';
-            } else if (node1Status || node2Status) {
-                haState = 'Partially Available';
-                haColor = 'text-yellow-400';
-                indicator.className = 'w-3 h-3 bg-yellow-400 rounded-full pulse-animation';
-            } else {
-                haState = 'Unavailable';
-                haColor = 'text-red-400';
-                indicator.className = 'w-3 h-3 bg-red-400 rounded-full';
-            }
-            
-            // Determine which is actually primary
-            let actualPrimary = 'Unknown';
-            if (node1Role.includes('Primary') || node1Role.includes('Active')) {
-                actualPrimary = '10.0.0.100';
-            } else if (node2Role.includes('Primary') || node2Role.includes('Active')) {
-                actualPrimary = '10.0.0.200';
-            }
-            
-            container.innerHTML = `
-                <div class="space-y-4">
-                    <div class="flex items-center justify-between">
-                        <span class="text-blue-200">HA State</span>
-                        <span class="${haColor} font-bold">${haState}</span>
-                    </div>
-                    
-                    ${actualPrimary !== 'Unknown' ? `
-                        <div class="bg-blue-500 bg-opacity-10 rounded-lg p-2">
-                            <div class="text-center text-blue-200 text-xs">
-                                Current Primary: <span class="text-white font-bold">${actualPrimary}</span>
-                            </div>
-                        </div>
-                    ` : ''}
-                    
-                    <div class="grid grid-cols-1 gap-3">
-                        <div class="glass-effect rounded-lg p-3 ${node1Role.includes('Primary') || node1Role.includes('Active') ? 'border-l-2 border-green-400' : ''}">
-                            <div class="flex items-center justify-between mb-2">
-                                <span class="text-blue-200 text-sm">Node 1</span>
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-2 h-2 ${node1Status ? 'bg-green-400' : 'bg-red-400'} rounded-full"></div>
-                                    <span class="text-white text-sm font-medium">10.0.0.100</span>
-                                </div>
-                            </div>
-                            <div class="text-xs text-blue-300">
-                                Role: <span class="text-white font-medium">${node1Role}</span> | 
-                                Status: <span class="${node1Status ? 'text-green-300' : 'text-red-300'}">${node1Status ? 'Online' : 'Offline'}</span>
-                            </div>
-                        </div>
-                        
-                        <div class="glass-effect rounded-lg p-3 ${node2Role.includes('Primary') || node2Role.includes('Active') ? 'border-l-2 border-green-400' : ''}">
-                            <div class="flex items-center justify-between mb-2">
-                                <span class="text-blue-200 text-sm">Node 2</span>
-                                <div class="flex items-center space-x-2">
-                                    <div class="w-2 h-2 ${node2Status ? 'bg-green-400' : 'bg-red-400'} rounded-full"></div>
-                                    <span class="text-white text-sm font-medium">10.0.0.200</span>
-                                </div>
-                            </div>
-                            <div class="text-xs text-blue-300">
-                                Role: <span class="text-white font-medium">${node2Role}</span> | 
-                                Status: <span class="${node2Status ? 'text-green-300' : 'text-red-300'}">${node2Status ? 'Online' : 'Offline'}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            `;
-        }
+  const get = (obj, keys, def='')=>{
+    for(const k of keys){ if(obj && obj[k]!==undefined && obj[k]!==null) return obj[k]; }
+    return def;
+  };
+  const num = v=> (v===undefined||v===null||v==='')? '': (typeof v==='number'? v: Number(v));
 
-        // Update system information
-        function updateSystemInfo() {
-            console.log('📡 Fetching system information...');
-            fetch('/api/system-info')
-                .then(response => response.json())
-                .then(data => {
-                    console.log('✅ System info received');
-                    const container = document.getElementById('systemInfoContainer');
-                    
-                    if (data.primary || data.secondary) {
-                        container.innerHTML = `
-                            <div class="space-y-3">
-                                <!-- Primary Node Info -->
-                                <div class="glass-effect rounded-xl p-4 border-l-4 ${data.primary?.connected ? 'border-green-400' : 'border-red-400'}">
-                                    <div class="flex items-center justify-between mb-3">
-                                        <div class="flex items-center space-x-2">
-                                            <span class="text-white font-bold text-sm">Node 1</span>
-                                            <span class="text-xs px-2 py-1 rounded-full ${data.primary?.connected ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}">10.0.0.100</span>
-                                        </div>
-                                        <span class="text-xs ${data.primary?.connected ? 'text-green-300' : 'text-red-300'}">${data.primary?.ha_role || 'Unknown'}</span>
-                                    </div>
-                                    
-                                    ${data.primary?.connected ? `
-                                        <div class="grid grid-cols-2 gap-3 text-xs">
-                                            <div>
-                                                <div class="text-blue-300 mb-1">Version</div>
-                                                <div class="text-white font-medium">${data.primary.version}</div>
-                                            </div>
-                                            <div>
-                                                <div class="text-blue-300 mb-1">Build</div>
-                                                <div class="text-white font-medium">${data.primary.buildnumber}</div>
-                                            </div>
-                                            <div>
-                                                <div class="text-blue-300 mb-1">Hostname</div>
-                                                <div class="text-white font-medium">${data.primary.hostname}</div>
-                                            </div>
-                                            <div>
-                                                <div class="text-blue-300 mb-1">Platform</div>
-                                                <div class="text-white font-medium">${data.primary.platformtype}</div>
-                                            </div>
-                                        </div>
-                                    ` : `
-                                        <div class="flex items-center justify-center py-2">
-                                            <span class="text-red-300 text-sm">📡 Offline</span>
-                                        </div>
-                                    `}
-                                </div>
-                                
-                                <!-- Secondary Node Info -->
-                                <div class="glass-effect rounded-xl p-4 border-l-4 ${data.secondary?.connected ? 'border-green-400' : 'border-red-400'}">
-                                    <div class="flex items-center justify-between mb-3">
-                                        <div class="flex items-center space-x-2">
-                                            <span class="text-white font-bold text-sm">Node 2</span>
-                                            <span class="text-xs px-2 py-1 rounded-full ${data.secondary?.connected ? 'bg-green-500 text-white' : 'bg-red-500 text-white'}">10.0.0.200</span>
-                                        </div>
-                                        <span class="text-xs ${data.secondary?.connected ? 'text-green-300' : 'text-red-300'}">${data.secondary?.ha_role || 'Unknown'}</span>
-                                    </div>
-                                    
-                                    ${data.secondary?.connected ? `
-                                        <div class="grid grid-cols-2 gap-3 text-xs">
-                                            <div>
-                                                <div class="text-blue-300 mb-1">Version</div>
-                                                <div class="text-white font-medium">${data.secondary.version}</div>
-                                            </div>
-                                            <div>
-                                                <div class="text-blue-300 mb-1">Build</div>
-                                                <div class="text-white font-medium">${data.secondary.buildnumber}</div>
-                                            </div>
-                                            <div>
-                                                <div class="text-blue-300 mb-1">Hostname</div>
-                                                <div class="text-white font-medium">${data.secondary.hostname}</div>
-                                            </div>
-                                            <div>
-                                                <div class="text-blue-300 mb-1">Platform</div>
-                                                <div class="text-white font-medium">${data.secondary.platformtype}</div>
-                                            </div>
-                                        </div>
-                                    ` : `
-                                        <div class="flex items-center justify-center py-2">
-                                            <span class="text-red-300 text-sm">📡 Offline</span>
-                                        </div>
-                                    `}
-                                </div>
-                            </div>
-                        `;
-                    } else {
-                        container.innerHTML = '<div class="text-center text-red-200 py-8"><p>System information unavailable</p></div>';
-                    }
-                })
-                .catch(error => {
-                    console.error('❌ Error fetching system info:', error);
-                    document.getElementById('systemInfoContainer').innerHTML = 
-                        '<div class="text-center text-red-200 py-8"><p>Error loading system info</p></div>';
-                });
-        }
+  if(statsAll.ok && (statsAll.data.primary || statsAll.data.secondary)){
+    const rows = ['primary','secondary'].map(node=>{
+      const d = statsAll.data[node] || {};
+      const ns = d.ns_stats?.ns || d.ns_stats || {};
+      const cpu = get(ns, ['cpuusagepcnt','cpuusage','cpu_usage','cpuusagepct','cpuusage_pc'] , '');
+      const mem = get(ns, ['memusagepcnt','memoryusagepcnt','memusagepct'], '');
+      const httpRate = get(ns, ['httprequestsrate','httprequestrate','http_requests_rate','httprequests_rate'], '');
+      const ver = d.version || '';
+      const role = d.ha_role || '';
+      const ip = d.ip || '';
+      return `<tr>
+        <td class="muted">${node}</td>
+        <td>${escapeHtml(ip+'')}</td>
+        <td>${escapeHtml(role+'')}</td>
+        <td>${escapeHtml(ver+'')}</td>
+        <td>${cpu!==''? escapeHtml(num(cpu).toFixed(1)+'%'): ''}</td>
+        <td>${mem!==''? escapeHtml(num(mem).toFixed(1)+'%'): ''}</td>
+        <td>${httpRate!==''? escapeHtml(num(httpRate).toFixed(0)): ''}</td>
+      </tr>`;
+    }).join('');
 
-        // Fetch services
-        async function fetchServices() {
-            try {
-                console.log('📡 Fetching services...');
-                const response = await fetch('/api/services');
-                const data = await response.json();
-                
-                console.log('✅ Services received');
-                
-                if (data.connected && data.data && data.data.service) {
-                    servicesData = data.data.service;
-                    updateServicesDisplay();
-                } else {
-                    document.getElementById('servicesContainer').innerHTML = 
-                        '<div class="text-center text-red-200 py-4"><p>Unable to load services</p></div>';
-                }
-                
-            } catch (error) {
-                console.error('❌ Error fetching services:', error);
-                document.getElementById('servicesContainer').innerHTML = 
-                    '<div class="text-center text-red-200 py-4"><p>Error loading services</p></div>';
-            }
-        }
+    $('#sysStats').innerHTML = `<table><thead><tr>
+      <th>Node</th><th>IP</th><th>Role</th><th>Version</th><th>CPU</th><th>Mem</th><th>HTTP req/s</th>
+    </tr></thead><tbody>${rows}</tbody></table>`;
+  } else {
+    const node = state.node;
+    const single = await getJSON(`/api/system-stats?node=${encodeURIComponent(node)}`);
+    $('#sysStats').textContent = single.ok ? JSON.stringify(single.data.ns_stats || single.data.stats || single.data, null, 2) : 'Error loading stats';
+  }
 
-        // Update services display
-        function updateServicesDisplay() {
-            const container = document.getElementById('servicesContainer');
-            
-            if (!servicesData || servicesData.length === 0) {
-                container.innerHTML = '<div class="text-center text-blue-200 py-4"><p>No services configured</p></div>';
-                document.getElementById('servicesCount').textContent = '0';
-                return;
-            }
-            
-            const upServices = servicesData.filter(s => s.svrstate === 'UP').length;
-            document.getElementById('servicesCount').textContent = upServices;
-            
-            container.innerHTML = `
-                <div class="grid grid-cols-3 gap-2 mb-3 text-xs text-center">
-                    <div>
-                        <div class="text-green-400 font-bold">${servicesData.filter(s => s.svrstate === 'UP').length}</div>
-                        <div class="text-green-300">UP</div>
-                    </div>
-                    <div>
-                        <div class="text-red-400 font-bold">${servicesData.filter(s => s.svrstate === 'DOWN').length}</div>
-                        <div class="text-red-300">DOWN</div>
-                    </div>
-                    <div>
-                        <div class="text-yellow-400 font-bold">${servicesData.filter(s => s.svrstate === 'OUT OF SERVICE').length}</div>
-                        <div class="text-yellow-300">OOS</div>
-                    </div>
-                </div>
-            `;
-            
-            // Show first 5 services
-            servicesData.slice(0, 5).forEach(service => {
-                const serviceElement = document.createElement('div');
-                serviceElement.className = 'flex items-center justify-between py-2 cursor-pointer hover:bg-white hover:bg-opacity-5 rounded px-2';
-                
-                const stateColor = service.svrstate === 'UP' ? 'text-green-400' : 
-                                  service.svrstate === 'DOWN' ? 'text-red-400' : 'text-yellow-400';
-                const stateIcon = service.svrstate === 'UP' ? '🟢' : 
-                                 service.svrstate === 'DOWN' ? '🔴' : '🟡';
-                
-                serviceElement.innerHTML = `
-                    <div class="flex items-center space-x-2">
-                        <span class="text-sm">${stateIcon}</span>
-                        <div>
-                            <div class="text-white text-sm font-medium">${service.name}</div>
-                            <div class="text-blue-300 text-xs">${service.ip || 'Unknown'}:${service.port || 'Unknown'}</div>
-                        </div>
-                    </div>
-                    <span class="text-xs ${stateColor} font-medium">${service.svrstate}</span>
-                `;
-                
-                container.appendChild(serviceElement);
-            });
-            
-            if (servicesData.length > 5) {
-                const moreElement = document.createElement('div');
-                moreElement.className = 'text-center text-blue-300 text-xs mt-2';
-                moreElement.textContent = `... and ${servicesData.length - 5} more services`;
-                container.appendChild(moreElement);
-            }
-        }
+  if(haAll.ok && (haAll.data.hanode || (haAll.data.primary && haAll.data.secondary))){
+    const items = Array.isArray(haAll.data.hanode)? haAll.data.hanode: [];
+    if(items.length){
+      const rows = items.map((n,i)=>{
+        const name = n.name || `node-${i+1}`;
+        const ip = n.ipaddress || n.ip || '';
+        theState = n.state || n.hastatus || '';
+        const hasync = n.hasync || n.syncstatusstrictmode || '';
+        const rm = n.routemonitorstate || '';
+        const cls = /UP|PRIMARY|SUCCESS/i.test(theState)? 'ok' : /DOWN|FAIL/i.test(theState)? 'bad' : 'warn';
+        return `<tr>
+          <td class="muted">${i+1}</td>
+          <td>${escapeHtml(name+'')}</td>
+          <td>${escapeHtml(ip+'')}</td>
+          <td><span class="${cls}">${escapeHtml(String(theState))}</span></td>
+          <td>${escapeHtml(String(hasync))}</td>
+          <td>${escapeHtml(String(rm))}</td>
+        </tr>`;
+      }).join('');
+      $('#haStatus').innerHTML = `<table><thead><tr>
+        <th>#</th><th>Name</th><th>IP</th><th>Status</th><th>HA Sync</th><th>Route Monitor</th>
+      </tr></thead><tbody>${rows}</tbody></table>`;
+    } else {
+      $('#haStatus').textContent = 'No HA data';
+    }
+  } else {
+    const node = state.node;
+    const single = await getJSON(`/api/ha-status?node=${encodeURIComponent(node)}`);
+    $('#haStatus').textContent = single.ok ? JSON.stringify(single.data.hanode || single.data, null, 2) : 'Error loading HA status';
+  }
+}
 
-        // Fetch failover history
-        async function fetchFailoverHistory() {
-            try {
-                console.log('📡 Fetching failover history...');
-                const response = await fetch('/api/failover-history');
-                const data = await response.json();
-                
-                console.log('✅ Failover history received');
-                failoverEvents = data.events || [];
-                updateFailoverDisplay();
-                
-            } catch (error) {
-                console.error('❌ Error fetching failover history:', error);
-                document.getElementById('failoverEventsContainer').innerHTML = 
-                    '<div class="text-center text-red-200 py-8"><p>Error loading failover events</p></div>';
-            }
-        }
+async function loadApplications(){
+  const mode = state.apiModes[state.node] || 'nitro';
+  const chipEl = $('#appsMode');
+  if (chipEl) chipEl.textContent = mode;
+  if(mode!=='nextgen'){
+    const tbody = $('#appsTable'); if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="muted">Not available on this node (NITRO mode)</td></tr>`;
+    return;
+  }
+  const r = await getJSON(`/api/applications?node=${encodeURIComponent(state.node)}`);
+  if(!r.ok){
+    const msg = r.status===501? 'Next-Gen API not enabled for this node' : 'Failed to load applications';
+    $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">${msg}</td></tr>`;
+    return;
+  }
+  let items = [];
+  const d = r.data.applications ?? r.data ?? [];
+  if(Array.isArray(d)) items = d; else if (typeof d === 'object'){
+    if(Array.isArray(d.applications)) items = d.applications; else {
+      for(const k in d){ if(Array.isArray(d[k])) items = items.concat(d[k]); }
+    }
+  }
+  if(!items.length){
+    $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">No applications found</td></tr>`;
+    return;
+  }
+  const rows = items.map((a,i)=>{
+    const name = a?.name ?? a?.appName ?? `app-${i+1}`;
+    const vip  = a?.vip ?? a?.vipAddress ?? a?.listener?.vip ?? '';
+    const port = a?.port ?? a?.listener?.port ?? '';
+    const state = (a?.state ?? a?.status ?? 'UP').toString().toUpperCase();
+    const cls = state.includes('UP')? 'ok' : state.includes('DOWN')? 'bad' : 'warn';
+    return `<tr>
+      <td class="muted">${i+1}</td>
+      <td>${escapeHtml(name)}</td>
+      <td>${escapeHtml(String(vip))}</td>
+      <td>${escapeHtml(String(port))}</td>
+      <td><span class="${cls}">${escapeHtml(state)}</span></td>
+    </tr>`;
+  }).join('');
+  $('#appsTable').innerHTML = rows;
+}
 
-        // Update failover display
-        function updateFailoverDisplay() {
-            const container = document.getElementById('failoverEventsContainer');
-            document.getElementById('failoverCount').textContent = failoverEvents.length;
-            
-            if (!failoverEvents || failoverEvents.length === 0) {
-                container.innerHTML = '<div class="text-center text-blue-200 py-8"><p>No failover events recorded</p></div>';
-                return;
-            }
-            
-            container.innerHTML = '';
-            
-            failoverEvents.slice(0, 20).forEach(event => {
-                const eventElement = document.createElement('div');
-                eventElement.className = 'glass-effect rounded-xl p-4 mb-3 border-l-4 border-orange-400';
-                
-                const eventTime = new Date(event.timestamp).toLocaleString();
-                const eventTypeColor = event.type === 'Automatic Failover' ? 'text-red-400' : 
-                                      event.type === 'Failback' ? 'text-green-400' : 'text-yellow-400';
-                
-                eventElement.innerHTML = `
-                    <div class="flex items-center justify-between mb-3">
-                        <div class="flex items-center space-x-3">
-                            <span class="${eventTypeColor} font-bold text-lg">🔄</span>
-                            <div>
-                                <div class="text-white font-semibold">${event.type}</div>
-                                <div class="text-blue-300 text-sm">${eventTime}</div>
-                            </div>
-                        </div>
-                        <span class="text-xs px-2 py-1 rounded-full bg-orange-500 bg-opacity-20 text-orange-300">
-                            ${event.reason}
-                        </span>
-                    </div>
-                    
-                    <div class="grid grid-cols-2 gap-4 text-xs">
-                        <div>
-                            <div class="text-blue-300 mb-1">Previous State</div>
-                            <div class="text-white">
-                                Node 1: <span class="font-medium">${event.old_primary}</span><br>
-                                Node 2: <span class="font-medium">${event.old_secondary}</span>
-                            </div>
-                        </div>
-                        <div>
-                            <div class="text-blue-300 mb-1">New State</div>
-                            <div class="text-white">
-                                Node 1: <span class="font-medium">${event.new_primary}</span><br>
-                                Node 2: <span class="font-medium">${event.new_secondary}</span>
-                            </div>
-                        </div>
-                    </div>
-                `;
-                
-                container.appendChild(eventElement);
-            });
-            
-            if (failoverEvents.length > 20) {
-                const moreElement = document.createElement('div');
-                moreElement.className = 'text-center text-blue-300 text-sm py-2';
-                moreElement.textContent = `... and ${failoverEvents.length - 20} more events`;
-                container.appendChild(moreElement);
-            }
-        }
+async function loadFailover(){
+  const node = state.node;
+  const p = collectFailoverFilters();
+  const url = `/api/failover-history?${qs({...p, node})}`;
+  const r = await getJSON(url);
+  if(!r.ok){
+    $('#failTable').innerHTML = `<tr><td colspan="5" class="muted">Failed to load failover history (HTTP ${r.status})</td></tr>`;
+    return;
+  }
+  const arr = (r.data.events || r.data.failover || r.data.failover_history || []);
+  if(!Array.isArray(arr) || !arr.length){
+    $('#failTable').innerHTML = `<tr><td colspan="5" class="muted">No events</td></tr>`;
+    return;
+  }
+  const rows = arr.map((e,i)=>{
+    const ts = fmt(e.timestamp || e.time || e.occurred_at || e.when);
+    const typ = (e.type || e.eventType || '').toString();
+    const reason = (e.reason || e.cause || '').toString();
+    const role = (e.role_change || e.role || '').toString();
+    return `<tr>
+      <td class="muted">${i+1}</td>
+      <td>${escapeHtml(ts)}</td>
+      <td>${escapeHtml(typ)}</td>
+      <td>${escapeHtml(reason)}</td>
+      <td>${escapeHtml(role)}</td>
+    </tr>`
+  }).join('');
+  $('#failTable').innerHTML = rows;
+}
 
-        // Filter failover events
-        function filterFailoverEvents() {
-            const fromDate = document.getElementById('failoverFromDate').value;
-            const toDate = document.getElementById('failoverToDate').value;
-            
-            if (!fromDate || !toDate) {
-                alert('Please select both from and to dates');
-                return;
-            }
-            
-            const url = `/api/failover-history?from_date=${fromDate}&to_date=${toDate}`;
-            
-            fetch(url)
-                .then(response => response.json())
-                .then(data => {
-                    failoverEvents = data.events || [];
-                    updateFailoverDisplay();
-                })
-                .catch(error => {
-                    console.error('Error filtering failover events:', error);
-                });
-        }
+async function loadSessions(){
+  const node = state.node;
+  const p = collectSessionFilters();
+  const url = `/api/user-sessions?${qs({...p, node})}`;
+  const r = await getJSON(url);
+  if(!r.ok){
+    $('#sessTable').innerHTML = `<tr><td colspan="8" class="muted">Failed to load sessions (HTTP ${r.status})</td></tr>`;
+    return;
+  }
+  const arr = (r.data.sessions || r.data.items || r.data || []);
+  const list = Array.isArray(arr) ? arr : [];
+  if(!list.length){
+    $('#sessTable').innerHTML = `<tr><td colspan="8" class="muted">No sessions</td></tr>`;
+    return;
+  }
+  const rows = list.map((s,i)=>{
+    const user = s.user || s.username || s.cn || '';
+    const type = s.type || s.protocol || s.kind || '';
+    const status = (s.status || s.state || '').toString();
+    const dur = s.duration || s.elapsed || '';
+    const ip = s.client_ip || s.ip || s.src || '';
+    const nodeName = s.node || s.device || '';
+    const start = fmt(s.start_time || s.started_at || s.login_time || '');
+    const cls = /active|up/i.test(status)? 'ok' : /term|down|fail/i.test(status)? 'bad' : 'warn';
+    return `<tr>
+      <td class="muted">${i+1}</td>
+      <td>${escapeHtml(user+'')}</td>
+      <td>${escapeHtml(type+'')}</td>
+      <td><span class="${cls}">${escapeHtml(status+'')}</span></td>
+      <td>${escapeHtml((dur+'')||'')}</td>
+      <td>${escapeHtml(ip+'')}</td>
+      <td>${escapeHtml(nodeName+'')}</td>
+      <td>${escapeHtml(start+'')}</td>
+    </tr>`
+  }).join('');
+  $('#sessTable').innerHTML = rows;
+}
 
-        // Export failover history
-        function exportFailoverHistory() {
-            window.open('/api/export/failover-history', '_blank');
-        }
+function collectFailoverFilters(){
+  return {
+    from: toISO($('#failFrom').value),
+    to: toISO($('#failTo').value),
+    type: $('#failType').value
+  };
+}
 
-        // Fetch user sessions
-        async function fetchUserSessions() {
-            try {
-                console.log('📡 Fetching user sessions...');
-                const response = await fetch('/api/user-sessions');
-                const data = await response.json();
-                
-                console.log('✅ User sessions received');
-                userSessions = data.sessions || [];
-                updateUserSessionsDisplay(data);
-                
-            } catch (error) {
-                console.error('❌ Error fetching user sessions:', error);
-                document.getElementById('userSessionsContainer').innerHTML = 
-                    '<div class="text-center text-red-200 py-8"><p>Error loading user sessions</p></div>';
-            }
-        }
+function collectSessionFilters(){
+  return {
+    from: toISO($('#sessFrom').value),
+    to: toISO($('#sessTo').value),
+    user: $('#sessUser').value.trim(),
+    type: $('#sessType').value,
+    status: $('#sessStatus').value
+  };
+}
 
-        // Update user sessions display
-        function updateUserSessionsDisplay(data) {
-            const container = document.getElementById('userSessionsContainer');
-            const statsContainer = document.getElementById('sessionStatsContainer');
-            
-            // Update count
-            document.getElementById('sessionsCount').textContent = data.total_count || 0;
-            
-            // Update statistics
-            if (data.statistics) {
-                const stats = data.statistics;
-                statsContainer.innerHTML = `
-                    <div class="glass-effect rounded-lg p-3 text-center">
-                        <div class="text-white text-lg font-bold">${stats.total_sessions}</div>
-                        <div class="text-blue-300 text-xs">Total Sessions</div>
-                    </div>
-                    <div class="glass-effect rounded-lg p-3 text-center">
-                        <div class="text-green-400 text-lg font-bold">${stats.active_sessions}</div>
-                        <div class="text-blue-300 text-xs">Active</div>
-                    </div>
-                    <div class="glass-effect rounded-lg p-3 text-center">
-                        <div class="text-blue-400 text-lg font-bold">${stats.web_sessions}</div>
-                        <div class="text-blue-300 text-xs">Web</div>
-                    </div>
-                    <div class="glass-effect rounded-lg p-3 text-center">
-                        <div class="text-purple-400 text-lg font-bold">${stats.vpn_sessions}</div>
-                        <div class="text-blue-300 text-xs">VPN</div>
-                    </div>
-                    <div class="glass-effect rounded-lg p-3 text-center">
-                        <div class="text-cyan-400 text-lg font-bold">${stats.workspace_sessions}</div>
-                        <div class="text-blue-300 text-xs">Workspace</div>
-                    </div>
-                    <div class="glass-effect rounded-lg p-3 text-center">
-                        <div class="text-yellow-400 text-lg font-bold">${stats.unique_users}</div>
-                        <div class="text-blue-300 text-xs">Unique Users</div>
-                    </div>
-                `;
-            }
-            
-            if (!userSessions || userSessions.length === 0) {
-                container.innerHTML = '<div class="text-center text-blue-200 py-8"><p>No user sessions found</p></div>';
-                return;
-            }
-            
-            container.innerHTML = '';
-            
-            userSessions.forEach(session => {
-                const sessionElement = document.createElement('div');
-                sessionElement.className = 'glass-effect rounded-xl p-4 mb-3';
-                
-                const connectionTypeColor = session.connection_type === 'Web' ? 'text-blue-400 bg-blue-500' : 
-                                           session.connection_type === 'VPN' ? 'text-purple-400 bg-purple-500' : 
-                                           'text-cyan-400 bg-cyan-500';
-                
-                const statusColor = session.status === 'Active' ? 'text-green-400 bg-green-500' : 'text-gray-400 bg-gray-500';
-                
-                const startTime = new Date(session.start_time).toLocaleString();
-                const endTime = session.end_time ? new Date(session.end_time).toLocaleString() : 'Active';
-                
-                sessionElement.innerHTML = `
-                    <div class="flex items-center justify-between mb-3">
-                        <div class="flex items-center space-x-3">
-                            <div class="w-10 h-10 ${connectionTypeColor} bg-opacity-20 rounded-lg flex items-center justify-center">
-                                <span class="text-sm font-bold">${session.connection_type.charAt(0)}</span>
-                            </div>
-                            <div>
-                                <div class="text-white font-semibold">${session.username}</div>
-                                <div class="text-blue-300 text-sm">${session.client_ip}</div>
-                            </div>
-                        </div>
-                        
-                        <div class="flex items-center space-x-2">
-                            <span class="text-xs px-2 py-1 rounded-full ${connectionTypeColor} bg-opacity-20">
-                                ${session.connection_type}
-                            </span>
-                            <span class="text-xs px-2 py-1 rounded-full ${statusColor} bg-opacity-20">
-                                ${session.status}
-                            </span>
-                        </div>
-                    </div>
-                    
-                    <div class="grid grid-cols-2 md:grid-cols-5 gap-4 text-xs">
-                        <div>
-                            <div class="text-blue-300 mb-1">Start Time</div>
-                            <div class="text-white font-medium">${startTime}</div>
-                        </div>
-                        <div>
-                            <div class="text-blue-300 mb-1">End Time</div>
-                            <div class="text-white font-medium">${endTime}</div>
-                        </div>
-                        <div>
-                            <div class="text-blue-300 mb-1">Duration</div>
-                            <div class="text-white font-medium">${session.duration_minutes ? session.duration_minutes + ' min' : 'Active'}</div>
-                        </div>
-                        <div>
-                            <div class="text-blue-300 mb-1">Gateway</div>
-                            <div class="text-white font-medium">${session.gateway || session.node_ip}</div>
-                        </div>
-                        <div>
-                            <div class="text-blue-300 mb-1">Data Usage</div>
-                            <div class="text-white font-medium">${session.bytes_sent && session.bytes_received ? 
-                                Math.round((session.bytes_sent + session.bytes_received) / (1024 * 1024) * 100) / 100 + ' MB' : 'N/A'}</div>
-                        </div>
-                    </div>
-                `;
-                
-                container.appendChild(sessionElement);
-            });
-        }
+function toISO(v){
+  if(!v) return '';
+  const d = new Date(v);
+  if(isNaN(d)) return '';
+  return d.toISOString();
+}
 
-        // Filter user sessions
-        function filterUserSessions() {
-            const fromDate = document.getElementById('sessionsFromDate').value;
-            const toDate = document.getElementById('sessionsToDate').value;
-            const connectionType = document.getElementById('connectionTypeFilter').value;
-            const username = document.getElementById('usernameFilter').value;
-            const status = document.getElementById('statusFilter').value;
-            
-            let url = '/api/user-sessions?';
-            const params = [];
-            
-            if (fromDate) params.push(`from_date=${fromDate}`);
-            if (toDate) params.push(`to_date=${toDate}`);
-            if (connectionType) params.push(`connection_type=${connectionType}`);
-            if (username) params.push(`username=${username}`);
-            if (status) params.push(`status=${status}`);
-            
-            url += params.join('&');
-            
-            fetch(url)
-                .then(response => response.json())
-                .then(data => {
-                    userSessions = data.sessions || [];
-                    updateUserSessionsDisplay(data);
-                })
-                .catch(error => {
-                    console.error('Error filtering user sessions:', error);
-                });
-        }
+function fmt(v){
+  if(!v) return '';
+  try{ return new Date(v).toLocaleString(); }catch(e){ return String(v); }
+}
 
-        // Export user sessions
-        function exportUserSessions() {
-            const fromDate = document.getElementById('sessionsFromDate').value;
-            const toDate = document.getElementById('sessionsToDate').value;
-            const connectionType = document.getElementById('connectionTypeFilter').value;
-            const username = document.getElementById('usernameFilter').value;
-            const status = document.getElementById('statusFilter').value;
-            
-            let url = '/api/export/user-sessions?';
-            const params = [];
-            
-            if (fromDate) params.push(`from_date=${fromDate}`);
-            if (toDate) params.push(`to_date=${toDate}`);
-            if (connectionType) params.push(`connection_type=${connectionType}`);
-            if (username) params.push(`username=${username}`);
-            if (status) params.push(`status=${status}`);
-            
-            url += params.join('&');
-            
-            window.open(url, '_blank');
-        }
+function escapeHtml(s){
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+}
 
-        // Refresh data
-        async function refreshData() {
-            console.log('🔄 Manual refresh triggered');
-            const refreshIcon = document.getElementById('refreshIcon');
-            refreshIcon.classList.add('spin-slow');
-            
-            try {
-                // Trigger server-side refresh
-                const refreshResponse = await fetch('/api/refresh');
-                if (!refreshResponse.ok) {
-                    throw new Error(`HTTP ${refreshResponse.status}`);
-                }
-                
-                // Wait a moment for server to collect data
-                await new Promise(resolve => setTimeout(resolve, 2000));
-                
-                // Fetch all updated data
-                await Promise.all([
-                    fetchSystemStats(),
-                    fetchVservers(),
-                    fetchHAStatus(),
-                    fetchServices(),
-                    updateSystemInfo()
-                ]);
-                
-                // Refresh current tab specific data
-                if (currentTab === 'failover') {
-                    await fetchFailoverHistory();
-                } else if (currentTab === 'sessions') {
-                    await fetchUserSessions();
-                }
-                
-                refreshIcon.classList.remove('spin-slow');
-                console.log('✅ Manual refresh completed');
-                
-                // Show success message briefly
-                const originalText = document.getElementById('overallStatusText').textContent;
-                document.getElementById('overallStatusText').textContent = 'Refreshed!';
-                document.getElementById('overallStatusText').style.color = '#22c55e';
-                
-                setTimeout(() => {
-                    document.getElementById('overallStatusText').textContent = originalText;
-                    document.getElementById('overallStatusText').style.color = '';
-                }, 2000);
-                
-            } catch (error) {
-                console.error('❌ Error refreshing data:', error);
-                refreshIcon.classList.remove('spin-slow');
-                
-                // Show error message
-                document.getElementById('overallStatusText').textContent = 'Refresh Failed';
-                document.getElementById('overallStatusText').style.color = '#ef4444';
-                
-                setTimeout(() => {
-                    document.getElementById('overallStatusText').textContent = 'Error';
-                    document.getElementById('overallStatusText').style.color = '';
-                }, 3000);
-            }
-        }
+function startAutoRefresh(){
+  if(state.interval) clearInterval(state.interval);
+  state.interval = setInterval(()=>{
+    const active = document.querySelector('.tab.active')?.dataset.tab;
+    if(active==='overview') loadOverview();
+    if(active==='applications') loadApplications();
+    if(active==='failover') loadFailover();
+    if(active==='sessions') loadSessions();
+    if(active==='unlock') {/* no auto refresh */}
+  }, state.refreshMs);
+}
 
-        // Auto refresh
-        function startAutoRefresh() {
-            if (autoRefreshInterval) clearInterval(autoRefreshInterval);
-            
-            autoRefreshInterval = setInterval(async () => {
-                try {
-                    await Promise.all([
-                        fetchSystemStats(),
-                        fetchVservers(),
-                        fetchHAStatus(),
-                        fetchServices(),
-                        updateSystemInfo()
-                    ]);
-                    
-                    // Auto-refresh current tab data
-                    if (currentTab === 'failover') {
-                        await fetchFailoverHistory();
-                    } else if (currentTab === 'sessions') {
-                        await fetchUserSessions();
-                    }
-                } catch (error) {
-                    console.error('Auto-refresh error:', error);
-                }
-            }, 30000); // 30 seconds
-        }
+function exportCSV(kind){
+  const node = state.node;
+  const p = kind==='failover' ? collectFailoverFilters() : collectSessionFilters();
+  const path = kind==='failover' ? '/api/export/failover-history' : '/api/export/user-sessions';
+  const url = `${path}?${qs({...p, node})}`;
+  window.open(url, '_blank');
+}
 
-        // Initialize dashboard
-        async function initializeDashboard() {
-            console.log('🚀 Starting enhanced dashboard initialization...');
-            
-            updateCurrentTime();
-            setInterval(updateCurrentTime, 1000);
-            
-            // Set default date filters
-            const now = new Date();
-            const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-            
-            // Format dates for datetime-local inputs
-            const formatDateTime = (date) => {
-                return date.getFullYear() + '-' + 
-                       String(date.getMonth() + 1).padStart(2, '0') + '-' + 
-                       String(date.getDate()).padStart(2, '0') + 'T' + 
-                       String(date.getHours()).padStart(2, '0') + ':' + 
-                       String(date.getMinutes()).padStart(2, '0');
-            };
-            
-            document.getElementById('failoverFromDate').value = formatDateTime(yesterday);
-            document.getElementById('failoverToDate').value = formatDateTime(now);
-            document.getElementById('sessionsFromDate').value = formatDateTime(yesterday);
-            document.getElementById('sessionsToDate').value = formatDateTime(now);
-            
-            document.getElementById('overallStatusText').textContent = 'Loading...';
-            
-            try {
-                await Promise.all([
-                    fetchSystemStats(),
-                    fetchVservers(),
-                    fetchHAStatus(),
-                    fetchServices(),
-                    updateSystemInfo()
-                ]);
-                
-                startAutoRefresh();
-                document.getElementById('overallStatusText').textContent = 'Ready';
-                
-                console.log('✅ Enhanced dashboard initialization completed');
-                
-            } catch (error) {
-                console.error('❌ Dashboard initialization failed:', error);
-                document.getElementById('overallStatusText').textContent = 'Error';
-            }
-        }
+// Unlock tab
+function loadUnlock(){
+  const sel = $('#unlockNode'); if(sel) sel.value = state.node;
+  const msg = $('#unlockMsg'); if(msg) msg.textContent='';
+  const input = $('#unlockUsername');
+  if(input && !input._bound){
+    input.addEventListener('keyup', (e)=>{ if(e.key==='Enter') doUnlock(); });
+    input._bound = true;
+  }
+  const btn = $('#unlockBtn');
+  if(btn && !btn._bound){
+    btn.addEventListener('click', doUnlock);
+    btn._bound = true;
+  }
+}
+async function doUnlock(){
+  const node = $('#unlockNode').value || state.node;
+  const username = ($('#unlockUsername').value || '').trim();
+  const btn = $('#unlockBtn');
+  const msg = $('#unlockMsg');
+  msg.textContent = '';
+  if(!username){ msg.textContent='Please enter a username.'; return; }
+  btn.disabled = true; const old = btn.textContent; btn.textContent = 'Working…';
+  try{
+    const r = await getJSON('/api/unlock-user', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({node, username})
+    });
+    if(r.ok && r.data.success){
+      msg.innerHTML = `<span class="ok">✔ ${r.data.message}</span>`;
+      $('#unlockUsername').value = '';
+    }else{
+      const err = r.data?.error || `Failed (HTTP ${r.status})`;
+      msg.innerHTML = `<span class="bad">✖ ${escapeHtml(err)}</span>`;
+    }
+  }catch(e){
+    msg.innerHTML = `<span class="bad">✖ ${escapeHtml(String(e))}</span>`;
+  }finally{
+    btn.disabled = false; btn.textContent = old;
+  }
+}
 
-        // Add debug test button
-        function addTestButton() {
-            const header = document.querySelector('.glass-effect');
-            if (header) {
-                const testBtn = document.createElement('button');
-                testBtn.innerHTML = '🧪 Debug';
-                testBtn.className = 'absolute top-4 right-4 px-3 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600';
-                testBtn.onclick = function() {
-                    fetch('/api/system-stats')
-                        .then(r => r.json())
-                        .then(d => {
-                            console.log('Debug data:', d);
-                            alert('Debug data logged to console (F12)');
-                        })
-                        .catch(e => alert('Debug error: ' + e.message));
-                };
-                header.appendChild(testBtn);
-            }
-        }
+// Events
+$('#nodeSelect').addEventListener('change', (e)=>{
+  state.node = e.target.value;
+  updateAppsTabAvailability();
+  const active = document.querySelector('.tab.active')?.dataset.tab;
+  if(active==='overview') loadOverview();
+  if(active==='applications') loadApplications();
+  if(active==='failover') loadFailover();
+  if(active==='sessions') loadSessions();
+  if(active==='unlock') loadUnlock();
+});
+$('#refreshBtn').addEventListener('click', ()=>{
+  fetchCaps();
+  const active = document.querySelector('.tab.active')?.dataset.tab;
+  if(active==='overview') loadOverview();
+  if(active==='applications') loadApplications();
+  if(active==='failover') loadFailover();
+  if(active==='sessions') loadSessions();
+  if(active==='unlock') loadUnlock();
+});
+$all('.tab').forEach(t=>{
+  t.addEventListener('click', ()=>{
+    if(t.classList.contains('disabled')) return;
+    setActiveTab(t.dataset.tab);
+  });
+});
+$('#failSearch').addEventListener('click', loadFailover);
+$('#sessSearch').addEventListener('click', loadSessions);
+$('#failExport').addEventListener('click', ()=>exportCSV('failover'));
+$('#sessExport').addEventListener('click', ()=>exportCSV('sessions'));
 
-        // Start when page loads
-        document.addEventListener('DOMContentLoaded', function() {
-            console.log('🌐 Enhanced Dashboard DOM Content Loaded');
-            
-            // Add debug button
-            setTimeout(addTestButton, 100);
-            
-            // Test basic API first
-            fetch('/api/system-stats')
-                .then(response => {
-                    if (response.ok) {
-                        console.log('✅ Basic API test successful');
-                        initializeDashboard();
-                    } else {
-                        throw new Error(`HTTP ${response.status}`);
-                    }
-                })
-                .catch(error => {
-                    console.error('❌ Basic API test failed:', error);
-                    document.getElementById('overallStatusText').textContent = 'API Failed';
-                    
-                    // Show error in containers
-                    const errorMsg = '<div class="text-center text-red-200 py-4"><p>API Connection Failed</p></div>';
-                    ['vserversContainer', 'haStatusContainer', 'systemInfoContainer', 'servicesContainer', 
-                     'failoverEventsContainer', 'userSessionsContainer'].forEach(id => {
-                        const element = document.getElementById(id);
-                        if (element) element.innerHTML = errorMsg;
-                    });
-                });
-        });
-
-        // Handle page visibility changes
-        document.addEventListener('visibilitychange', function() {
-            if (document.hidden) {
-                if (autoRefreshInterval) {
-                    clearInterval(autoRefreshInterval);
-                    console.log('⏸️ Auto-refresh paused');
-                }
-            } else {
-                startAutoRefresh();
-                console.log('▶️ Auto-refresh resumed');
-            }
-        });
-
-        // Keyboard shortcuts
-        document.addEventListener('keydown', function(e) {
-            // Ctrl/Cmd + 1-3 for tab switching
-            if ((e.ctrlKey || e.metaKey) && e.key >= '1' && e.key <= '3') {
-                e.preventDefault();
-                const tabs = ['overview', 'failover', 'sessions'];
-                showTab(tabs[parseInt(e.key) - 1]);
-            }
-            
-            // Ctrl/Cmd + R for manual refresh
-            if ((e.ctrlKey || e.metaKey) && e.key === 'r') {
-                e.preventDefault();
-                refreshData();
-            }
-        });
-
-        // Initialize with overview tab
-        showTab('overview');
-    </script>
+// Init
+(async function init(){
+  await fetchCaps();
+  setActiveTab('overview');
+  startAutoRefresh();
+})();
+</script>
 </body>
 </html>
