@@ -6,7 +6,7 @@
   <title>NetScaler Dashboard — Dual-Stack (NITRO + Next-Gen)</title>
   <style>
     :root {
-      --bg: #0b1220; --panel:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#60a5fa; --success:#34d399; --danger:#f87171; --warn:#fbbf24;
+      --bg:#0b1220; --panel:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#60a5fa; --success:#34d399; --danger:#f87171; --warn:#fbbf24;
       --border:#1f2937; --chip:#0ea5e9;
     }
     *{box-sizing:border-box} body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text)}
@@ -16,26 +16,22 @@
     .sub{font-size:12px;color:var(--muted)}
     .controls{display:flex; gap:10px; align-items:center}
     select,button,input{background:#0f172a; color:var(--text); border:1px solid var(--border); border-radius:10px; padding:8px 10px}
-    input[type="datetime-local"], input[type="text"]{padding:8px 10px}
     button.primary{background:var(--accent); border-color:#2563eb; color:#081225; font-weight:600}
     main{padding:16px}
     .tabs{display:flex; gap:8px; border-bottom:1px solid var(--border)}
     .tab{padding:10px 12px; border:1px solid var(--border); border-bottom:none; border-radius:10px 10px 0 0; background:#0c1426; color:var(--muted); cursor:pointer}
     .tab.active{background:#101a31; color:var(--text); font-weight:600}
-    .tab.disabled{opacity:.5; cursor:not-allowed}
     .panel{border:1px solid var(--border); border-top:none; border-radius:0 12px 12px 12px; padding:16px; background:#0c1426; margin-bottom:20px}
     .grid{display:grid; gap:12px}
     .grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
     .card{background:#0e172a; border:1px solid var(--border); border-radius:12px; padding:12px}
     .row{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
-    .row > *{flex:0 0 auto}
     table{width:100%; border-collapse:collapse}
     th,td{padding:10px; border-bottom:1px solid var(--border); text-align:left; font-size:14px}
     th{color:#cbd5e1; font-weight:600}
     .muted{color:var(--muted)}
     .chip{display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; background:#0a1a2a; border:1px solid #12324f; font-size:12px}
     .ok{color:var(--success)} .bad{color:var(--danger)} .warn{color:var(--warn)}
-    .hint{font-size:13px; color:var(--muted)}
     .hidden{display:none}
     .spacer{height:8px}
     .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background:#0b1a2c; border:1px solid #1c314f; padding:2px 6px; border-radius:6px; font-size:12px}
@@ -80,6 +76,7 @@
     <div class="spacer"></div>
     <div id="appsNotice" class="hint muted"></div>
     <div class="spacer"></div>
+
     <div class="card">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px">
         <h3 style="margin:0">Applications</h3>
@@ -96,6 +93,26 @@
           </tr>
         </thead>
         <tbody id="appsTable"><tr><td class="muted" colspan="5">Loading…</td></tr></tbody>
+      </table>
+    </div>
+
+    <div class="spacer"></div>
+
+    <div class="card">
+      <h3 style="margin:0 0 8px 0">Services &amp; Service Groups</h3>
+      <table>
+        <thead>
+          <tr>
+            <th style="width:32px">#</th>
+            <th>Type</th>
+            <th>Name</th>
+            <th>IP / Server</th>
+            <th>Port</th>
+            <th>Status</th>
+            <th>Members</th>
+          </tr>
+        </thead>
+        <tbody id="svcTable"><tr><td class="muted" colspan="7">Loading…</td></tr></tbody>
       </table>
     </div>
   </section>
@@ -191,7 +208,7 @@
         <button id="unlockBtn" class="primary">Unlock</button>
       </div>
       <div id="unlockMsg" class="muted" style="min-height:20px"></div>
-      <div class="hint">Note: operation uses NITRO <code>/nitro/v1/config/aaauser</code> under the hood, with automatic fallback to <code>?action=unlock</code> if required.</div>
+      <div class="hint">Note: operation uses NITRO <code>/nitro/v1/config/aaauser</code> with automatic fallback to <code>?action=unlock</code>.</div>
     </div>
   </section>
 </main>
@@ -213,7 +230,6 @@ async function getJSON(url, opts){
   try { return {ok: res.ok, status: res.status, data: text? JSON.parse(text): {}}; }
   catch(e){ return {ok: res.ok, status: res.status, data: {raw:text}}; }
 }
-
 function qs(params){
   const esc = encodeURIComponent;
   return Object.entries(params)
@@ -229,9 +245,9 @@ function setActiveTab(name){
     t.setAttribute('aria-selected', active?'true':'false');
   });
   $all('section.panel').forEach(p=>p.classList.add('hidden'));
-  $(`#panel-${name}`).classList.remove('hidden');
+  document.getElementById(`panel-${name}`).classList.remove('hidden');
   if(name==='overview') loadOverview();
-  if(name==='applications') loadApplications();
+  if(name==='applications') { loadApplications(); loadServices(); }
   if(name==='failover') loadFailover();
   if(name==='sessions') loadSessions();
   if(name==='unlock') loadUnlock();
@@ -249,17 +265,13 @@ async function fetchCaps(){
 
 function updateAppsTabAvailability(){
   const mode = state.apiModes[state.node] || 'nitro';
-  const tab = $(`.tab[data-tab="applications"]`);
   const note = $('#appsNotice');
   const chip = $('#appsMode');
-  if(chip) chip.textContent = mode;
-  if(!tab) return;
-  if(mode!=='nextgen'){
-    tab.classList.add('disabled');
-    if(note) note.textContent = 'Applications require Next-Gen API (available from NetScaler 14.1). This node is in NITRO mode, so the Applications tab is disabled.';
-  } else {
-    tab.classList.remove('disabled');
-    if(note) note.textContent = '';
+  if (chip) chip.textContent = mode;
+  if (note) {
+    note.textContent = (mode === 'nextgen')
+      ? ''
+      : 'Nitro mode — showing LB vservers as Applications (fallback).';
   }
 }
 
@@ -311,7 +323,7 @@ async function loadOverview(){
       const rows = items.map((n,i)=>{
         const name = n.name || `node-${i+1}`;
         const ip = n.ipaddress || n.ip || '';
-        theState = n.state || n.hastatus || '';
+        const theState = n.state || n.hastatus || '';
         const hasync = n.hasync || n.syncstatusstrictmode || '';
         const rm = n.routemonitorstate || '';
         const cls = /UP|PRIMARY|SUCCESS/i.test(theState)? 'ok' : /DOWN|FAIL/i.test(theState)? 'bad' : 'warn';
@@ -341,33 +353,60 @@ async function loadApplications(){
   const mode = state.apiModes[state.node] || 'nitro';
   const chipEl = $('#appsMode');
   if (chipEl) chipEl.textContent = mode;
-  if(mode!=='nextgen'){
-    const tbody = $('#appsTable'); if (tbody) tbody.innerHTML = `<tr><td colspan="5" class="muted">Not available on this node (NITRO mode)</td></tr>`;
-    return;
-  }
-  const r = await getJSON(`/api/applications?node=${encodeURIComponent(state.node)}`);
-  if(!r.ok){
-    const msg = r.status===501? 'Next-Gen API not enabled for this node' : 'Failed to load applications';
-    $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">${msg}</td></tr>`;
-    return;
-  }
-  let items = [];
-  const d = r.data.applications ?? r.data ?? [];
-  if(Array.isArray(d)) items = d; else if (typeof d === 'object'){
-    if(Array.isArray(d.applications)) items = d.applications; else {
-      for(const k in d){ if(Array.isArray(d[k])) items = items.concat(d[k]); }
+
+  if(mode === 'nextgen'){
+    const r = await getJSON(`/api/applications?node=${encodeURIComponent(state.node)}`);
+    if(!r.ok){
+      const msg = r.status===501? 'Next-Gen API not enabled for this node' : 'Failed to load applications';
+      $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">${msg}</td></tr>`;
+      return;
     }
-  }
-  if(!items.length){
-    $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">No applications found</td></tr>`;
+    let items = [];
+    const d = r.data.applications ?? r.data ?? [];
+    if(Array.isArray(d)) items = d; else if (typeof d === 'object'){
+      if(Array.isArray(d.applications)) items = d.applications; else {
+        for(const k in d){ if(Array.isArray(d[k])) items = items.concat(d[k]); }
+      }
+    }
+    if(!items.length){
+      $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">No applications found</td></tr>`;
+      return;
+    }
+    const rows = items.map((a,i)=>{
+      const name = a?.name ?? a?.appName ?? `app-${i+1}`;
+      const vip  = a?.vip ?? a?.vipAddress ?? a?.listener?.vip ?? '';
+      const port = a?.port ?? a?.listener?.port ?? '';
+      const state = (a?.state ?? a?.status ?? 'UP').toString().toUpperCase();
+      const cls = state.includes('UP')? 'ok' : state.includes('DOWN')? 'bad' : 'warn';
+      return `<tr>
+        <td class="muted">${i+1}</td>
+        <td>${escapeHtml(name)}</td>
+        <td>${escapeHtml(String(vip))}</td>
+        <td>${escapeHtml(String(port))}</td>
+        <td><span class="${cls}">${escapeHtml(state)}</span></td>
+      </tr>`;
+    }).join('');
+    $('#appsTable').innerHTML = rows;
     return;
   }
-  const rows = items.map((a,i)=>{
-    const name = a?.name ?? a?.appName ?? `app-${i+1}`;
-    const vip  = a?.vip ?? a?.vipAddress ?? a?.listener?.vip ?? '';
-    const port = a?.port ?? a?.listener?.port ?? '';
-    const state = (a?.state ?? a?.status ?? 'UP').toString().toUpperCase();
-    const cls = state.includes('UP')? 'ok' : state.includes('DOWN')? 'bad' : 'warn';
+
+  // Fallback for NITRO: show LB vservers as "applications"
+  const r = await getJSON(`/api/lb-vservers?node=${encodeURIComponent(state.node)}`);
+  if(!r.ok){
+    $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">Failed to load LB vservers (HTTP ${r.status})</td></tr>`;
+    return;
+  }
+  const list = r.data?.lbvserver || r.lbvserver || [];
+  if(!Array.isArray(list) || !list.length){
+    $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">No LB vservers</td></tr>`;
+    return;
+  }
+  const rows = list.map((v,i)=>{
+    const name  = v.name || v.vservername || `lbv-${i+1}`;
+    const vip   = v.ipv46 || v.ipaddress || v.ip || '';
+    const port  = v.port || v.portno || '';
+    const state = (v.curstate || v.state || '').toString().toUpperCase();
+    const cls   = /UP|ENABLED/.test(state) ? 'ok' : /DOWN|DISABLED/.test(state) ? 'bad' : 'warn';
     return `<tr>
       <td class="muted">${i+1}</td>
       <td>${escapeHtml(name)}</td>
@@ -377,6 +416,55 @@ async function loadApplications(){
     </tr>`;
   }).join('');
   $('#appsTable').innerHTML = rows;
+}
+
+async function loadServices(){
+  const r = await getJSON(`/api/services?node=${encodeURIComponent(state.node)}`);
+  if(!r.ok){
+    $('#svcTable').innerHTML = `<tr><td colspan="7" class="muted">Failed to load services (HTTP ${r.status})</td></tr>`;
+    return;
+  }
+  const services = Array.isArray(r.data.service) ? r.data.service : [];
+  const groups   = Array.isArray(r.data.servicegroup) ? r.data.servicegroup : [];
+  if(!services.length && !groups.length){
+    $('#svcTable').innerHTML = `<tr><td colspan="7" class="muted">No services or groups</td></tr>`;
+    return;
+  }
+  const rowsSvc = services.map((s,i)=> {
+    const name  = s.name || s.servicename || `svc-${i+1}`;
+    const ip    = s.ip || s.ipaddress || s.svrip || '';
+    const port  = s.port || s.portno || '';
+    const state = (s.curstate || s.state || '').toString().toUpperCase();
+    const cls   = /UP|ENABLED/.test(state) ? 'ok' : /DOWN|DISABLED/.test(state) ? 'bad' : 'warn';
+    return `<tr>
+      <td class="muted">${i+1}</td>
+      <td>service</td>
+      <td>${escapeHtml(name)}</td>
+      <td>${escapeHtml(String(ip))}</td>
+      <td>${escapeHtml(String(port))}</td>
+      <td><span class="${cls}">${escapeHtml(state)}</span></td>
+      <td></td>
+    </tr>`;
+  });
+
+  const rowsGrp = groups.map((g,i)=>{
+    const name  = g.servicegroupname || g.name || `svcgrp-${i+1}`;
+    const port  = g.port || g.portno || '';
+    const state = (g.curstate || g.state || '').toString().toUpperCase();
+    const mem   = Array.isArray(g.members)? g.members.length : (g.membercount || '');
+    const cls   = /UP|ENABLED/.test(state) ? 'ok' : /DOWN|DISABLED/.test(state) ? 'bad' : 'warn';
+    return `<tr>
+      <td class="muted">${services.length + i + 1}</td>
+      <td>servicegroup</td>
+      <td>${escapeHtml(name)}</td>
+      <td></td>
+      <td>${escapeHtml(String(port))}</td>
+      <td><span class="${cls}">${escapeHtml(state)}</span></td>
+      <td>${escapeHtml(String(mem||''))}</td>
+    </tr>`;
+  });
+
+  $('#svcTable').innerHTML = rowsSvc.concat(rowsGrp).join('');
 }
 
 async function loadFailover(){
@@ -454,7 +542,6 @@ function collectFailoverFilters(){
     type: $('#failType').value
   };
 }
-
 function collectSessionFilters(){
   return {
     from: toISO($('#sessFrom').value),
@@ -464,41 +551,19 @@ function collectSessionFilters(){
     status: $('#sessStatus').value
   };
 }
-
-function toISO(v){
-  if(!v) return '';
-  const d = new Date(v);
-  if(isNaN(d)) return '';
-  return d.toISOString();
-}
-
-function fmt(v){
-  if(!v) return '';
-  try{ return new Date(v).toLocaleString(); }catch(e){ return String(v); }
-}
-
-function escapeHtml(s){
-  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
-}
+function toISO(v){ if(!v) return ''; const d = new Date(v); return isNaN(d)? '': d.toISOString(); }
+function fmt(v){ if(!v) return ''; try{ return new Date(v).toLocaleString(); }catch(e){ return String(v); } }
+function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
 
 function startAutoRefresh(){
   if(state.interval) clearInterval(state.interval);
   state.interval = setInterval(()=>{
     const active = document.querySelector('.tab.active')?.dataset.tab;
     if(active==='overview') loadOverview();
-    if(active==='applications') loadApplications();
+    if(active==='applications') { loadApplications(); loadServices(); }
     if(active==='failover') loadFailover();
     if(active==='sessions') loadSessions();
-    if(active==='unlock') {/* no auto refresh */}
   }, state.refreshMs);
-}
-
-function exportCSV(kind){
-  const node = state.node;
-  const p = kind==='failover' ? collectFailoverFilters() : collectSessionFilters();
-  const path = kind==='failover' ? '/api/export/failover-history' : '/api/export/user-sessions';
-  const url = `${path}?${qs({...p, node})}`;
-  window.open(url, '_blank');
 }
 
 // Unlock tab
@@ -550,7 +615,7 @@ $('#nodeSelect').addEventListener('change', (e)=>{
   updateAppsTabAvailability();
   const active = document.querySelector('.tab.active')?.dataset.tab;
   if(active==='overview') loadOverview();
-  if(active==='applications') loadApplications();
+  if(active==='applications') { loadApplications(); loadServices(); }
   if(active==='failover') loadFailover();
   if(active==='sessions') loadSessions();
   if(active==='unlock') loadUnlock();
@@ -559,21 +624,19 @@ $('#refreshBtn').addEventListener('click', ()=>{
   fetchCaps();
   const active = document.querySelector('.tab.active')?.dataset.tab;
   if(active==='overview') loadOverview();
-  if(active==='applications') loadApplications();
+  if(active==='applications') { loadApplications(); loadServices(); }
   if(active==='failover') loadFailover();
   if(active==='sessions') loadSessions();
-  if(active==='unlock') loadUnlock();
 });
 $all('.tab').forEach(t=>{
   t.addEventListener('click', ()=>{
-    if(t.classList.contains('disabled')) return;
     setActiveTab(t.dataset.tab);
   });
 });
 $('#failSearch').addEventListener('click', loadFailover);
 $('#sessSearch').addEventListener('click', loadSessions);
-$('#failExport').addEventListener('click', ()=>exportCSV('failover'));
-$('#sessExport').addEventListener('click', ()=>exportCSV('sessions'));
+$('#failExport').addEventListener('click', ()=>window.open(`/api/export/failover-history`,'_blank'));
+$('#sessExport').addEventListener('click', ()=>window.open(`/api/export/user-sessions`,'_blank'));
 
 // Init
 (async function init(){
