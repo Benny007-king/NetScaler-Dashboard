@@ -1,276 +1,248 @@
-# NetScaler Enhanced Dashboard
+# NetScaler Dashboard — Dual-Stack (NITRO + Next-Gen)
 
-A professional Flask web application that connects to real NetScaler appliances via NITRO API and displays live monitoring data with advanced failover tracking and user session monitoring.
+A modern Flask dashboard for NetScaler with **parallel support** for both **NITRO API** and the **Next-Gen API**.  
+The app automatically detects which API is supported per node and **falls back to NITRO** when Next-Gen is unavailable.
 
-## 🆕 New Features
+Tabs included: **Overview**, **Applications / Services**, **Failover History**, **User Sessions**, and **Unlock Users**.
 
-### Failover Monitoring Dashboard
-- **Real-time failover detection** - Automatic detection of HA role changes
-- **Failover event history** - Complete log of all failover events with timestamps
-- **Event categorization** - Automatic, manual, and failure-based events
-- **Date range filtering** - Filter events by specific date/time ranges
-- **CSV export** - Export failover history for reporting and analysis
+---
 
-### User Session Management
-- **Multi-protocol support** - Web, VPN, and Workspace sessions
-- **Session analytics** - Active sessions, connection types, and user statistics
-- **Advanced filtering** - Filter by date, user, connection type, and status
-- **Session details** - Duration, data usage, client IP, and node information
-- **CSV export** - Export session data for compliance and reporting
+## Key Features
 
-### Enhanced UI
-- **Tab-based navigation** - Overview, Failover History, and User Sessions tabs
-- **Real-time updates** - All data refreshes automatically every 30 seconds
-- **Responsive design** - Works on desktop, tablet, and mobile devices
-- **Interactive filters** - Dynamic filtering with instant results
+- **Dual-Stack** runtime: auto-detect Next-Gen per node; fallback to NITRO when needed.
+- **Applications / Services**:
+  - In **Next-Gen** mode: shows Applications.
+  - In **NITRO** mode: shows LB vservers plus Services / Service Groups.
+- **Failover History & User Sessions**:
+  - Date-range filters with a pop-up **date picker** that stays open until **Apply/Cancel**.
+  - **Search** buttons trigger fresh API calls; **Export CSV** available.
+- **Unlock Users**: unlock a locked AAA user (NITRO, with automatic `?action=unlock` fallback).
+- **HTTPS** support for local secure runs.
+- Lightweight, responsive, dark UI.
 
-## 🔧 Installation & Setup
+---
 
-### 1. Prerequisites
-- Python 3.7+ installed
-- Access to NetScaler appliances (10.0.0.100 and 10.0.0.200)
-- Network connectivity to the NetScaler management interfaces
+## Project Structure
 
-### 2. Install Dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Directory Structure
-Create the following directory structure:
-```
 netscaler-dashboard/
-├── app.py                 # Enhanced Flask application
-├── requirements.txt       # Python dependencies
+├── app.py
+├── requirements.txt
+├── .env
+├── auth_config.json
+├── netscaler_complete.log
 ├── templates/
-│   └── dashboard.html     # Enhanced HTML template
-└── README.md             # This file
-```
+│ ├── dashboard.html
+│ ├── login.html
+│ └── change_password.html
+└── README.md
 
-### 4. File Setup
-1. **Save the enhanced Python code** as `app.py`
-2. **Create templates directory**: `mkdir templates`
-3. **Save the enhanced HTML template** as `templates/dashboard.html`
-4. **Save requirements.txt** in the main directory
+makefile
+Copy
+Edit
 
-### 5. Configuration
-The NetScaler configuration is set in `app.py`:
-```python
-NETSCALER_CONFIG = {
-    'primary': {
-        'ip': '10.0.0.100',
-        'username': 'nsroot',
-        'password': 'nsroot1',
-        'port': 80,
-        'protocol': 'http'
-    },
-    'secondary': {
-        'ip': '10.0.0.200',
-        'username': 'nsroot',
-        'password': 'nsroot1',
-        'port': 80,
-        'protocol': 'http'
-    }
+---
+
+## Configuration
+
+### 1) `.env` (do NOT commit)
+
+All sensitive settings live here. Example:
+
+```env
+# Flask
+SECRET_KEY=REPLACE_WITH_LONG_RANDOM_STRING
+
+# Primary node (example)
+PRIMARY_NODE_IP=10.0.0.90
+PRIMARY_NODE_USER=nsroot
+PRIMARY_NODE_PASS=nsroot
+PRIMARY_NODE_PROTOCOL=http
+PRIMARY_NODE_PORT=80
+
+# Secondary node (example)
+SECONDARY_NODE_IP=10.0.0.92
+SECONDARY_NODE_USER=nsroot
+SECONDARY_NODE_PASS=nsroot
+SECONDARY_NODE_PROTOCOL=http
+SECONDARY_NODE_PORT=80
+
+# NITRO
+NITRO_VERIFY_SSL=0
+NITRO_TIMEOUT_SECS=15
+
+# Next-Gen
+NEXTGEN_VERIFY_SSL=0
+NEXTGEN_TIMEOUT_SECS=15
+
+# HTTPS (optional)
+ENABLE_HTTPS=0
+SSL_CERT_FILE=cert.pem
+SSL_KEY_FILE=key.pem
+SECRET_KEY must be long and random. Generate with one of:
+
+python -c "import secrets; print(secrets.token_urlsafe(64))"
+
+openssl rand -hex 64
+
+2) auth_config.json
+Runtime config for nodes and default API mode hints (the app still auto-detects capabilities):
+
+json
+Copy
+Edit
+{
+  "api_mode": {
+    "primary": "nitro",
+    "secondary": "nitro"
+  },
+  "nodes": {
+    "primary": { "ip": "10.0.0.90", "port": 80, "protocol": "http" },
+    "secondary": { "ip": "10.0.0.92", "port": 80, "protocol": "http" }
+  }
 }
-```
+If this file is missing, it is created on first run.
 
-**To modify settings:**
-- Change IP addresses if your NetScaler has different IPs
-- Update username/password if needed
-- Modify port if using different port (80 for HTTP, 443 for HTTPS)
+To reset the dashboard’s admin password/policy, delete auth_config.json, start the app, log in, and set a new password from Change Password.
 
-## 🚀 Running the Application
+Install & Run
+Install dependencies:
 
-### Start the Enhanced Flask Server
-```bash
+bash
+Copy
+Edit
+pip install -r requirements.txt
+Create/adjust .env and auth_config.json per the examples above.
+
+Start:
+
+bash
+Copy
+Edit
 python app.py
-```
+If ENABLE_HTTPS=1 and SSL_CERT_FILE/SSL_KEY_FILE are valid, the server starts over HTTPS.
 
-### Access the Enhanced Dashboard
-Open your web browser and navigate to:
-```
-http://localhost:5000
-```
+Open http://127.0.0.1:5000 (or https://... accordingly).
 
-## 📊 Features
+Windows console note:
+If you ever see Unicode logging issues in classic cmd.exe, set:
 
-### Overview Tab
-- **Real-time System Monitoring** - CPU, memory, and resource utilization
-- **HA Status Display** - Current primary/secondary roles and health
-- **Load Balancing Intelligence** - Virtual servers and services status
-- **System Information** - Version, build, hostname, and platform details
+bat
+Copy
+Edit
+set PYTHONIOENCODING=utf-8
+(Or use PowerShell.)
 
-### Failover History Tab
-- **Event Timeline** - Chronological view of all failover events
-- **Event Details** - Type, reason, timestamp, and role changes
-- **Date Filtering** - Filter events by custom date ranges
-- **Export Functionality** - Download failover history as CSV
+Using the Dashboard
+Overview
+System stats, versions, HA roles, CPU/Mem, HTTP rates.
 
-### User Sessions Tab
-- **Session Overview** - Real-time active sessions across all connection types
-- **Connection Analytics** - Web, VPN, and Workspace session statistics
-- **Advanced Filtering** - Filter by date, user, connection type, and status
-- **Session Details** - Duration, data usage, client information
-- **Export Capability** - Export filtered session data as CSV
+HA table with status, sync, and route monitor state.
 
-## 🔧 Enhanced NITRO API Integration
+The capability bar shows the active API mode per node (nextgen / nitro).
 
-### Supported API Calls
-- `/nitro/v1/stat/system` - System statistics
-- `/nitro/v1/stat/ns` - NetScaler statistics  
-- `/nitro/v1/config/lbvserver` - Load balancing virtual servers
-- `/nitro/v1/config/hanode` - High availability nodes
-- `/nitro/v1/config/service` - Services configuration
-- `/nitro/v1/config/aaasession` - AAA user sessions
-- `/nitro/v1/config/vpnsession` - VPN user sessions
-- `/nitro/v1/config/icasession` - Citrix workspace sessions
+Applications & Services
+Next-Gen mode: Applications from the Next-Gen API.
 
-### New API Endpoints
-- `GET /api/failover-history` - Retrieve failover events
-- `GET /api/user-sessions` - Retrieve user sessions with filtering
-- `GET /api/export/failover-history` - Export failover history as CSV
-- `GET /api/export/user-sessions` - Export user sessions as CSV
+NITRO mode: LB vservers and Services / Service Groups from NITRO.
 
-## 🛡️ Security Considerations
+Failover History
+Two date pickers (From/To). The pop-up stays open until you click Apply or Cancel.
 
-### Authentication & Access
-- **Session-based authentication** with NITRO API
-- **Automatic login/logout** handling
-- **SSL/TLS support** for HTTPS connections
+Filter by Type (Automatic / Manual / Failure / Role change).
 
-### Data Protection
-- **No persistent storage** - All data is in-memory
-- **Secure credentials** - Store credentials securely (environment variables recommended)
-- **Network security** - Ensure proper firewall rules
+Search refreshes the table; Export CSV downloads results (when enabled server-side).
 
-### Compliance Features
-- **Session auditing** - Complete session logs for compliance
-- **Data export** - CSV exports for audit trails
-- **Event tracking** - Comprehensive failover event logging
+User Sessions
+Date range, User, Type (Web/VPN/Workspace), and Status (Active/Terminated).
 
-## 🔍 Troubleshooting
+Search and Export CSV.
 
-### Common Issues
+Unlock Users
+Select node (primary/secondary), enter username, click Unlock.
 
-**Connection Failed:**
-- Verify NetScaler IP addresses are correct
-- Check network connectivity: `ping 10.0.0.100`
-- Ensure NITRO API is enabled on NetScaler
-- Verify username/password credentials
+Uses NITRO /nitro/v1/config/aaauser, with automatic fallback to ?action=unlock.
 
-**No Failover Events:**
-- Failover events are detected based on HA role changes
-- Ensure HA is configured on your NetScaler pair
-- Events are generated when roles actually change
+REST Endpoints (summary)
+Capabilities & system
 
-**No User Sessions:**
-- User sessions are generated as mock data for demonstration
-- In production, real session data would come from NITRO API
-- Ensure session APIs are enabled on NetScaler
+GET /api/caps — Next-Gen/NITRO capability report per node.
 
-**Performance Issues:**
-- Large session datasets may affect performance
-- Use date filters to limit data scope
-- Consider adjusting auto-refresh interval
+GET /api/system-stats
 
-### Enhanced Logs
-Check Flask application logs for detailed information:
-```bash
-python app.py 2>&1 | tee enhanced_dashboard.log
-```
+GET /api/ha-status
 
-## 📈 Performance Optimization
+Apps/Services
 
-### Background Data Collection
-- **Parallel collection** from multiple nodes
-- **Intelligent caching** with 30-second refresh cycles
-- **Failover detection** with minimal overhead
-- **Session aggregation** for efficient display
+GET /api/applications?node=primary|secondary (Next-Gen)
 
-### Efficient Data Processing
-- **In-memory storage** for fast access
-- **Filtered queries** to reduce data transfer
-- **Pagination support** for large datasets
-- **Async operations** for non-blocking updates
+GET /api/lb-vservers?node=... (NITRO)
 
-## 🔧 Customization
+GET /api/services?node=... (NITRO)
 
-### Adding New Session Types
-1. Extend the `NetScalerAPI` class with new session methods
-2. Update the `collect_user_sessions` function
-3. Add new connection types to the UI filters
-4. Update the session display logic
+Failover
 
-### Custom Failover Logic
-1. Modify the `track_failover_event` function
-2. Add custom event types and reasons
-3. Enhance the failover detection logic
-4. Update the display formatting
+GET /api/failover-history?from=ISO&to=ISO&type=&node=...
 
-### UI Customization
-- **Tab system** - Easily add new tabs for additional features
-- **Filtering** - Extend filters for more granular control
-- **Styling** - Modify CSS classes for custom appearance
-- **Charts** - Add data visualization components
+GET /api/export/failover-history (CSV)
 
-## 📝 Enhanced API Endpoints
+User Sessions
 
-### Core Monitoring
-- `GET /` - Enhanced dashboard page
-- `GET /api/system-stats` - System statistics with HA roles
-- `GET /api/system-info` - Detailed system information
-- `GET /api/ha-status` - High availability status
+GET /api/user-sessions?from=ISO&to=ISO&user=&type=&status=&node=...
 
-### Failover Management
-- `GET /api/failover-history` - Failover events history
-  - Query parameters: `from_date`, `to_date`
-- `GET /api/export/failover-history` - Export as CSV
+GET /api/export/user-sessions (CSV)
 
-### Session Management
-- `GET /api/user-sessions` - User sessions with filtering
-  - Query parameters: `from_date`, `to_date`, `connection_type`, `username`, `status`
-- `GET /api/export/user-sessions` - Export sessions as CSV
+Actions
 
-### Utility
-- `GET /api/refresh` - Force immediate data refresh
-- `GET /api/debug` - Comprehensive debug information
-- `GET /api/health` - Application health check
+POST /api/unlock-user
 
-## 🎯 Use Cases
+json
+Copy
+Edit
+{ "node": "primary", "username": "user1" }
+Security
+Keep secrets in .env; do not hard-code credentials.
 
-### Network Operations
-- **Real-time monitoring** of NetScaler performance
-- **Failover tracking** for incident management
-- **Capacity planning** with session analytics
+Optional local HTTPS via ENABLE_HTTPS=1 and certificate/key files.
 
-### Security & Compliance
-- **User access auditing** with detailed session logs
-- **Compliance reporting** with CSV exports
-- **Security monitoring** with connection type analysis
+Restrict access to NetScaler management networks (firewall/allowlist).
 
-### Business Intelligence
-- **Usage patterns** analysis across connection types
-- **Peak hour identification** for resource planning
-- **User behavior tracking** for optimization
+Troubleshooting
+Applications tab empty / disabled look: The node likely does not support Next-Gen (cap bar shows nitro). In NITRO mode you’ll see LB vservers/Services instead.
 
-## 🏗️ Enhanced Architecture
+No Failover / Sessions listed: Check the selected date range. Empty results can be normal if there were no events or sessions in that window.
 
-```
-Browser ←→ Enhanced Flask App ←→ NITRO API ←→ NetScaler Appliances
-                ↓
-         Background Thread
-         (Data + Sessions + Failover)
-                ↓
-      Enhanced Cached Data
-      (System + HA + Sessions + Events)
-```
+SSL verification errors in lab: Set NITRO_VERIFY_SSL=0 / NEXTGEN_VERIFY_SSL=0 for testing.
 
-## 📄 License
+Secondary name shows as node-2: The UI displays names as provided by the API; if the device doesn’t return a human-friendly label, a fallback like node-2 is shown. Adjust naming in your environment if desired.
 
-This enhanced project is provided as-is for educational and monitoring purposes. Ensure compliance with your organization's security policies and NetScaler licensing terms.
+Logging
+Runtime logs go to stdout and to netscaler_complete.log by default.
 
-## 🔄 Version History
+For production, prefer running behind a process manager (e.g., gunicorn, supervisor) and reverse proxy.
 
-- **v2.1** - Enhanced version with failover monitoring and user sessions
-- **v2.0** - Original real dashboard with NITRO API integration
-- **v1.0** - Basic monitoring dashboard
+Production Recommendations
+Run behind Nginx/Apache with a real certificate.
+
+Use Gunicorn/uWSGI instead of Flask’s dev server.
+
+Persist historical data (failover/sessions) in a proper datastore if you need long-term reports.
+
+Add CI/CD and basic tests as needed.
+
+License
+Private / Internal. All rights reserved by the repository owner.
+
+makefile
+Copy
+Edit
+
+::contentReference[oaicite:0]{index=0}
+
+
+
+
+
+
+Sources
+
+Ask ChatGPT
