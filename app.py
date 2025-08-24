@@ -1,25 +1,7 @@
 #!/usr/bin/env python3
 """
 NetScaler Dashboard (Dual-Stack: NITRO + Next-Gen API)
-Compat edition for the original Tailwind dashboard + Unlock Users
-=================================================================
-This Flask app authenticates locally (admin UI) and talks to NetScaler devices.
-It auto-detects per-node whether the device supports the Next-Gen API and will
-use it when available; otherwise it falls back to NITRO.
-
-Compatibility endpoints (as expected by templates/dashboard.html):
-- GET /api/system-stats       -> {primary:{connected,ha_role,ns_stats,version}, secondary:{...}}
-- GET /api/ha-status          -> {primary:{connected,ha_role}, secondary:{...}, hanode:[...]}
-- GET /api/system-info        -> {primary:{...}, secondary:{...}}
-- GET /api/lb-vservers        -> {connected:bool, data:{lbvserver:[...]}}  (auto-picks active node)
-- GET /api/services           -> {connected:bool, data:{service:[...]}}
-- POST /api/unlock-user       -> Unlock AAA user on a node (always via NITRO)
-
-Security note
--------------
-For lab friendliness, NEXTGEN_VERIFY_SSL defaults to 0 (disabled). Enable it in
-production with environment variable NEXTGEN_VERIFY_SSL=1 and install a proper
-certificate chain on the ADC(s).
+Compat edition + Unlock Users, with .env configuration (python-dotenv)
 """
 from __future__ import annotations
 
@@ -39,6 +21,17 @@ from flask import (
 )
 
 # --------------------------------------------------------------------------------------
+# Load environment from .env / .env.local (if present)
+# --------------------------------------------------------------------------------------
+try:
+    from dotenv import load_dotenv
+    load_dotenv(dotenv_path=os.getenv("ENV_FILE", ".env"))
+    # .env.local (optional) overrides .env – convenient for dev overrides
+    load_dotenv(dotenv_path=os.getenv("ENV_FILE_LOCAL", ".env.local"), override=True)
+except Exception:
+    pass
+
+# --------------------------------------------------------------------------------------
 # Windows console: prefer UTF-8 to avoid UnicodeEncodeError in logging
 # --------------------------------------------------------------------------------------
 try:
@@ -51,9 +44,9 @@ except Exception:
 # Flask app + logging
 # --------------------------------------------------------------------------------------
 app = Flask(__name__)
-app.secret_key = os.getenv("APP_SECRET", "netscaler-dashboard-secret-key-super-secure-2024")
+app.secret_key = os.getenv("APP_SECRET", "dev-secret-change-me")
 
-LOG_FILE = "netscaler_complete.log"
+LOG_FILE = os.getenv("APP_LOG_FILE", "netscaler_complete.log")
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -65,11 +58,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # --------------------------------------------------------------------------------------
-# Local dashboard auth (username/password stored hashed in auth_config.json)
+# Local dashboard auth (stored hashed in auth_config.json)
+# Can be seeded from env for first-time bootstrap
 # --------------------------------------------------------------------------------------
-AUTH_CONFIG_FILE = 'auth_config.json'
-DEFAULT_USERNAME = 'admin'
-DEFAULT_PASSWORD = 'admin'
+AUTH_CONFIG_FILE = os.getenv('AUTH_CONFIG_FILE', 'auth_config.json')
+DEFAULT_USERNAME = os.getenv('UI_DEFAULT_USERNAME', 'admin')
+DEFAULT_PASSWORD = os.getenv('UI_DEFAULT_PASSWORD', 'admin')
 
 
 def hash_password(password: str) -> str:
@@ -132,7 +126,7 @@ def login_required(fn):
     return _wrapped
 
 # --------------------------------------------------------------------------------------
-# NITRO client (simplified): header-based auth (X-NITRO-USER/PASS)
+# NITRO client
 # --------------------------------------------------------------------------------------
 class NetScalerAPI:
     def __init__(self, ip, username, password, port=80, protocol='http'):
@@ -212,54 +206,42 @@ class NetScalerAPI:
         except Exception:
             return {'hanode': []}
 
-    # AAA unlock (primary path + fallbacks)
+    # AAA unlock with robust fallbacks
     def unlock_user(self, username: str) -> dict:
         """
         Unlock AAA (or local system) user via NITRO.
 
         Attempts, in order:
-          1) POST /config/aaauser { "aaauser": {"username": "<u>", "unlockAccount": true } }
-          2) POST /config/aaauser?action=unlock { "aaauser": {"username": "<u>" } }
-          3) POST /config/aaauser/<u>?action=unlock { "aaauser": {"username": "<u>" } }
-          4) POST /config/systemuser?action=unlock { "systemuser": {"username": "<u>" } }  # local ns admin
+          1) POST /config/aaauser {"aaauser": {"username": "<u>", "unlockAccount": true}}
+          2) POST /config/aaauser?action=unlock {"aaauser": {"username": "<u>"}}
+          3) POST /config/aaauser/<u>?action=unlock {"aaauser": {"username": "<u>"}}
+          4) POST /config/systemuser?action=unlock {"systemuser": {"username": "<u>"}}
         """
-        # --- Attempt 1: newer syntax (חלק מהגרסאות מכירות בזה) ---
+        # Attempt 1
         primary_payload = {"aaauser": {"username": username, "unlockAccount": True}}
         try:
             resp = self._post("/config/aaauser", primary_payload)
-
-            # אם יש errorcode!=0 (למרות שזו לא שגיאת HTTP) – ננסה נפילות מדרגה.
+            # Some builds return 200 + errorcode!=0; fallback if unlockAccount not supported
             if isinstance(resp, dict) and str(resp.get("errorcode", "0")) not in ("0", "", "None"):
                 msg = str(resp.get("message", "")).lower()
                 if ("unlockaccount" in msg) or ("invalid" in msg) or ("unknown" in msg):
                     raise ValueError(resp.get("message") or "primary payload not supported")
-                # במקרה של שגיאות אחרות – נחזיר כמו שהוא.
                 return resp
-
-            # הצלחה
             return resp
-
         except Exception as primary_err:
-            # --- Attempt 2: action=unlock עם body ---
+            # Attempt 2
             try:
-                return self._post(
-                    "/config/aaauser?action=unlock",
-                    {"aaauser": {"username": username}}
-                )
+                return self._post("/config/aaauser?action=unlock", {"aaauser": {"username": username}})
             except Exception as e1:
-                # --- Attempt 3: action=unlock עם username בנתיב ---
+                # Attempt 3
                 try:
-                    return self._post(
-                        f"/config/aaauser/{username}?action=unlock",
-                        {"aaauser": {"username": username}}
-                    )
+                    return self._post(f"/config/aaauser/{username}?action=unlock",
+                                      {"aaauser": {"username": username}})
                 except Exception as e2:
-                    # --- Attempt 4: systemuser (למשתמשי מערכת מקומיים, לא AAA) ---
+                    # Attempt 4 (local system admin, not AAA)
                     try:
-                        return self._post(
-                            "/config/systemuser?action=unlock",
-                            {"systemuser": {"username": username}}
-                        )
+                        return self._post("/config/systemuser?action=unlock",
+                                          {"systemuser": {"username": username}})
                     except Exception as e3:
                         return {
                             "errorcode": -1,
@@ -330,21 +312,27 @@ class NextGenAPI:
         return r.json()
 
 # --------------------------------------------------------------------------------------
-# Device config (primary/secondary)
+# Device config (read from env)
 # --------------------------------------------------------------------------------------
+def _int(v, default):
+    try:
+        return int(v)
+    except Exception:
+        return default
+
 NETSCALER_CONFIG = {
     'primary': {
-        'ip': os.getenv('NS_PRIMARY_IP', '10.0.0.90'),
-        'username': os.getenv('NS_PRIMARY_USER', 'nsapi'),
-        'password': os.getenv('NS_PRIMARY_PASS', 'nsapi1'),
-        'port': int(os.getenv('NS_PRIMARY_PORT', '80')),
+        'ip': os.getenv('NS_PRIMARY_IP', ''),              # required via .env
+        'username': os.getenv('NS_PRIMARY_USER', ''),      # required via .env
+        'password': os.getenv('NS_PRIMARY_PASS', ''),      # required via .env
+        'port': _int(os.getenv('NS_PRIMARY_PORT', '80'), 80),
         'protocol': os.getenv('NS_PRIMARY_PROTO', 'http'),
     },
     'secondary': {
-        'ip': os.getenv('NS_SECONDARY_IP', '10.0.0.92'),
-        'username': os.getenv('NS_SECONDARY_USER', 'nsapi'),
-        'password': os.getenv('NS_SECONDARY_PASS', 'nsapi1'),
-        'port': int(os.getenv('NS_SECONDARY_PORT', '80')),
+        'ip': os.getenv('NS_SECONDARY_IP', ''),            # required via .env
+        'username': os.getenv('NS_SECONDARY_USER', ''),    # required via .env
+        'password': os.getenv('NS_SECONDARY_PASS', ''),    # required via .env
+        'port': _int(os.getenv('NS_SECONDARY_PORT', '80'), 80),
         'protocol': os.getenv('NS_SECONDARY_PROTO', 'http'),
     }
 }
@@ -352,10 +340,18 @@ NETSCALER_CONFIG = {
 # Runtime API mode per node: 'nitro' or 'nextgen'
 API_MODE = {k: 'nitro' for k in NETSCALER_CONFIG.keys()}
 
+def validate_env():
+    missing = []
+    for prefix in ('NS_PRIMARY', 'NS_SECONDARY'):
+        for key in ('IP', 'USER', 'PASS'):
+            if not os.getenv(f'{prefix}_{key}'):
+                missing.append(f'{prefix}_{key}')
+    if missing:
+        logger.warning("Missing env vars (set in .env): %s", ", ".join(missing))
+
 # --------------------------------------------------------------------------------------
 # Version detection helpers
 # --------------------------------------------------------------------------------------
-
 def _parse_version_tuple(version_str: str):
     m = re.search(r"(\d+)\.(\d+)", str(version_str or ""))
     if not m:
@@ -380,7 +376,13 @@ def detect_api_mode_for_node(node_key: str, cfg: dict):
         logger.info(f"[{node_key}] API mode forced to NITRO via env")
         return
 
-    # 1) Ask version using NITRO (works on 11.x/12.x/13.x/14.x)
+    # If minimal config is missing, stay with NITRO (will likely fail later if called)
+    if not cfg.get('ip') or not cfg.get('username') or not cfg.get('password'):
+        logger.warning(f"[{node_key}] Missing IP/username/password; leaving API mode as 'nitro'")
+        API_MODE[node_key] = 'nitro'
+        return
+
+    # 1) Ask version using NITRO
     nitro = NetScalerAPI(cfg['ip'], cfg['username'], cfg['password'], cfg['port'], cfg['protocol'])
     version_str = None
     try:
@@ -396,7 +398,7 @@ def detect_api_mode_for_node(node_key: str, cfg: dict):
         try:
             ng = NextGenAPI(
                 cfg['ip'], cfg['username'], cfg['password'],
-                port=int(os.getenv('NS_PORT_HTTPS', '443')),
+                port=_int(os.getenv('NS_PORT_HTTPS', '443'), 443),
                 protocol=os.getenv('NS_PROTO_HTTPS', 'https')
             )
             ng.login()
@@ -413,7 +415,6 @@ def detect_api_mode_for_node(node_key: str, cfg: dict):
 # --------------------------------------------------------------------------------------
 # Helpers to get clients
 # --------------------------------------------------------------------------------------
-
 def get_nitro(node_key: str) -> NetScalerAPI:
     cfg = NETSCALER_CONFIG.get(node_key or 'primary')
     if not cfg:
@@ -427,22 +428,14 @@ def get_nextgen(node_key: str) -> NextGenAPI:
         raise KeyError(f"Unknown node '{node_key}'")
     return NextGenAPI(
         cfg['ip'], cfg['username'], cfg['password'],
-        port=int(os.getenv('NS_PORT_HTTPS', '443')),
+        port=_int(os.getenv('NS_PORT_HTTPS', '443'), 443),
         protocol=os.getenv('NS_PROTO_HTTPS', 'https')
     )
 
 # --------------------------------------------------------------------------------------
 # Compatibility helpers (to match original dashboard JSON shapes)
 # --------------------------------------------------------------------------------------
-
-def _node_ip(node_key: str) -> str:
-    return NETSCALER_CONFIG.get(node_key, {}).get('ip', '')
-
-
 def _roles_from_ha() -> tuple[dict, dict]:
-    """Return (roles_by_ip, raw_ha) from a single NITRO call.
-    roles_by_ip maps ip -> role/state string (e.g., 'Primary', 'Secondary').
-    """
     try:
         nitro = get_nitro('primary')
         raw = nitro.get_ha_status() or {}
@@ -462,9 +455,6 @@ def _roles_from_ha() -> tuple[dict, dict]:
 
 
 def _build_node_overview(node_key: str) -> dict:
-    """Shape node data as expected by the original dashboard.
-    { connected: bool, ha_role: str, ns_stats: {...}, version: str }
-    """
     cfg = NETSCALER_CONFIG.get(node_key, {})
     ip = cfg.get('ip')
     nitro = get_nitro(node_key)
@@ -492,7 +482,7 @@ def _build_node_overview(node_key: str) -> dict:
     }
 
 # --------------------------------------------------------------------------------------
-# Auth routes
+# Auth/UI routes
 # --------------------------------------------------------------------------------------
 @app.route('/login', methods=['GET', 'POST'])
 def login():
@@ -551,9 +541,6 @@ def change_password():
 
     return render_template('change_password.html')
 
-# --------------------------------------------------------------------------------------
-# UI route
-# --------------------------------------------------------------------------------------
 @app.route('/')
 @login_required
 def dashboard():
@@ -577,16 +564,11 @@ def api_caps():
     })
 
 # --------------------------------------------------------------------------------------
-# NITRO/Next-Gen compatible + compatibility endpoints for original UI
+# Compatibility endpoints for frontend
 # --------------------------------------------------------------------------------------
 @app.route('/api/system-stats')
 @login_required
 def api_system_stats():
-    """Compatibility endpoint.
-    - If ?node=... is provided: return a single-node object
-      {node, api_mode, connected, ns_stats, ha_role}.
-    - Without node: return a combined object with 'primary' and 'secondary'.
-    """
     node = request.args.get('node')
     if node:
         try:
@@ -595,29 +577,24 @@ def api_system_stats():
         except Exception as e:
             logger.exception('system-stats (single) failed')
             return jsonify({'error': str(e)}), 500
-    # Combined
     try:
         return jsonify({
             'primary': _build_node_overview('primary'),
             'secondary': _build_node_overview('secondary'),
         })
-    except Exception as e:
-        logger.exception('system-stats (combined) failed')
+    except Exception:
         return jsonify({'primary': {'connected': False}, 'secondary': {'connected': False}}), 200
 
 
 @app.route('/api/ha-status')
 @login_required
 def api_ha_status():
-    """Compatibility endpoint.
-    - If ?node=... provided -> return basic hanode for that node.
-    - If not -> return object with primary/secondary {connected, ha_role} + raw hanode.
-    """
     node = request.args.get('node')
     if node:
         nitro = get_nitro(node)
         data = nitro.get_ha_status()
-        return jsonify({'node': node, 'api_mode': API_MODE.get(node, 'nitro'), 'hanode': data.get('hanode', []) if isinstance(data, dict) else []})
+        return jsonify({'node': node, 'api_mode': API_MODE.get(node, 'nitro'),
+                        'hanode': data.get('hanode', []) if isinstance(data, dict) else []})
     roles, raw = _roles_from_ha()
     primary = _build_node_overview('primary')
     secondary = _build_node_overview('secondary')
@@ -627,7 +604,6 @@ def api_ha_status():
 @app.route('/api/system-info')
 @login_required
 def api_system_info():
-    """Return version & basic info per node (combined if no node is given)."""
     node = request.args.get('node')
     if node:
         ov = _build_node_overview(node)
@@ -639,7 +615,6 @@ def api_system_info():
 @login_required
 def api_lb_vservers():
     node = request.args.get('node')
-    # If no node specified, choose preferred node based on HA (prefer active/primary)
     if not node:
         roles, _ = _roles_from_ha()
         prefer = 'primary'
@@ -674,15 +649,12 @@ def api_lb_vservers():
                 except Exception:
                     pass
                 return jsonify({'connected': True, 'data': {'lbvserver': lbv_like}})
-            # NITRO path
             nitro = get_nitro(node)
             data = nitro.get_lb_vservers() or {}
             return jsonify({'connected': True, 'data': {'lbvserver': data.get('lbvserver', []) if isinstance(data, dict) else []}})
-        except Exception as e:
-            logger.exception('lb-vservers (combined) failed')
+        except Exception:
             return jsonify({'connected': False, 'data': {'lbvserver': []}})
 
-    # Node-specific (kept from dual-stack behavior)
     mode = API_MODE.get(node, 'nitro')
     if mode == 'nextgen':
         try:
@@ -708,7 +680,7 @@ def api_lb_vservers():
                 lbv_like.append({'name': name or 'application', 'ipv46': vip, 'port': port, 'curstate': state or 'UP'})
             return jsonify({'node': node, 'api_mode': 'nextgen', 'lbvserver': lbv_like, 'raw': apps})
         except Exception:
-            logger.exception('Next-Gen applications fetch failed; falling back to NITRO for this call')
+            pass
         finally:
             try:
                 ng.logout()
@@ -716,7 +688,8 @@ def api_lb_vservers():
                 pass
     nitro = get_nitro(node)
     data = nitro.get_lb_vservers() or {}
-    return jsonify({'node': node, 'api_mode': 'nitro', **({'lbvserver': data.get('lbvserver', [])} if isinstance(data, dict) else {'lbvserver': []})})
+    return jsonify({'node': node, 'api_mode': 'nitro',
+                    **({'lbvserver': data.get('lbvserver', [])} if isinstance(data, dict) else {'lbvserver': []})})
 
 
 @app.route('/api/services')
@@ -728,10 +701,8 @@ def api_services():
             nitro = get_nitro('primary')
             data = nitro.get_services() or {}
             return jsonify({'connected': True, 'data': {'service': data.get('service', []) if isinstance(data, dict) else []}})
-        except Exception as e:
-            logger.exception('services (combined) failed')
+        except Exception:
             return jsonify({'connected': False, 'data': {'service': []}})
-    # node-specific (unchanged)
     mode = API_MODE.get(node, 'nitro')
     if mode == 'nextgen':
         try:
@@ -748,7 +719,8 @@ def api_services():
                 pass
     nitro = get_nitro(node)
     data = nitro.get_services()
-    return jsonify({'node': node, 'api_mode': 'nitro', **({'service': data.get('service', [])} if isinstance(data, dict) else {'service': []})})
+    return jsonify({'node': node, 'api_mode': 'nitro',
+                    **({'service': data.get('service', [])} if isinstance(data, dict) else {'service': []})})
 
 # Native Next-Gen endpoints (optional, richer data)
 @app.route('/api/applications')
@@ -795,29 +767,21 @@ def api_application_stats_nextgen():
         except Exception:
             pass
 
-# (Optional) Basic placeholders so UI doesn't error out
+# Placeholders
 @app.route('/api/failover-history')
 @login_required
 def api_failover_history():
-    # TODO: implement real parsing from ns events if available. For now empty list.
-    from_date = request.args.get('from_date')
-    to_date = request.args.get('to_date')
-    _ = (from_date, to_date)
     return jsonify({'events': []})
-
 
 @app.route('/api/user-sessions')
 @login_required
 def api_user_sessions():
-    # TODO: implement actual sessions aggregation from NITRO / next-gen when available
     return jsonify({'sessions': []})
-
 
 @app.route('/api/export/failover-history')
 @login_required
 def api_export_failover():
     return jsonify({'error': 'Export not implemented in this build'}), 501
-
 
 @app.route('/api/export/user-sessions')
 @login_required
@@ -841,12 +805,10 @@ def api_unlock_user():
         return jsonify({"success": False, "error": f"Unknown node '{node}'"}), 400
 
     resp = nitro.unlock_user(username)
-    # Normalize response
     if isinstance(resp, dict) and resp.get("errorcode") in (0, "0", None) and not resp.get("error"):
         return jsonify({"success": True, "message": f"User {username} unlocked successfully"})
 
     msg = (resp or {}).get("message", "Failed to unlock user")
-    # Friendly messages for common cases
     ml = msg.lower()
     if "does not exist" in ml or "not found" in ml:
         msg = f"User '{username}' doesn't exist on the NetScaler."
@@ -854,7 +816,6 @@ def api_unlock_user():
         msg = "You don't have permission to unlock user accounts."
     elif "not locked" in ml:
         msg = f"User '{username}' is not currently locked."
-
     return jsonify({"success": False, "error": msg, "raw": resp}), 400
 
 # --------------------------------------------------------------------------------------
@@ -865,7 +826,6 @@ def _404(err):
     if request.path.startswith('/api/'):
         return jsonify({'error': 'Not Found'}), 404
     return render_template('dashboard.html'), 404
-
 
 @app.errorhandler(500)
 def _500(err):
@@ -880,6 +840,8 @@ if __name__ == '__main__':
     host = os.getenv('APP_HOST', '0.0.0.0')
     port = int(os.getenv('APP_PORT', '5000'))
     debug = os.getenv('APP_DEBUG', '0').lower() in ('1', 'true', 'yes')
+
+    validate_env()
 
     # Detect API mode for each node at startup
     for node_key, cfg in NETSCALER_CONFIG.items():
