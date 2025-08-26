@@ -21,6 +21,30 @@ from flask import (
     session, flash
 )
 
+
+# ===== LDAP configuration =====
+AUTH_BACKENDS = {x.strip().lower() for x in os.getenv("AUTH_BACKENDS", "local").split(",") if x.strip()}
+LDAP_ENABLED = os.getenv("LDAP_ENABLED", "0").lower() in ("1", "true", "yes")
+LDAP_CFG = {
+    "server": os.getenv("LDAP_SERVER", ""),
+    "port": int(os.getenv("LDAP_PORT", "389") or 389),
+    "use_ssl": os.getenv("LDAP_USE_SSL", "0").lower() in ("1","true","yes"),
+    "base_dn": os.getenv("LDAP_BASE_DN", ""),
+    "bind_dn": os.getenv("LDAP_BIND_DN", ""),
+    "bind_pw": os.getenv("LDAP_BIND_PASSWORD", ""),
+    "user_attr": os.getenv("LDAP_USER_ATTRIBUTE", "sAMAccountName"),
+    "allowed_group_dn": os.getenv("LDAP_ALLOWED_GROUP_DN", ""),
+    "timeout": int(os.getenv("LDAP_TIMEOUT_SECS", "10") or 10),
+}
+try:
+    if LDAP_ENABLED and ("ldap" in AUTH_BACKENDS):
+        from ldap3 import Server, Connection, ALL, SUBTREE
+        from ldap3.utils.conv import escape_filter_chars
+        from ldap3.utils.dn import escape_dn_chars
+except Exception:
+    # If ldap3 isn't installed and LDAP_ENABLED=1, app will flash an error on attempt
+    LDAP_ENABLED = False
+
 # --------------------------------------------------------------------------------------
 # Load environment from .env / .env.local next to this file
 # --------------------------------------------------------------------------------------
@@ -69,10 +93,6 @@ logging.basicConfig(
     ],
 )
 logger = logging.getLogger(__name__)
-
-# --- HA history storage (local) ---
-HIST_FILE = os.getenv('HA_HISTORY_FILE', 'ha_history.jsonl')     # JSON Lines: event per line
-STATE_FILE = os.getenv('HA_STATE_FILE', 'ha_last_state.json')    # last known roles
 
 # --------------------------------------------------------------------------------------
 # Local dashboard auth (stored hashed in auth_config.json)
@@ -466,83 +486,6 @@ def get_nextgen(node_key: str) -> NextGenAPI:
     )
 
 # --------------------------------------------------------------------------------------
-# HA history helpers
-# --------------------------------------------------------------------------------------
-def _read_json(path):
-    try:
-        if os.path.exists(path):
-            with open(path, 'r', encoding='utf-8') as f:
-                return json.load(f)
-    except Exception as e:
-        logger.warning(f"Failed reading {path}: {e}")
-    return None
-
-def _write_json(path, obj):
-    try:
-        with open(path, 'w', encoding='utf-8') as f:
-            json.dump(obj, f, ensure_ascii=False, indent=2)
-    except Exception as e:
-        logger.warning(f"Failed writing {path}: {e}")
-
-def _append_history(event: dict):
-    try:
-        with open(HIST_FILE, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(event, ensure_ascii=False) + "\n")
-    except Exception as e:
-        logger.warning(f"Failed appending history: {e}")
-
-def _load_last_state():
-    return _read_json(STATE_FILE) or {}
-
-def _save_last_state(state: dict):
-    _write_json(STATE_FILE, state)
-
-def _norm_role(role: str) -> str:
-    if not role: return ''
-    r = str(role).strip().upper()
-    if 'PRIMARY' in r: return 'PRIMARY'
-    if 'SECONDARY' in r: return 'SECONDARY'
-    if 'STANDALONE' in r: return 'STANDALONE'
-    if 'DISABLED' in r: return 'DISABLED'
-    return r
-
-def record_ha_changes(nodes: list):
-    """
-    nodes: [{'ipaddress'|'ip'|'nsip': ip, 'state': role, 'name': name, ...}, ...]
-    Compares to last state, and if role changed — writes an event to HIST_FILE.
-    """
-    last = _load_last_state()
-    initial = (last == {})
-
-    now_map = {}
-    ts = datetime.utcnow().isoformat(timespec='seconds') + 'Z'
-
-    for n in nodes:
-        if not isinstance(n, dict):
-            continue
-        ip = n.get('ipaddress') or n.get('ip') or n.get('nsip')
-        role = _norm_role(n.get('state') or n.get('hacurstate') or n.get('haStatus') or n.get('status'))
-        name = n.get('name') or ip or 'node'
-        if not ip:
-            continue
-
-        now_map[ip] = {'role': role, 'name': name}
-
-        prev = last.get(ip) or {}
-        prev_role = _norm_role(prev.get('role'))
-        if not initial and role and role != prev_role:
-            _append_history({
-                'timestamp': ts,
-                'type': 'role-change',
-                'ip': ip,
-                'name': name,
-                'from': prev_role or '(unknown)',
-                'to': role
-            })
-
-    _save_last_state(now_map)
-
-# --------------------------------------------------------------------------------------
 # Compatibility helpers (to match original dashboard JSON shapes)
 # --------------------------------------------------------------------------------------
 def _roles_from_ha() -> tuple[dict, dict]:
@@ -611,7 +554,7 @@ def login():
         save_auth_config(auth_config)
         flash('Invalid credentials', 'error')
         logger.warning("Login failed: invalid credentials")
-    return render_template('login.html')
+    return render_template('login.html', auth_backends=AUTH_BACKENDS)
 
 
 @app.route('/logout', methods=['POST', 'GET'])
@@ -729,31 +672,20 @@ def api_ha_status():
         nitro = get_nitro(node)
         data = nitro.get_ha_status() or {}
         nodes = data.get('hanode', []) if isinstance(data, dict) else []
-        nodes = enrich(nodes)
-        try:
-            record_ha_changes(nodes)
-        except Exception as e:
-            logger.warning(f"record_ha_changes failed: {e}")
         return jsonify({
             'node': node,
             'api_mode': API_MODE.get(node, 'nitro'),
-            'hanode': nodes
+            'hanode': enrich(nodes)
         })
 
     roles, raw = _roles_from_ha()
     nodes = raw.get('hanode', []) if isinstance(raw, dict) else []
-    nodes = enrich(nodes)
-    try:
-        record_ha_changes(nodes)
-    except Exception as e:
-        logger.warning(f"record_ha_changes failed: {e}")
-
     primary = _build_node_overview('primary')
     secondary = _build_node_overview('secondary')
     return jsonify({
         'primary': primary,
         'secondary': secondary,
-        'hanode': nodes
+        'hanode': enrich(nodes)
     })
 
 
@@ -930,82 +862,26 @@ def api_application_stats_nextgen():
         except Exception:
             pass
 
-# --------------------------------------------------------------------------------------
-# Failover History (real)
-# --------------------------------------------------------------------------------------
+# Placeholders
 @app.route('/api/failover-history')
 @login_required
 def api_failover_history():
-    # Optional filters: from, to, type
-    p_from = request.args.get('from')  # ISO8601
-    p_to   = request.args.get('to')
-    p_type = (request.args.get('type') or '').strip().lower()
+    return jsonify({'events': []})
 
-    events = []
-    try:
-        if os.path.exists(HIST_FILE):
-            with open(HIST_FILE, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        evt = json.loads(line)
-                    except Exception:
-                        continue
-                    if p_type and (evt.get('type','').lower() != p_type):
-                        continue
-                    ts = evt.get('timestamp')
-                    if p_from and ts and ts < p_from:
-                        continue
-                    if p_to and ts and ts > p_to:
-                        continue
-                    events.append(evt)
-    except Exception as e:
-        logger.warning(f"Reading history failed: {e}")
-
-    events.sort(key=lambda e: e.get('timestamp',''), reverse=True)
-    return jsonify({'events': events})
-
-
-@app.route('/api/export/failover-history')
-@login_required
-def api_export_failover():
-    import csv, io
-    events = []
-    try:
-        if os.path.exists(HIST_FILE):
-            with open(HIST_FILE, 'r', encoding='utf-8') as f:
-                for line in f:
-                    line = line.strip()
-                    if not line:
-                        continue
-                    try:
-                        events.append(json.loads(line))
-                    except Exception:
-                        pass
-    except Exception as e:
-        logger.warning(f"Export read failed: {e}")
-
-    output = io.StringIO()
-    writer = csv.writer(output)
-    writer.writerow(["timestamp","type","name","ip","from","to"])
-    for e in events:
-        writer.writerow([e.get('timestamp',''), e.get('type',''), e.get('name',''), e.get('ip',''), e.get('from',''), e.get('to','')])
-
-    csv_data = output.getvalue()
-    return (csv_data, 200, {
-        'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': 'attachment; filename="failover_history.csv"'
-    })
-
-# --------------------------------------------------------------------------------------
-# User sessions (placeholder)
-# --------------------------------------------------------------------------------------
 @app.route('/api/user-sessions')
 @login_required
 def api_user_sessions():
     return jsonify({'sessions': []})
+
+@app.route('/api/export/failover-history')
+@login_required
+def api_export_failover():
+    return jsonify({'error': 'Export not implemented in this build'}), 501
+
+@app.route('/api/export/user-sessions')
+@login_required
+def api_export_sessions():
+    return jsonify({'error': 'Export not implemented in this build'}), 501
 
 # NEW: Unlock AAA user (always via NITRO)
 @app.route('/api/unlock-user', methods=['POST'])
