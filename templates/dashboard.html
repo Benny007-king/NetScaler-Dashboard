@@ -1,867 +1,680 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NetScaler Dashboard — Dual-Stack (NITRO + Next-Gen)</title>
-  <style>
-    :root {
-      --bg:#0b1220; --panel:#111827; --muted:#9ca3af; --text:#e5e7eb; --accent:#60a5fa; --success:#34d399; --danger:#f87171; --warn:#fbbf24;
-      --border:#1f2937; --chip:#0ea5e9; --input:#0f172a;
-    }
-    *{box-sizing:border-box}
-    body{margin:0; font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; background:var(--bg); color:var(--text)}
-    header{display:flex; align-items:center; justify-content:space-between; padding:14px 18px; border-bottom:1px solid var(--border); background:linear-gradient(180deg,#0b1220,#0b1220 60%,#0e1729)}
-    .brand{display:flex; gap:10px; align-items:center; font-weight:700; letter-spacing:.2px}
-    .brand .dot{width:10px;height:10px;border-radius:999px;background:var(--accent);display:inline-block}
-    .sub{font-size:12px;color:var(--muted)}
-    .controls{display:flex; gap:10px; align-items:center}
-    select,button,input{background:var(--input); color:var(--text); border:1px solid var(--border); border-radius:10px; padding:8px 10px}
-    input[readonly]{cursor:pointer}
-    button.primary{background:var(--accent); border-color:#2563eb; color:#081225; font-weight:600}
-    main{padding:16px}
-    .tabs{display:flex; gap:8px; border-bottom:1px solid var(--border)}
-    .tab{padding:10px 12px; border:1px solid var(--border); border-bottom:none; border-radius:10px 10px 0 0; background:#0c1426; color:var(--muted); cursor:pointer}
-    .tab.active{background:#101a31; color:var(--text); font-weight:600}
-    .panel{border:1px solid var(--border); border-top:none; border-radius:0 12px 12px 12px; padding:16px; background:#0c1426; margin-bottom:20px}
-    .grid{display:grid; gap:12px}
-    .grid.cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}
-    .card{background:#0e172a; border:1px solid var(--border); border-radius:12px; padding:12px}
-    .row{display:flex; flex-wrap:wrap; gap:10px; align-items:center}
-    table{width:100%; border-collapse:collapse}
-    th,td{padding:10px; border-bottom:1px solid var(--border); text-align:left; font-size:14px}
-    th{color:#cbd5e1; font-weight:600}
-    .muted{color:var(--muted)}
-    .chip{display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; background:#0a1a2a; border:1px solid #12324f; font-size:12px}
-    .ok{color:var(--success)} .bad{color:var(--danger)} .warn{color:var(--warn)}
-    .hidden{display:none}
-    .spacer{height:8px}
-    .kbd{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; background:#0b1a2c; border:1px solid #1c314f; padding:2px 6px; border-radius:6px; font-size:12px}
+  <title>NetScaler Dashboard — Ultimate</title>
+  
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-    /* DateRange Picker */
-    .dp-input{min-width:220px}
-    .dp-wrap{position:relative; display:flex; gap:6px; align-items:center}
-    .iconBtn{padding:8px 10px; border-radius:10px}
-    .dp{position:fixed; z-index:9999; background:#0c1426; border:1px solid var(--border); border-radius:12px; box-shadow:0 10px 30px rgba(0,0,0,.4); width:320px; padding:10px}
-    .dp.hidden{display:none}
-    .dp-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px}
-    .dp-header button{padding:6px 10px; border-radius:8px}
-    .dp-title{font-weight:600}
-    .cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:4px}
-    .cal-grid .dow{font-size:12px; color:var(--muted); text-align:center; padding:4px 0}
-    .cal-grid .day{padding:6px 0; text-align:center; border-radius:8px; cursor:pointer; user-select:none}
-    .day:hover{background:#12203a}
-    .day.disabled{opacity:.35; cursor:default}
-    .day.selected{background:#1e3a8a}
-    .dp-footer{display:flex; justify-content:space-between; align-items:center; gap:8px; margin-top:10px}
-    .dp-footer .time{display:flex; gap:6px; align-items:center}
-    .dp-footer select{padding:6px 8px; border-radius:8px}
-    .dp-quick{display:flex; gap:6px; margin-top:6px}
-    .dp-quick button{padding:4px 8px; border-radius:8px; font-size:12px}
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            dark: { 900: '#0f172a', 800: '#1e293b' }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body {
+      background: radial-gradient(circle at top center, #1e293b 0%, #020617 100%);
+      min-height: 100vh;
+      color: #e2e8f0;
+    }
+    .glass-panel {
+      background: rgba(30, 41, 59, 0.7);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    
+    /* Scrollbars */
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); }
+    ::-webkit-scrollbar-thumb { background: #475569; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #64748b; }
+
+    /* Tables */
+    .table-container { overflow-x: auto; border-radius: 0.75rem; }
+    table { width: 100%; border-collapse: separate; border-spacing: 0; }
+    th {
+      background: rgba(15, 23, 42, 0.95);
+      color: #94a3b8; font-weight: 600; text-transform: uppercase; font-size: 0.75rem;
+      padding: 1rem; text-align: left; border-bottom: 1px solid rgba(255,255,255,0.1); white-space: nowrap;
+    }
+    td { padding: 1rem; border-bottom: 1px solid rgba(255,255,255,0.05); font-size: 0.875rem; }
+    tr:last-child td { border-bottom: none; }
+    tbody tr:hover td { background: rgba(59, 130, 246, 0.05); }
+
+    /* Badges */
+    .badge { display: inline-flex; align-items: center; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; line-height: 1; border: 1px solid transparent; }
+    .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.2); }
+    .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.2); }
+    .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.2); }
+    
+    .fade-in { animation: fadeIn 0.4s ease-out forwards; }
+    @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+
+    /* Tabs */
+    .tab-btn { position: relative; transition: all 0.2s; cursor: pointer; }
+    .tab-btn.active { color: #60a5fa; background: rgba(59, 130, 246, 0.1); }
+    .tab-btn.active::after { content: ''; position: absolute; bottom: -1px; left: 0; width: 100%; height: 2px; background: #60a5fa; box-shadow: 0 -2px 10px rgba(96, 165, 250, 0.5); }
+
+    /* Date Picker Overrides */
+    .dp { background: #1e293b !important; border: 1px solid #334155 !important; border-radius: 0.75rem !important; color: white !important; }
+    .dp .day:hover { background: #334155 !important; }
+    .dp .day.selected { background: #3b82f6 !important; }
+    
+    /* Charts */
+    .chart-wrapper { position: relative; height: 160px; width: 100%; display:flex; justify-content:center; }
+    .chart-wrapper-line { position: relative; height: 160px; width: 100%; }
   </style>
 </head>
-<body>
-<header>
-  <div class="brand"><span class="dot"></span> NetScaler Dashboard <span class="sub">Dual-Stack</span></div>
-  <div class="controls">
-    <label class="muted">Node:</label>
-    <select id="nodeSelect">
-      <option value="primary">primary</option>
-      <option value="secondary">secondary</option>
-    </select>
-    <button id="refreshBtn" class="primary" type="button">Refresh</button>
-  </div>
-</header>
-<main>
-  <div class="hint" id="capsLine">Detecting capabilities…</div>
-  <div class="tabs" role="tablist">
-    <div class="tab active" data-tab="overview" role="tab" aria-selected="true">Overview</div>
-    <div class="tab" data-tab="applications" role="tab">Applications</div>
-    <div class="tab" data-tab="failover" role="tab">Failover History</div>
-    <div class="tab" data-tab="sessions" role="tab">User Sessions</div>
-    <div class="tab" data-tab="unlock" role="tab">Unlock Users</div>
-  </div>
+<body class="p-4 md:p-8">
 
-  <section class="panel" id="panel-overview">
-    <div class="grid cols-2">
-      <div class="card">
-        <h3>System Stats</h3>
-        <div id="sysStats" class="muted">Loading…</div>
-      </div>
-      <div class="card">
-        <h3>HA Status</h3>
-        <div id="haStatus" class="muted">Loading…</div>
-      </div>
-    </div>
-  </section>
-
-  <section class="panel hidden" id="panel-applications">
-    <div class="spacer"></div>
-    <div id="appsNotice" class="hint muted"></div>
-    <div class="spacer"></div>
-
-    <div class="card">
-      <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:8px">
-        <h3 style="margin:0">Applications</h3>
-        <div class="chip" id="appsModeChip">mode: <span id="appsMode">…</span></div>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th style="width:32px">#</th>
-            <th>Name</th>
-            <th>VIP</th>
-            <th>Port</th>
-            <th>Status</th>
-          </tr>
-        </thead>
-        <tbody id="appsTable"><tr><td class="muted" colspan="5">Loading…</td></tr></tbody>
-      </table>
-    </div>
-
-    <div class="spacer"></div>
-
-    <div class="card">
-      <h3 style="margin:0 0 8px 0">Services &amp; Service Groups</h3>
-      <table>
-        <thead>
-          <tr>
-            <th style="width:32px">#</th>
-            <th>Type</th>
-            <th>Name</th>
-            <th>IP / Server</th>
-            <th>Port</th>
-            <th>Status</th>
-            <th>Members</th>
-          </tr>
-        </thead>
-        <tbody id="svcTable"><tr><td class="muted" colspan="7">Loading…</td></tr></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="panel hidden" id="panel-failover">
-    <div class="card">
-      <div class="row" style="margin-bottom:10px">
-        <strong>Filters:</strong>
-        <label class="muted">From</label>
-        <div class="dp-wrap">
-          <input id="failFrom" type="hidden" />
-          <input id="failFromDisplay" class="dp-input" type="text" placeholder="dd/mm/yyyy hh:mm" readonly />
-          <button class="iconBtn" id="failFromBtn" title="Pick date" type="button">📅</button>
-        </div>
-        <label class="muted">To</label>
-        <div class="dp-wrap">
-          <input id="failTo" type="hidden" />
-          <input id="failToDisplay" class="dp-input" type="text" placeholder="dd/mm/yyyy hh:mm" readonly />
-          <button class="iconBtn" id="failToBtn" title="Pick date" type="button">📅</button>
-        </div>
-        <label class="muted">Type</label>
-        <select id="failType">
-          <option value="">All</option>
-          <option value="automatic">Automatic</option>
-          <option value="manual">Manual</option>
-          <option value="failure">Failure</option>
-          <option value="role-change">Role change</option>
-        </select>
-        <button id="failSearch" class="primary" type="button">Search</button>
-        <button id="failExport" type="button">Export CSV</button>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th style="width:32px">#</th>
-            <th>Timestamp</th>
-            <th>Event Type</th>
-            <th>Reason</th>
-            <th>Role Change</th>
-          </tr>
-        </thead>
-        <tbody id="failTable"><tr><td class="muted" colspan="5">Set filters and click Search…</td></tr></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="panel hidden" id="panel-sessions">
-    <div class="card">
-      <div class="row" style="margin-bottom:10px">
-        <strong>Filters:</strong>
-        <label class="muted">From</label>
-        <div class="dp-wrap">
-          <input id="sessFrom" type="hidden" />
-          <input id="sessFromDisplay" class="dp-input" type="text" placeholder="dd/mm/yyyy hh:mm" readonly />
-          <button class="iconBtn" id="sessFromBtn" title="Pick date" type="button">📅</button>
-        </div>
-        <label class="muted">To</label>
-        <div class="dp-wrap">
-          <input id="sessTo" type="hidden" />
-          <input id="sessToDisplay" class="dp-input" type="text" placeholder="dd/mm/yyyy hh:mm" readonly />
-          <button class="iconBtn" id="sessToBtn" title="Pick date" type="button">📅</button>
-        </div>
-        <label class="muted">User</label>
-        <input id="sessUser" type="text" placeholder="user@domain" />
-        <label class="muted">Type</label>
-        <select id="sessType">
-          <option value="">All</option>
-          <option value="web">Web</option>
-          <option value="vpn">VPN</option>
-          <option value="workspace">Workspace</option>
-        </select>
-        <label class="muted">Status</label>
-        <select id="sessStatus">
-          <option value="">All</option>
-          <option value="active">Active</option>
-          <option value="terminated">Terminated</option>
-        </select>
-        <button id="sessSearch" class="primary" type="button">Search</button>
-        <button id="sessExport" type="button">Export CSV</button>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th style="width:32px">#</th>
-            <th>User</th>
-            <th>Type</th>
-            <th>Status</th>
-            <th>Duration</th>
-            <th>Client IP</th>
-            <th>Node</th>
-            <th>Start Time</th>
-          </tr>
-        </thead>
-        <tbody id="sessTable"><tr><td class="muted" colspan="8">Set filters and click Search…</td></tr></tbody>
-      </table>
-    </div>
-  </section>
-
-  <section class="panel hidden" id="panel-unlock">
-    <div class="card">
-      <h3>Unlock AAA User</h3>
-      <div class="row" style="margin-bottom:10px">
-        <label class="muted">Node</label>
-        <select id="unlockNode">
-          <option value="primary">primary</option>
-          <option value="secondary">secondary</option>
-        </select>
-        <label class="muted">Username</label>
-        <input id="unlockUsername" type="text" placeholder="user1" />
-        <button id="unlockBtn" class="primary" type="button">Unlock</button>
-      </div>
-      <div id="unlockMsg" class="muted" style="min-height:20px"></div>
-      <div class="hint">Note: operation uses NITRO <code>/nitro/v1/config/aaauser</code> with automatic fallback to <code>?action=unlock</code>.</div>
-    </div>
-  </section>
-</main>
-
-<!-- Date Picker Popover -->
-<div id="datePicker" class="dp hidden" role="dialog" aria-modal="true">
-  <div class="dp-header">
-    <button id="dpPrev" title="Prev month" type="button">‹</button>
-    <div class="dp-title" id="dpTitle">Month YYYY</div>
-    <button id="dpNext" title="Next month" type="button">›</button>
-  </div>
-  <div class="cal-grid" id="dpGrid"></div>
-  <div class="dp-quick">
-    <button data-range="24h" type="button">Last 24h</button>
-    <button data-range="7d" type="button">Last 7d</button>
-    <button data-range="today" type="button">Today</button>
-    <button data-clear="1" type="button">Clear</button>
-  </div>
-  <div class="dp-footer">
-    <div class="time">
-      <span class="muted">Time</span>
-      <select id="dpHour"></select>:<select id="dpMin"></select>
+<header class="glass-panel rounded-2xl mb-6 p-4 flex flex-col md:flex-row items-center justify-between sticky top-4 z-50 fade-in">
+  <div class="flex items-center gap-4 mb-4 md:mb-0">
+    <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
+      <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
     </div>
     <div>
-      <button id="dpCancel" type="button">Cancel</button>
-      <button id="dpApply" class="primary" type="button">Apply</button>
+        <h1 class="text-xl font-bold tracking-tight text-white">NetScaler Dashboard</h1>
+        <p class="text-xs text-blue-400 font-mono">Live Monitoring</p>
+    </div>
+  </div>
+
+  <div class="flex items-center gap-3 bg-slate-900/50 p-1.5 rounded-xl border border-white/5">
+    <label class="text-sm text-slate-400 pl-2">Node:</label>
+    <select id="nodeSelect" onchange="changeNode(this.value)" class="bg-slate-800 text-white text-sm border-none rounded-lg focus:ring-2 focus:ring-blue-500 py-1.5 px-3 cursor-pointer hover:bg-slate-700 transition-colors">
+      <option value="primary">Primary</option>
+      <option value="secondary">Secondary</option>
+    </select>
+    <button id="refreshBtn" type="button" onclick="forceRefresh()" class="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg transition-all shadow-lg active:scale-95">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+    </button>
+    <a href="/logout" class="bg-red-500/10 hover:bg-red-500/20 text-red-400 p-2 rounded-lg transition-all border border-red-500/20" title="Logout">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
+    </a>
+  </div>
+</header>
+
+<main class="max-w-7xl mx-auto">
+  
+  <div id="capsLine" class="mb-6 text-sm text-slate-400 font-mono bg-slate-900/40 p-3 rounded-lg border border-dashed border-slate-700 flex items-center gap-2">
+    <svg class="w-4 h-4 text-slate-500 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
+    Detecting system capabilities...
+  </div>
+
+  <div class="tabs flex space-x-1 mb-6 border-b border-slate-700/50" role="tablist">
+    <button onclick="setActiveTab('overview')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg active" data-tab="overview">Overview</button>
+    <button onclick="setActiveTab('applications')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="applications">Applications</button>
+    <button onclick="setActiveTab('failover')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="failover">Failover</button>
+    <button onclick="setActiveTab('sessions')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="sessions">Sessions</button>
+    <button onclick="setActiveTab('unlock')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="unlock">Unlock User</button>
+  </div>
+
+  <section class="panel fade-in" id="panel-overview">
+    
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
+      <div class="glass-panel rounded-2xl p-4 flex flex-col items-center">
+        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">CPU Usage</h3>
+        <div class="chart-wrapper">
+          <canvas id="chartCpu"></canvas>
+        </div>
+        <div class="mt-2 text-2xl font-bold text-white font-mono" id="valCpu">--%</div>
+      </div>
+      
+      <div class="glass-panel rounded-2xl p-4 flex flex-col items-center">
+        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">Memory Usage</h3>
+        <div class="chart-wrapper">
+          <canvas id="chartMem"></canvas>
+        </div>
+        <div class="mt-2 text-2xl font-bold text-white font-mono" id="valMem">--%</div>
+      </div>
+
+      <div class="glass-panel rounded-2xl p-4 flex flex-col items-center w-full">
+        <h3 class="text-slate-400 text-xs font-bold uppercase tracking-wider mb-2">HTTP Traffic (Live)</h3>
+        <div class="chart-wrapper-line">
+          <canvas id="chartHttp"></canvas>
+        </div>
+        <div class="mt-2 text-xl font-bold text-blue-400 font-mono" id="valHttp">0 req/s</div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <div class="glass-panel rounded-2xl p-6">
+        <h3 class="text-lg font-semibold text-white mb-4">Node Statistics</h3>
+        <div id="sysStats" class="table-container text-sm">Loading...</div>
+      </div>
+
+      <div class="glass-panel rounded-2xl p-6">
+        <h3 class="text-lg font-semibold text-white mb-4">High Availability</h3>
+        <div id="haStatus" class="table-container text-sm">Loading...</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel hidden fade-in" id="panel-applications">
+    <div id="appsNotice" class="mb-4 text-xs text-amber-400 bg-amber-400/10 p-3 rounded border border-amber-400/20 hidden"></div>
+    
+    <div class="glass-panel rounded-2xl p-0 overflow-hidden mb-8">
+      <div class="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
+        <h3 class="font-semibold text-white">Applications</h3>
+        <div class="badge badge-warning" id="appsModeChip">Mode: <span id="appsMode">...</span></div>
+      </div>
+      <div class="table-container p-2">
+        <table>
+          <thead><tr><th class="w-12">#</th><th>Name</th><th>VIP</th><th>Port</th><th>Status</th></tr></thead>
+          <tbody id="appsTable" class="text-slate-300"><tr><td colspan="5" class="text-center py-8 text-slate-500">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="glass-panel rounded-2xl p-0 overflow-hidden">
+      <div class="p-4 border-b border-white/5 bg-white/5"><h3 class="font-semibold text-white">Services</h3></div>
+      <div class="table-container p-2">
+        <table>
+          <thead><tr><th class="w-12">#</th><th>Type</th><th>Name</th><th>IP</th><th>Port</th><th>Status</th><th>Members</th></tr></thead>
+          <tbody id="svcTable" class="text-slate-300"><tr><td colspan="7" class="text-center py-8 text-slate-500">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel hidden fade-in" id="panel-failover">
+    <div class="glass-panel rounded-2xl p-6">
+      <div class="flex flex-wrap gap-4 mb-6 p-4 bg-slate-900/50 rounded-xl border border-slate-700/50 items-end">
+        <div class="grid gap-1">
+          <label class="text-xs text-slate-400 ml-1">From</label>
+          <div class="dp-wrap relative flex items-center">
+            <input id="failFrom" type="hidden" />
+            <input id="failFromDisplay" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-l-lg py-2 px-3 w-40" readonly />
+            <button id="failFromBtn" class="bg-slate-700 hover:bg-slate-600 border-slate-700 rounded-r-lg px-3 py-2 text-slate-300">📅</button>
+          </div>
+        </div>
+        <div class="grid gap-1">
+          <label class="text-xs text-slate-400 ml-1">To</label>
+          <div class="dp-wrap relative flex items-center">
+            <input id="failTo" type="hidden" />
+            <input id="failToDisplay" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-l-lg py-2 px-3 w-40" readonly />
+            <button id="failToBtn" class="bg-slate-700 hover:bg-slate-600 border-slate-700 rounded-r-lg px-3 py-2 text-slate-300">📅</button>
+          </div>
+        </div>
+        <div class="grid gap-1">
+            <label class="text-xs text-slate-400 ml-1">Type</label>
+            <select id="failType" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3">
+              <option value="">All</option><option value="automatic">Automatic</option><option value="manual">Manual</option><option value="failure">Failure</option><option value="role-change">Role Change</option>
+            </select>
+        </div>
+        <div class="flex gap-2 ml-auto">
+            <button id="failSearch" onclick="loadFailover()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-medium">Search</button>
+            <button id="failExport" onclick="window.open('/api/export/failover-history')" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-lg border border-slate-600">CSV</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th class="w-12">#</th><th>Timestamp</th><th>Event Type</th><th>Reason</th><th>Role Change</th></tr></thead>
+          <tbody id="failTable" class="text-slate-300"><tr><td colspan="5" class="text-center py-8 text-slate-500">Set filters and click Search...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel hidden fade-in" id="panel-sessions">
+    <div class="glass-panel rounded-2xl p-6">
+      <div class="flex flex-wrap gap-4 mb-6 p-4 bg-slate-900/50 rounded-xl border border-slate-700/50 items-end">
+        <div class="flex gap-2">
+            <div class="grid gap-1">
+                <label class="text-xs text-slate-400 ml-1">From</label>
+                <div class="dp-wrap relative flex items-center">
+                    <input id="sessFrom" type="hidden" /><input id="sessFromDisplay" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-l-lg py-2 px-2 w-32" readonly /><button id="sessFromBtn" class="bg-slate-700 border-slate-700 rounded-r-lg px-2 py-2 text-slate-300">📅</button>
+                </div>
+            </div>
+            <div class="grid gap-1">
+                <label class="text-xs text-slate-400 ml-1">To</label>
+                <div class="dp-wrap relative flex items-center">
+                    <input id="sessTo" type="hidden" /><input id="sessToDisplay" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-l-lg py-2 px-2 w-32" readonly /><button id="sessToBtn" class="bg-slate-700 border-slate-700 rounded-r-lg px-2 py-2 text-slate-300">📅</button>
+                </div>
+            </div>
+        </div>
+        <div class="grid gap-1 flex-grow">
+            <label class="text-xs text-slate-400 ml-1">User</label>
+            <input id="sessUser" type="text" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3 w-full" placeholder="user@domain" />
+        </div>
+        <div class="grid gap-1">
+            <label class="text-xs text-slate-400 ml-1">Type</label>
+            <select id="sessType" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3"><option value="">All</option><option value="web">Web</option><option value="vpn">VPN</option></select>
+        </div>
+        <div class="grid gap-1">
+            <label class="text-xs text-slate-400 ml-1">Status</label>
+            <select id="sessStatus" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3"><option value="">All</option><option value="active">Active</option><option value="terminated">Terminated</option></select>
+        </div>
+        <div class="flex gap-2">
+            <button id="sessSearch" onclick="loadSessions()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-medium">Search</button>
+            <button id="sessExport" onclick="window.open('/api/export/user-sessions')" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-lg border border-slate-600">CSV</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th class="w-12">#</th><th>User</th><th>Type</th><th>Status</th><th>Duration</th><th>IP</th><th>Node</th><th>Start</th></tr></thead>
+          <tbody id="sessTable" class="text-slate-300"><tr><td colspan="8" class="text-center py-8 text-slate-500">Set filters and click Search...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel hidden fade-in" id="panel-unlock">
+    <div class="max-w-xl mx-auto glass-panel rounded-2xl p-8 border-t-4 border-blue-500">
+      <h3 class="text-2xl font-bold text-white text-center mb-6">Unlock User Account</h3>
+      <div class="space-y-6">
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div class="md:col-span-1">
+                <label class="block text-sm font-medium text-slate-400 mb-2">Node</label>
+                <select id="unlockNode" class="w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3"><option value="primary">Primary</option><option value="secondary">Secondary</option></select>
+            </div>
+            <div class="md:col-span-2">
+                <label class="block text-sm font-medium text-slate-400 mb-2">Username</label>
+                <input id="unlockUsername" type="text" class="w-full bg-slate-800 border border-slate-700 text-white rounded-lg p-3" placeholder="e.g. jdoe" />
+            </div>
+        </div>
+        <button id="unlockBtn" onclick="doUnlock()" class="w-full bg-blue-600 hover:bg-blue-500 text-white font-bold py-3 px-4 rounded-xl shadow-lg transition-all">Unlock Account</button>
+        <div id="unlockMsg" class="min-h-[40px] flex items-center justify-center text-sm font-medium"></div>
+      </div>
+    </div>
+  </section>
+
+</main>
+
+<div id="datePicker" class="dp hidden absolute z-50 p-4 shadow-2xl w-80" role="dialog" aria-modal="true">
+  <div class="dp-header flex justify-between items-center mb-4">
+    <button id="dpPrev" class="hover:bg-slate-700 p-1 rounded">‹</button>
+    <div class="dp-title font-bold text-white" id="dpTitle">Month YYYY</div>
+    <button id="dpNext" class="hover:bg-slate-700 p-1 rounded">›</button>
+  </div>
+  <div class="cal-grid grid grid-cols-7 gap-1 text-center text-sm mb-4" id="dpGrid"></div>
+  <div class="dp-quick flex gap-2 mb-4 justify-center">
+    <button data-range="24h" class="bg-slate-700 hover:bg-slate-600 text-xs px-2 py-1 rounded">24h</button>
+    <button data-range="7d" class="bg-slate-700 hover:bg-slate-600 text-xs px-2 py-1 rounded">7d</button>
+    <button data-range="today" class="bg-slate-700 hover:bg-slate-600 text-xs px-2 py-1 rounded">Today</button>
+    <button data-clear="1" class="bg-slate-700 hover:bg-slate-600 text-xs px-2 py-1 rounded">Clear</button>
+  </div>
+  <div class="dp-footer flex justify-between items-center pt-3 border-t border-slate-700">
+    <div class="time flex items-center gap-1 text-xs">
+      <span class="text-slate-400">Time</span><select id="dpHour" class="bg-slate-800 rounded p-1"></select>:<select id="dpMin" class="bg-slate-800 rounded p-1"></select>
+    </div>
+    <div class="flex gap-2">
+      <button id="dpCancel" class="text-xs text-slate-400 hover:text-white px-2">Cancel</button>
+      <button id="dpApply" class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-1.5 rounded">Apply</button>
     </div>
   </div>
 </div>
 
 <script>
-const state = {
-  node: 'primary',
-  apiModes: {},
-  interval: null,
-  refreshMs: 30000
-};
+// --- GLOBAL VARS ---
+const state = { node: 'primary', apiModes: {}, interval: null, refreshMs: 5000 };
+let cpuChart, memChart, httpChart;
+const httpHistory = { labels: [], data: [] };
 
-function $(sel){return document.querySelector(sel)}
-function $all(sel){return Array.from(document.querySelectorAll(sel))}
-
-/* ---------- helpers ---------- */
-async function getJSON(url, opts){
-  const res = await fetch(url, {headers:{'Accept':'application/json'}, ...(opts||{})});
-  const text = await res.text();
-  try { return {ok: res.ok, status: res.status, data: text? JSON.parse(text): {}}; }
-  catch(e){ return {ok: res.ok, status: res.status, data: {raw:text}}; }
+// --- HELPER FUNCTIONS ---
+function $(id) { return document.getElementById(id); }
+function qs(params) {
+    return Object.entries(params)
+        .filter(([_,v])=>v!==undefined&&v!==null&&v!=='')
+        .map(([k,v])=>`${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+        .join('&');
 }
-function qs(params){
-  const esc = encodeURIComponent;
-  return Object.entries(params)
-    .filter(([_,v])=> v!==undefined && v!==null && v!=='')
-    .map(([k,v])=>`${esc(k)}=${esc(v)}`)
-    .join('&');
-}
-function fmt(v){ if(!v) return ''; try{ return new Date(v).toLocaleString(); }catch(e){ return String(v); } }
-function escapeHtml(s){ return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c])); }
-
-/* ---------- tabs + caps ---------- */
-function setActiveTab(name){
-  $all('.tab').forEach(t=>{
-    const active = t.dataset.tab===name;
-    t.classList.toggle('active', active);
-    t.setAttribute('aria-selected', active?'true':'false');
-  });
-  $all('section.panel').forEach(p=>p.classList.add('hidden'));
-  document.getElementById(`panel-${name}`).classList.remove('hidden');
-  if(name==='overview') loadOverview();
-  if(name==='applications') { loadApplications(); loadServices(); }
-  if(name==='failover') loadFailover();
-  if(name==='sessions') loadSessions();
-  if(name==='unlock') loadUnlock();
+function escapeHtml(s) {
+    return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 }
 
-async function fetchCaps(){
-  const r = await getJSON('/api/caps');
-  if(!r.ok){ $('#capsLine').textContent = 'Capabilities: unavailable'; return; }
-  state.apiModes = r.data.api_mode || {};
-  const p = state.apiModes.primary || 'nitro';
-  const s = state.apiModes.secondary || 'nitro';
-  $('#capsLine').innerHTML = `Capabilities — primary: <span class="kbd">${p}</span>, secondary: <span class="kbd">${s}</span>`;
-  updateAppsTabAvailability();
-}
-function updateAppsTabAvailability(){
-  const mode = state.apiModes[state.node] || 'nitro';
-  const note = $('#appsNotice');
-  const chip = $('#appsMode');
-  if (chip) chip.textContent = mode;
-  if (note) {
-    note.textContent = (mode === 'nextgen')
-      ? ''
-      : 'Nitro mode — showing LB vservers as Applications (fallback).';
-  }
+// --- API WRAPPER ---
+async function getJSON(url, opts) {
+    try {
+        const res = await fetch(url, { headers: { 'Accept': 'application/json' }, ...(opts || {}) });
+        const text = await res.text();
+        return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : {} };
+    } catch (e) {
+        return { ok: false, data: { raw: String(e) } };
+    }
 }
 
-/* ---------- Overview ---------- */
-async function loadOverview(){
-  const [statsAll, haAll] = await Promise.all([
-    getJSON('/api/system-stats'),
-    getJSON('/api/ha-status')
-  ]);
-  const get = (obj, keys, def='')=>{
-    for(const k of keys){ if(obj && obj[k]!==undefined && obj[k]!==null) return obj[k]; }
-    return def;
-  };
-  const num = v=> (v===undefined||v===null||v==='')? '': (typeof v==='number'? v: Number(v));
+// --- TABS LOGIC (FIXED) ---
+function setActiveTab(name) {
+    // Hide all panels
+    const panels = document.querySelectorAll('section.panel');
+    panels.forEach(p => p.classList.add('hidden'));
+    
+    // Show selected panel
+    const selected = document.getElementById(`panel-${name}`);
+    if(selected) selected.classList.remove('hidden');
 
-  if(statsAll.ok && (statsAll.data.primary || statsAll.data.secondary)){
-    const rows = ['primary','secondary'].map(node=>{
-      const d = statsAll.data[node] || {};
-      const ns = d.ns_stats?.ns || d.ns_stats || {};
-      const cpu = get(ns, ['cpuusagepcnt','cpuusage','cpu_usage','cpuusagepct','cpuusage_pc'] , '');
-      const mem = get(ns, ['memusagepcnt','memoryusagepcnt','memusagepct'], '');
-      const httpRate = get(ns, ['httprequestsrate','httprequestrate','http_requests_rate','httprequests_rate'], '');
-      const ver = d.version || '';
-      const role = d.ha_role || '';
-      const ip = d.ip || '';
-      return `<tr>
-        <td class="muted">${node}</td>
-        <td>${escapeHtml(ip+'')}</td>
-        <td>${escapeHtml(role+'')}</td>
-        <td>${escapeHtml(ver+'')}</td>
-        <td>${cpu!==''? escapeHtml(num(cpu).toFixed(1)+'%'): ''}</td>
-        <td>${mem!==''? escapeHtml(num(mem).toFixed(1)+'%'): ''}</td>
-        <td>${httpRate!==''? escapeHtml(num(httpRate).toFixed(0)): ''}</td>
-      </tr>`;
-    }).join('');
+    // Update buttons
+    const btns = document.querySelectorAll('.tab-btn');
+    btns.forEach(b => {
+        if(b.dataset.tab === name) b.classList.add('active');
+        else b.classList.remove('active');
+    });
 
-    $('#sysStats').innerHTML = `<table><thead><tr>
-      <th>Node</th><th>IP</th><th>Role</th><th>Version</th><th>CPU</th><th>Mem</th><th>HTTP req/s</th>
-    </tr></thead><tbody>${rows}</tbody></table>`;
-  } else {
-    const node = state.node;
-    const single = await getJSON(`/api/system-stats?node=${encodeURIComponent(node)}`);
-    $('#sysStats').textContent = single.ok ? JSON.stringify(single.data.ns_stats || single.data.stats || single.data, null, 2) : 'Error loading stats';
-  }
+    // Trigger data load
+    if (name === 'overview') loadOverview();
+    if (name === 'applications') { loadApplications(); loadServices(); }
+    if (name === 'failover') loadFailover();
+    if (name === 'sessions') loadSessions();
+    
+    // Restart interval to focus on this tab
+    startAutoRefresh();
+}
 
-  if(haAll.ok && (haAll.data.hanode || (haAll.data.primary && haAll.data.secondary))){
-    const items = Array.isArray(haAll.data.hanode)? haAll.data.hanode: [];
-    if(items.length){
-      const rows = items.map((n,i)=>{
-        const name = n.name || `node-${i+1}`;
-        const ip = n.ipaddress || n.ip || '';
-        const theState = n.state || n.hastatus || '';
-        const hasync = n.hasync || n.syncstatusstrictmode || '';
-        const rm = n.routemonitorstate || '';
-        const cls = /UP|PRIMARY|SUCCESS/i.test(theState)? 'ok' : /DOWN|FAIL/i.test(theState)? 'bad' : 'warn';
-        return `<tr>
-          <td class="muted">${i+1}</td>
-          <td>${escapeHtml(name+'')}</td>
-          <td>${escapeHtml(ip+'')}</td>
-          <td><span class="${cls}">${escapeHtml(String(theState))}</span></td>
-          <td>${escapeHtml(String(hasync))}</td>
-          <td>${escapeHtml(String(rm))}</td>
-        </tr>`;
-      }).join('');
-      $('#haStatus').innerHTML = `<table><thead><tr>
-        <th>#</th><th>Name</th><th>IP</th><th>Status</th><th>HA Sync</th><th>Route Monitor</th>
-      </tr></thead><tbody>${rows}</tbody></table>`;
+function changeNode(val) {
+    state.node = val;
+    const currentTab = document.querySelector('.tab-btn.active').dataset.tab;
+    updateAppsTabAvailability();
+    setActiveTab(currentTab);
+}
+
+function forceRefresh() {
+    const btn = $('refreshBtn');
+    btn.classList.add('animate-spin'); // Add visual feedback
+    const currentTab = document.querySelector('.tab-btn.active').dataset.tab;
+    
+    // Trigger load
+    setActiveTab(currentTab);
+    fetchCaps();
+    
+    setTimeout(() => btn.classList.remove('animate-spin'), 1000);
+}
+
+// --- CHART INIT ---
+function initCharts() {
+    Chart.defaults.color = '#94a3b8';
+    Chart.defaults.borderColor = '#334155';
+    
+    try {
+        cpuChart = new Chart($('chartCpu'), {
+            type: 'doughnut', 
+            data: { labels: ['Used', 'Free'], datasets: [{ data: [0, 100], backgroundColor: ['#3b82f6', '#1e293b'], borderWidth: 0, cutout: '75%' }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } } }
+        });
+        
+        memChart = new Chart($('chartMem'), {
+            type: 'doughnut',
+            data: { labels: ['Used', 'Free'], datasets: [{ data: [0, 100], backgroundColor: ['#8b5cf6', '#1e293b'], borderWidth: 0, cutout: '75%' }] },
+            options: { responsive: true, maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { enabled: false } } }
+        });
+        
+        httpChart = new Chart($('chartHttp'), {
+            type: 'line',
+            data: { labels: [], datasets: [{ data: [], borderColor: '#3b82f6', backgroundColor: 'rgba(59,130,246,0.1)', borderWidth: 2, tension: 0.4, fill: true, pointRadius: 0 }] },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { display: false } },
+                scales: { x: { display: false }, y: { beginAtZero: true, grid: { borderDash: [5, 5] } } },
+                animation: { duration: 0 }
+            }
+        });
+    } catch(e) { console.error("Chart init failed", e); }
+}
+
+// --- DATA LOADERS ---
+async function fetchCaps() {
+    const r = await getJSON('/api/caps');
+    if (r.ok) {
+        state.apiModes = r.data.api_mode || {};
+        const p = (state.apiModes.primary || 'nitro').toUpperCase();
+        const s = (state.apiModes.secondary || 'nitro').toUpperCase();
+        $('capsLine').innerHTML = `Capabilities: <span class="text-blue-400 font-bold mx-1">PRI: ${p}</span> | <span class="text-blue-400 font-bold mx-1">SEC: ${s}</span>`;
+        updateAppsTabAvailability();
+    }
+}
+
+function updateAppsTabAvailability() {
+    const mode = state.apiModes[state.node] || 'nitro';
+    $('appsMode').textContent = mode.toUpperCase();
+    const note = $('appsNotice');
+    if (mode === 'nextgen') {
+        note.classList.add('hidden');
     } else {
-      $('#haStatus').textContent = 'No HA data';
+        note.classList.remove('hidden');
+        note.innerHTML = '⚠️ <strong>Nitro Mode:</strong> Showing LB vServers as Applications (fallback).';
     }
-  } else {
-    const node = state.node;
-    const single = await getJSON(`/api/ha-status?node=${encodeURIComponent(node)}`);
-    $('#haStatus').textContent = single.ok ? JSON.stringify(single.data.hanode || single.data, null, 2) : 'Error loading HA status';
-  }
 }
 
-/* ---------- Applications / Services ---------- */
-async function loadApplications(){
-  const mode = state.apiModes[state.node] || 'nitro';
-  const chipEl = $('#appsMode'); if (chipEl) chipEl.textContent = mode;
+async function loadOverview() {
+    const r = await getJSON(`/api/system-stats?node=${state.node}`);
+    const ha = await getJSON(`/api/ha-status`);
 
-  if(mode === 'nextgen'){
-    const r = await getJSON(`/api/applications?node=${encodeURIComponent(state.node)}`);
-    if(!r.ok){
-      const msg = r.status===501? 'Next-Gen API not enabled for this node' : 'Failed to load applications';
-      $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">${msg}</td></tr>`;
-      return;
+    if (r.ok) {
+        const d = r.data.ns_stats?.ns || r.data.ns_stats || {};
+        let cpu = parseFloat(d.cpuusagepcnt || d.cpuusage || 0);
+        let mem = parseFloat(d.memusagepcnt || d.memusagepct || 0);
+        let http = parseFloat(d.httprequestsrate || 0);
+
+        if (cpuChart) { cpuChart.data.datasets[0].data = [cpu, 100 - cpu]; cpuChart.update(); $('valCpu').innerText = cpu.toFixed(1) + '%'; }
+        if (memChart) { memChart.data.datasets[0].data = [mem, 100 - mem]; memChart.update(); $('valMem').innerText = mem.toFixed(1) + '%'; }
+        if (httpChart) {
+            const now = new Date().toLocaleTimeString();
+            if (httpHistory.labels.length > 20) { httpHistory.labels.shift(); httpHistory.data.shift(); }
+            httpHistory.labels.push(now); httpHistory.data.push(http);
+            httpChart.data.labels = httpHistory.labels; httpChart.data.datasets[0].data = httpHistory.data; httpChart.update();
+            $('valHttp').innerText = Math.round(http) + ' req/s';
+        }
+
+        const role = r.data.ha_role || '';
+        const badge = role.toUpperCase().includes('PRIMARY') ? 'badge-success' : 'badge-warning';
+        $('sysStats').innerHTML = `<table class="w-full"><tr class="border-b border-slate-700"><td class="text-slate-500 w-32">IP Address</td><td class="font-mono text-white">${escapeHtml(r.data.ip)}</td></tr><tr class="border-b border-slate-700"><td class="text-slate-500">Version</td><td class="text-white">${escapeHtml(r.data.version)}</td></tr><tr><td class="text-slate-500">HA Role</td><td><span class="badge ${badge}">${escapeHtml(role)}</span></td></tr></table>`;
     }
-    let items = [];
-    const d = r.data.applications ?? r.data ?? [];
-    if(Array.isArray(d)) items = d; else if (typeof d === 'object'){
-      if(Array.isArray(d.applications)) items = d.applications; else {
-        for(const k in d){ if(Array.isArray(d[k])) items = items.concat(d[k]); }
-      }
+
+    if (ha.ok && ha.data.hanode) {
+        const rows = ha.data.hanode.map((n, i) => {
+            const s = (n.state || '').toUpperCase();
+            const cls = s.includes('UP') || s.includes('PRIMARY') ? 'badge-success' : 'badge-danger';
+            return `<tr class="border-b border-slate-800/50"><td class="text-slate-500">${i + 1}</td><td class="font-mono text-slate-300">${escapeHtml(n.ipaddress || n.ip)}</td><td><span class="badge ${cls}">${s}</span></td><td class="text-slate-500 text-xs">${escapeHtml(n.hasync || '')}</td></tr>`;
+        }).join('');
+        $('haStatus').innerHTML = `<table><thead><tr><th>#</th><th>IP</th><th>State</th><th>Sync</th></tr></thead><tbody>${rows}</tbody></table>`;
     }
-    if(!items.length){
-      $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">No applications found</td></tr>`;
-      return;
+}
+
+async function loadApplications() {
+    $('appsTable').innerHTML = '<tr><td colspan="5" class="text-center py-4 text-slate-500">Loading...</td></tr>';
+    const mode = state.apiModes[state.node] || 'nitro';
+    const endpoint = mode === 'nextgen' ? '/api/applications' : '/api/lb-vservers';
+    const r = await getJSON(`${endpoint}?node=${state.node}`);
+    
+    if (!r.ok) { $('appsTable').innerHTML = '<tr><td colspan="5" class="text-center py-4 text-red-400">Failed to load</td></tr>'; return; }
+    
+    const list = (mode === 'nextgen' ? (r.data.applications || []) : (r.data.lbvserver || []));
+    const rows = list.length ? list.map((item, i) => {
+        const name = item.name || item.vservername || `app-${i}`;
+        const vip = item.vip || item.ipv46 || item.ipaddress || '';
+        const state = (item.state || item.curstate || '').toUpperCase();
+        const badge = (state.includes('UP') || state.includes('ENABLED')) ? 'badge-success' : 'badge-danger';
+        return `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500 font-mono">${i + 1}</td><td class="text-white font-medium">${escapeHtml(name)}</td><td class="text-blue-300 font-mono text-xs">${escapeHtml(vip)}</td><td class="text-slate-400 font-mono text-xs">${item.port || ''}</td><td><span class="badge ${badge}">${state}</span></td></tr>`;
+    }).join('') : '<tr><td colspan="5" class="text-center py-4 text-slate-500">No items found</td></tr>';
+    $('appsTable').innerHTML = rows;
+}
+
+async function loadServices() {
+    $('svcTable').innerHTML = '<tr><td colspan="7" class="text-center py-4 text-slate-500">Loading...</td></tr>';
+    const r = await getJSON(`/api/services?node=${state.node}`);
+    if (r.ok && r.data.service) {
+        const rows = r.data.service.map((s, i) => {
+            const st = (s.curstate || '').toUpperCase();
+            return `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500">${i + 1}</td><td class="text-xs">SVC</td><td class="text-white">${escapeHtml(s.name)}</td><td class="font-mono text-xs text-slate-400">${escapeHtml(s.ip)}</td><td class="text-xs text-slate-300">${s.port}</td><td><span class="badge ${st.includes('UP') ? 'badge-success' : 'badge-danger'}">${st}</span></td><td>-</td></tr>`;
+        }).join('');
+        $('svcTable').innerHTML = rows || '<tr><td colspan="7" class="text-center text-slate-500 py-4">No services</td></tr>';
     }
-    const rows = items.map((a,i)=>{
-      const name = a?.name ?? a?.appName ?? `app-${i+1}`;
-      const vip  = a?.vip ?? a?.vipAddress ?? a?.listener?.vip ?? '';
-      const port = a?.port ?? a?.listener?.port ?? '';
-      const state = (a?.state ?? a?.status ?? 'UP').toString().toUpperCase();
-      const cls = state.includes('UP')? 'ok' : state.includes('DOWN')? 'bad' : 'warn';
-      return `<tr>
-        <td class="muted">${i+1}</td>
-        <td>${escapeHtml(name)}</td>
-        <td>${escapeHtml(String(vip))}</td>
-        <td>${escapeHtml(String(port))}</td>
-        <td><span class="${cls}">${escapeHtml(state)}</span></td>
-      </tr>`;
-    }).join('');
-    $('#appsTable').innerHTML = rows;
-    return;
-  }
-
-  const r = await getJSON(`/api/lb-vservers?node=${encodeURIComponent(state.node)}`);
-  if(!r.ok){
-    $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">Failed to load LB vservers (HTTP ${r.status})</td></tr>`;
-    return;
-  }
-  const list = r.data?.lbvserver || r.lbvserver || [];
-  if(!Array.isArray(list) || !list.length){
-    $('#appsTable').innerHTML = `<tr><td colspan="5" class="muted">No LB vservers</td></tr>`;
-    return;
-  }
-  const rows = list.map((v,i)=>{
-    const name  = v.name || v.vservername || `lbv-${i+1}`;
-    const vip   = v.ipv46 || v.ipaddress || v.ip || '';
-    const port  = v.port || v.portno || '';
-    const state = (v.curstate || v.state || '').toString().toUpperCase();
-    const cls   = /UP|ENABLED/.test(state) ? 'ok' : /DOWN|DISABLED/.test(state) ? 'bad' : 'warn';
-    return `<tr>
-      <td class="muted">${i+1}</td>
-      <td>${escapeHtml(name)}</td>
-      <td>${escapeHtml(String(vip))}</td>
-      <td>${escapeHtml(String(port))}</td>
-      <td><span class="${cls}">${escapeHtml(state)}</span></td>
-    </tr>`;
-  }).join('');
-  $('#appsTable').innerHTML = rows;
 }
 
-async function loadServices(){
-  const r = await getJSON(`/api/services?node=${encodeURIComponent(state.node)}`);
-  if(!r.ok){
-    $('#svcTable').innerHTML = `<tr><td colspan="7" class="muted">Failed to load services (HTTP ${r.status})</td></tr>`;
-    return;
-  }
-  const services = Array.isArray(r.data.service) ? r.data.service : [];
-  const groups   = Array.isArray(r.data.servicegroup) ? r.data.servicegroup : [];
-  if(!services.length && !groups.length){
-    $('#svcTable').innerHTML = `<tr><td colspan="7" class="muted">No services or groups</td></tr>`;
-    return;
-  }
-  const rowsSvc = services.map((s,i)=> {
-    const name  = s.name || s.servicename || `svc-${i+1}`;
-    const ip    = s.ip || s.ipaddress || s.svrip || '';
-    const port  = s.port || s.portno || '';
-    const state = (s.curstate || s.state || '').toString().toUpperCase();
-    const cls   = /UP|ENABLED/.test(state) ? 'ok' : /DOWN|DISABLED/.test(state) ? 'bad' : 'warn';
-    return `<tr>
-      <td class="muted">${i+1}</td>
-      <td>service</td>
-      <td>${escapeHtml(name)}</td>
-      <td>${escapeHtml(String(ip))}</td>
-      <td>${escapeHtml(String(port))}</td>
-      <td><span class="${cls}">${escapeHtml(state)}</span></td>
-      <td></td>
-    </tr>`;
-  });
-
-  const rowsGrp = groups.map((g,i)=>{
-    const name  = g.servicegroupname || g.name || `svcgrp-${i+1}`;
-    const port  = g.port || g.portno || '';
-    const state = (g.curstate || g.state || '').toString().toUpperCase();
-    const mem   = Array.isArray(g.members)? g.members.length : (g.membercount || '');
-    const cls   = /UP|ENABLED/.test(state) ? 'ok' : /DOWN|DISABLED/.test(state) ? 'bad' : 'warn';
-    return `<tr>
-      <td class="muted">${services.length + i + 1}</td>
-      <td>servicegroup</td>
-      <td>${escapeHtml(name)}</td>
-      <td></td>
-      <td>${escapeHtml(String(port))}</td>
-      <td><span class="${cls}">${escapeHtml(state)}</span></td>
-      <td>${escapeHtml(String(mem||''))}</td>
-    </tr>`;
-  });
-
-  $('#svcTable').innerHTML = rowsSvc.concat(rowsGrp).join('');
+// --- HISTORY & SESSIONS ---
+async function loadFailover() {
+    const p = { from: $('failFrom').value, to: $('failTo').value, type: $('failType').value };
+    const r = await getJSON(`/api/failover-history?${qs({ ...p, node: state.node })}`);
+    const arr = r.ok ? (r.data.events || []) : [];
+    const rows = arr.length ? arr.map((e, i) => `<tr><td class="text-slate-500">${i + 1}</td><td>${escapeHtml(new Date(e.timestamp).toLocaleString())}</td><td>${escapeHtml(e.type)}</td><td>${escapeHtml(e.reason)}</td><td>${escapeHtml(e.role_change)}</td></tr>`).join('') : '<tr><td colspan="5" class="text-center py-8 text-slate-500">No events found</td></tr>';
+    $('failTable').innerHTML = rows;
 }
 
-/* ---------- Failover ---------- */
-function collectFailoverFilters(){
-  return {
-    from: $('#failFrom').value || '',
-    to:   $('#failTo').value   || '',
-    type: $('#failType').value
-  };
-}
-async function loadFailover(){
-  const node = state.node;
-  const p = collectFailoverFilters();
-  const url = `/api/failover-history?${qs({...p, node})}`;
-  const r = await getJSON(url);
-  if(!r.ok){
-    $('#failTable').innerHTML = `<tr><td colspan="5" class="muted">Failed to load failover history (HTTP ${r.status})</td></tr>`;
-    return;
-  }
-  const arr = (r.data.events || r.data.failover || r.data.failover_history || []);
-  if(!Array.isArray(arr) || !arr.length){
-    $('#failTable').innerHTML = `<tr><td colspan="5" class="muted">No events</td></tr>`;
-    return;
-  }
-  const rows = arr.map((e,i)=>{
-    const ts = (e.timestamp || e.time || e.occurred_at || e.when);
-    const typ = (e.type || e.eventType || '').toString();
-    const reason = (e.reason || e.cause || '').toString();
-    const role = (e.role_change || (e.from && e.to ? `${e.from} → ${e.to}` : '')).toString();
-    return `<tr>
-      <td class="muted">${i+1}</td>
-      <td>${escapeHtml(new Date(ts).toLocaleString())}</td>
-      <td>${escapeHtml(typ)}</td>
-      <td>${escapeHtml(reason)}</td>
-      <td>${escapeHtml(role)}</td>
-    </tr>`
-  }).join('');
-  $('#failTable').innerHTML = rows;
+async function loadSessions() {
+    const p = { from: $('sessFrom').value, to: $('sessTo').value, user: $('sessUser').value, type: $('sessType').value, status: $('sessStatus').value };
+    const r = await getJSON(`/api/user-sessions?${qs({ ...p, node: state.node })}`);
+    const arr = r.ok ? (r.data.sessions || []) : [];
+    const rows = arr.length ? arr.map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.user)}</td><td>${escapeHtml(s.type)}</td><td>${escapeHtml(s.status)}</td><td>${escapeHtml(s.duration)}</td><td>${escapeHtml(s.ip)}</td><td>${escapeHtml(s.node)}</td><td>${escapeHtml(s.start)}</td></tr>`).join('') : '<tr><td colspan="8" class="text-center py-8 text-slate-500">No sessions found</td></tr>';
+    $('sessTable').innerHTML = rows;
 }
 
-/* ---------- Sessions (placeholder) ---------- */
-function collectSessionFilters(){
-  return {
-    from: $('#sessFrom').value || '',
-    to:   $('#sessTo').value   || '',
-    user: $('#sessUser').value.trim(),
-    type: $('#sessType').value,
-    status: $('#sessStatus').value
-  };
-}
-async function loadSessions(){
-  const node = state.node;
-  const p = collectSessionFilters();
-  const url = `/api/user-sessions?${qs({...p, node})}`;
-  const r = await getJSON(url);
-  if(!r.ok){
-    $('#sessTable').innerHTML = `<tr><td colspan="8" class="muted">Failed to load sessions (HTTP ${r.status})</td></tr>`;
-    return;
-  }
-  const arr = (r.data.sessions || r.data.items || r.data || []);
-  const list = Array.isArray(arr) ? arr : [];
-  if(!list.length){
-    $('#sessTable').innerHTML = `<tr><td colspan="8" class="muted">No sessions</td></tr>`;
-    return;
-  }
-  const rows = list.map((s,i)=>{
-    const user = s.user || s.username || s.cn || '';
-    const type = s.type || s.protocol || s.kind || '';
-    const status = (s.status || s.state || '').toString();
-    const dur = s.duration || s.elapsed || '';
-    const ip = s.client_ip || s.ip || s.src || '';
-    const nodeName = s.node || s.device || '';
-    const start = (s.start_time || s.started_at || s.login_time || '');
-    const cls = /active|up/i.test(status)? 'ok' : /term|down|fail/i.test(status)? 'bad' : 'warn';
-    return `<tr>
-      <td class="muted">${i+1}</td>
-      <td>${escapeHtml(user+'')}</td>
-      <td>${escapeHtml(type+'')}</td>
-      <td><span class="${cls}">${escapeHtml(status+'')}</span></td>
-      <td>${escapeHtml((dur+'')||'')}</td>
-      <td>${escapeHtml(ip+'')}</td>
-      <td>${escapeHtml(nodeName+'')}</td>
-      <td>${escapeHtml(new Date(start).toLocaleString())}</td>
-    </tr>`
-  }).join('');
-  $('#sessTable').innerHTML = rows;
+async function doUnlock() {
+    const u = $('unlockUsername').value; if(!u) return;
+    $('unlockBtn').textContent = 'Unlocking...';
+    $('unlockBtn').disabled = true;
+    const r = await getJSON('/api/unlock-user', {method:'POST', body:JSON.stringify({node:$('unlockNode').value, username:u})});
+    $('unlockMsg').innerHTML = r.ok && r.data.success ? `<span class="text-green-400">✔ ${r.data.message}</span>` : `<span class="text-red-400">✖ ${r.data.error||'Failed'}</span>`;
+    $('unlockBtn').textContent = 'Unlock Account';
+    $('unlockBtn').disabled = false;
 }
 
-/* ---------- Date Picker logic ---------- */
-const dp = {
-  el: $('#datePicker'),
-  grid: $('#dpGrid'),
-  title: $('#dpTitle'),
-  hour: $('#dpHour'),
-  min: $('#dpMin'),
-  target: null,
-  display: null,
-  view: new Date(),
-  selected: null
-};
-dp.el.addEventListener('click', (e)=> e.stopPropagation()); // prevent auto-close on inner clicks
+// --- DATE PICKER LOGIC ---
+const dp = { el: $('datePicker'), grid: $('dpGrid'), title: $('dpTitle'), hour: $('dpHour'), min: $('dpMin'), target: null, display: null, view: new Date(), selected: null };
+dp.el.addEventListener('click', (e) => e.stopPropagation());
 
-// init hour/min options
-(function initTime(){
-  for(let h=0; h<24; h++){ const o=document.createElement('option'); o.value=h; o.textContent=String(h).padStart(2,'0'); dp.hour.appendChild(o); }
-  for(let m=0; m<60; m+=5){ const o=document.createElement('option'); o.value=m; o.textContent=String(m).padStart(2,'0'); dp.min.appendChild(o); }
+(function initTime() {
+    for (let h = 0; h < 24; h++) { const o = document.createElement('option'); o.value = h; o.textContent = String(h).padStart(2, '0'); dp.hour.appendChild(o); }
+    for (let m = 0; m < 60; m += 5) { const o = document.createElement('option'); o.value = m; o.textContent = String(m).padStart(2, '0'); dp.min.appendChild(o); }
 })();
 
-function formatDisplay(d){
-  const dd=String(d.getDate()).padStart(2,'0');
-  const mm=String(d.getMonth()+1).padStart(2,'0');
-  const yyyy=d.getFullYear();
-  const hh=String(d.getHours()).padStart(2,'0');
-  const min=String(d.getMinutes()).padStart(2,'0');
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
-function setPair(hiddenId, displayId, dateObj){
-  const hid = document.getElementById(hiddenId);
-  const dsp = document.getElementById(displayId);
-  if(!hid || !dsp) return;
-  hid.value  = dateObj.toISOString();
-  dsp.value  = formatDisplay(dateObj);
-}
-function setInitialDateFields(){
-  const now  = new Date(); // ברירת מחדל: NOW לשני השדות
-  setPair('failFrom','failFromDisplay', now);
-  setPair('failTo',  'failToDisplay',   now);
-  setPair('sessFrom','sessFromDisplay', now);
-  setPair('sessTo',  'sessToDisplay',   now);
-}
-
-function openPicker(hiddenId, displayId){
-  dp.target = document.getElementById(hiddenId);
-  dp.display = document.getElementById(displayId);
-
-  const now = new Date();
-  dp.view = new Date(now.getFullYear(), now.getMonth(), 1);
-  const existingISO = dp.target.value;
-  if(existingISO){
-    const d = new Date(existingISO);
-    if(!isNaN(d)) {
-      dp.view = new Date(d.getFullYear(), d.getMonth(), 1);
-      dp.selected = new Date(d);
-      dp.hour.value = d.getHours();
-      dp.min.value  = Math.round(d.getMinutes()/5)*5 % 60;
-    }
-  } else {
-    dp.selected = new Date();
-    dp.hour.value = dp.selected.getHours();
-    dp.min.value  = Math.round(dp.selected.getMinutes()/5)*5 % 60;
-  }
-  renderCalendar();
-
-  const rect = dp.display.getBoundingClientRect();
-  dp.el.style.left = Math.min(rect.left, window.innerWidth - 340) + 'px';
-  dp.el.style.top  = (rect.bottom + 6) + 'px';
-  dp.el.classList.remove('hidden');
-}
-function closePicker(){ dp.el.classList.add('hidden'); dp.target = null; dp.display = null; }
-
-function renderCalendar(){
-  const y = dp.view.getFullYear(), m = dp.view.getMonth();
-  dp.title.textContent = `${dp.view.toLocaleString(undefined,{month:'long'})} ${y}`;
-
-  dp.grid.innerHTML = '';
-  const dows = ['Su','Mo','Tu','We','Th','Fr','Sa'];
-  dows.forEach(d => {
-    const el = document.createElement('div');
-    el.className='dow';
-    el.textContent=d;
-    dp.grid.appendChild(el);
-  });
-
-  const first = new Date(y, m, 1);
-  const startDow = first.getDay();
-  const daysInMonth = new Date(y, m+1, 0).getDate();
-
-  for(let i=0;i<startDow;i++){
-    const b = document.createElement('div'); b.className='day disabled'; b.textContent=''; dp.grid.appendChild(b);
-  }
-  for(let d=1; d<=daysInMonth; d++){
-    const el = document.createElement('div');
-    el.className = 'day';
-    el.textContent = d;
-    const candidate = new Date(y, m, d);
-    if(dp.selected && candidate.toDateString() === dp.selected.toDateString()) el.classList.add('selected');
-    el.addEventListener('click', ()=>{
-      dp.selected = new Date(y, m, d, Number(dp.hour.value), Number(dp.min.value));
-      renderCalendar(); // keep open until Apply
+function setInitialDateFields() {
+    const now = new Date();
+    ['failFrom', 'failTo', 'sessFrom', 'sessTo'].forEach(id => {
+        const h = $(id), d = $(id + 'Display');
+        if (h && d) { h.value = now.toISOString(); d.value = formatDisplay(now); }
     });
-    dp.grid.appendChild(el);
-  }
 }
 
-$('#dpPrev').addEventListener('click', ()=>{ dp.view = new Date(dp.view.getFullYear(), dp.view.getMonth()-1, 1); renderCalendar(); });
-$('#dpNext').addEventListener('click', ()=>{ dp.view = new Date(dp.view.getFullYear(), dp.view.getMonth()+1, 1); renderCalendar(); });
-$('#dpCancel').addEventListener('click', closePicker);
-$('#dpApply').addEventListener('click', ()=>{
-  if(!dp.selected){ dp.selected = new Date(dp.view.getFullYear(), dp.view.getMonth(), 1, Number(dp.hour.value), Number(dp.min.value)); }
-  dp.selected.setHours(Number(dp.hour.value), Number(dp.min.value), 0, 0);
-  dp.target.value  = dp.selected.toISOString();
-  dp.display.value = formatDisplay(dp.selected);
-  closePicker();
+function formatDisplay(d) {
+    return `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+function openPicker(hid, did) {
+    dp.target = $(hid); dp.display = $(did);
+    const now = new Date();
+    dp.view = new Date(now.getFullYear(), now.getMonth(), 1);
+    
+    if (dp.target.value) {
+        const d = new Date(dp.target.value);
+        if (!isNaN(d)) {
+            dp.view = new Date(d.getFullYear(), d.getMonth(), 1);
+            dp.selected = new Date(d);
+            dp.hour.value = d.getHours();
+            dp.min.value = Math.round(d.getMinutes() / 5) * 5 % 60;
+        }
+    } else {
+        dp.selected = new Date();
+    }
+    renderCalendar();
+    
+    // Positioning
+    const rect = dp.display.getBoundingClientRect();
+    dp.el.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 320) + 'px';
+    dp.el.style.top = (rect.bottom + window.scrollY + 6) + 'px';
+    dp.el.classList.remove('hidden');
+}
+
+function renderCalendar() {
+    const y = dp.view.getFullYear(), m = dp.view.getMonth();
+    dp.title.textContent = `${dp.view.toLocaleString(undefined, { month: 'long' })} ${y}`;
+    dp.grid.innerHTML = '';
+    
+    ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].forEach(d => {
+        const el = document.createElement('div');
+        el.className = 'text-slate-500 text-xs font-bold uppercase';
+        el.textContent = d;
+        dp.grid.appendChild(el);
+    });
+    
+    const first = new Date(y, m, 1);
+    for (let i = 0; i < first.getDay(); i++) dp.grid.appendChild(document.createElement('div'));
+    
+    const daysInMonth = new Date(y, m + 1, 0).getDate();
+    for (let d = 1; d <= daysInMonth; d++) {
+        const el = document.createElement('div');
+        el.className = 'day p-2 rounded cursor-pointer hover:bg-slate-700 transition-colors text-white';
+        el.textContent = d;
+        if (dp.selected && d === dp.selected.getDate() && m === dp.selected.getMonth() && y === dp.selected.getFullYear()) {
+            el.classList.add('selected'); el.classList.add('bg-blue-600');
+        }
+        el.addEventListener('click', () => {
+            dp.selected = new Date(y, m, d, Number(dp.hour.value), Number(dp.min.value));
+            renderCalendar();
+        });
+        dp.grid.appendChild(el);
+    }
+}
+
+$('dpPrev').onclick = () => { dp.view.setMonth(dp.view.getMonth() - 1); renderCalendar(); };
+$('dpNext').onclick = () => { dp.view.setMonth(dp.view.getMonth() + 1); renderCalendar(); };
+$('dpCancel').onclick = () => dp.el.classList.add('hidden');
+$('dpApply').onclick = () => {
+    if (!dp.selected) dp.selected = new Date();
+    dp.selected.setHours(Number(dp.hour.value), Number(dp.min.value));
+    dp.target.value = dp.selected.toISOString();
+    dp.display.value = formatDisplay(dp.selected);
+    dp.el.classList.add('hidden');
+};
+
+// Bind pickers
+[['failFrom', 'failFromDisplay', 'failFromBtn'], ['failTo', 'failToDisplay', 'failToBtn'],
+ ['sessFrom', 'sessFromDisplay', 'sessFromBtn'], ['sessTo', 'sessToDisplay', 'sessToBtn']].forEach(([h, d, b]) => {
+    $(d).onclick = () => openPicker(h, d);
+    $(b).onclick = () => openPicker(h, d);
 });
 
 // Quick ranges
-$all('.dp-quick button').forEach(btn=>{
-  if(btn.dataset.clear){ btn.addEventListener('click', ()=>{ if(!dp.target) return; dp.target.value=''; dp.display.value=''; closePicker(); }); return; }
-  btn.addEventListener('click', ()=>{
-    const now = new Date();
-    let from;
-    if(btn.dataset.range==='24h'){ from = new Date(now.getTime()-24*3600*1000); }
-    else if(btn.dataset.range==='7d'){ from = new Date(now.getTime()-7*24*3600*1000); }
-    else if(btn.dataset.range==='today'){ from = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0,0,0); }
-    if(!dp.target) return;
-    if(dp.target.id.endsWith('From')){
-      dp.target.value = from.toISOString();
-      dp.display.value = formatDisplay(from);
-    } else if(dp.target.id.endsWith('To')){
-      dp.target.value = now.toISOString();
-      dp.display.value = formatDisplay(now);
+document.querySelectorAll('.dp-quick button').forEach(btn => {
+    btn.onclick = () => {
+        if (btn.dataset.clear) { dp.target.value = ''; dp.display.value = ''; dp.el.classList.add('hidden'); return; }
+        const now = new Date(); let from;
+        if (btn.dataset.range === '24h') from = new Date(now - 86400000);
+        if (btn.dataset.range === '7d') from = new Date(now - 7 * 86400000);
+        if (btn.dataset.range === 'today') from = new Date(now.setHours(0, 0, 0, 0));
+        
+        if (dp.target.id.endsWith('From')) { dp.target.value = from.toISOString(); dp.display.value = formatDisplay(from); }
+        if (dp.target.id.endsWith('To')) { dp.target.value = new Date().toISOString(); dp.display.value = formatDisplay(new Date()); }
+        dp.el.classList.add('hidden');
     }
-    closePicker();
-  });
 });
 
-// openers
-[['failFrom','failFromDisplay','failFromBtn'],
- ['failTo','failToDisplay','failToBtn'],
- ['sessFrom','sessFromDisplay','sessFromBtn'],
- ['sessTo','sessToDisplay','sessToBtn']].forEach(([hid,disp,btn])=>{
-  const open = ()=>openPicker(hid, disp);
-  document.getElementById(disp)?.addEventListener('click', open);
-  document.getElementById(btn)?.addEventListener('click', open);
+document.addEventListener('click', (e) => {
+    if (!dp.el.classList.contains('hidden') && !dp.el.contains(e.target) && !e.target.closest('.dp-wrap')) dp.el.classList.add('hidden');
 });
 
-// close on outside click / ESC
-document.addEventListener('click', (e)=>{
-  if(dp.el.classList.contains('hidden')) return;
-  if(!dp.el.contains(e.target) && e.target!==dp.display){ closePicker(); }
-});
-document.addEventListener('keydown', (e)=>{ if(e.key==='Escape') closePicker(); });
-
-/* ---------- Unlock ---------- */
-function loadUnlock(){
-  const sel = $('#unlockNode'); if(sel) sel.value = state.node;
-  const msg = $('#unlockMsg'); if(msg) msg.textContent='';
-  const input = $('#unlockUsername');
-  if(input && !input._bound){
-    input.addEventListener('keyup', (e)=>{ if(e.key==='Enter') doUnlock(); });
-    input._bound = true;
-  }
-  const btn = $('#unlockBtn');
-  if(btn && !btn._bound){
-    btn.addEventListener('click', doUnlock);
-    btn._bound = true;
-  }
-}
-async function doUnlock(){
-  const node = $('#unlockNode').value || state.node;
-  const username = ($('#unlockUsername').value || '').trim();
-  const btn = $('#unlockBtn');
-  const msg = $('#unlockMsg');
-  msg.textContent = '';
-  if(!username){ msg.textContent='Please enter a username.'; return; }
-  btn.disabled = true; const old = btn.textContent; btn.textContent = 'Working…';
-  try{
-    const r = await getJSON('/api/unlock-user', {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({node, username})
-    });
-    if(r.ok && r.data.success){
-      msg.innerHTML = `<span class="ok">✔ ${r.data.message}</span>`;
-      $('#unlockUsername').value = '';
-    }else{
-      const err = r.data?.error || `Failed (HTTP ${r.status})`;
-      msg.innerHTML = `<span class="bad">✖ ${escapeHtml(err)}</span>`;
-    }
-  }catch(e){
-    msg.innerHTML = `<span class="bad">✖ ${escapeHtml(String(e))}</span>`;
-  }finally{
-    btn.disabled = false; btn.textContent = old;
-  }
+// --- INIT ---
+function startAutoRefresh() {
+    if (state.interval) clearInterval(state.interval);
+    state.interval = setInterval(() => {
+        const active = document.querySelector('.tab-btn.active').dataset.tab;
+        if (active === 'overview') loadOverview();
+    }, state.refreshMs);
 }
 
-/* ---------- glue ---------- */
-function startAutoRefresh(){
-  if(state.interval) clearInterval(state.interval);
-  state.interval = setInterval(()=>{
-    const active = document.querySelector('.tab.active')?.dataset.tab;
-    if(active==='overview') loadOverview();
-    if(active==='applications') { loadApplications(); loadServices(); }
-    if(active==='failover') loadFailover();
-    if(active==='sessions') loadSessions();
-  }, state.refreshMs);
-}
-
-document.getElementById('nodeSelect')?.addEventListener('change', (e)=>{
-  state.node = e.target.value;
-  updateAppsTabAvailability();
-  const active = document.querySelector('.tab.active')?.dataset.tab;
-  if(active==='overview') loadOverview();
-  if(active==='applications') { loadApplications(); loadServices(); }
-  if(active==='failover') loadFailover();
-  if(active==='sessions') loadSessions();
-  if(active==='unlock') loadUnlock();
-});
-document.getElementById('refreshBtn')?.addEventListener('click', ()=>{
-  fetchCaps();
-  const active = document.querySelector('.tab.active')?.dataset.tab;
-  if(active==='overview') loadOverview();
-  if(active==='applications') { loadApplications(); loadServices(); }
-  if(active==='failover') loadFailover();
-  if(active==='sessions') loadSessions();
-});
-
-$all('.tab').forEach(t=> t.addEventListener('click', ()=> setActiveTab(t.dataset.tab)));
-document.getElementById('failSearch')?.addEventListener('click', loadFailover);
-document.getElementById('sessSearch')?.addEventListener('click', loadSessions);
-document.getElementById('failExport')?.addEventListener('click', ()=>window.open(`/api/export/failover-history`,'_blank'));
-document.getElementById('sessExport')?.addEventListener('click', ()=>window.open(`/api/export/user-sessions`,'_blank'));
-
-// Init
-(async function init(){
-  setInitialDateFields();     // default: NOW for both fields
-  await fetchCaps();
-  setActiveTab('overview');
-  startAutoRefresh();
+(async function init() {
+    setInitialDateFields();
+    initCharts();
+    await fetchCaps();
+    setActiveTab('overview');
 })();
 </script>
 </body>
