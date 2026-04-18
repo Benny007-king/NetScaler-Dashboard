@@ -2,7 +2,7 @@
 """
 NetScaler Dashboard (Dual-Stack: NITRO + Next-Gen API)
 Compat edition + Unlock Users, with .env configuration (python-dotenv)
-UPDATED: Real User Sessions & Failover Logic
+UPDATED: Real User Sessions, Failover Logic, and UI Settings
 """
 from __future__ import annotations
 
@@ -201,7 +201,6 @@ class NetScalerAPI:
                 return {'raw': r.text, 'status_code': r.status_code}
         return {'status_code': r.status_code}
 
-    # Basic info endpoints
     def get_version_info(self):
         try:
             return self._get('/config/nsversion')
@@ -250,10 +249,8 @@ class NetScalerAPI:
         except Exception:
             return {'hanode': []}
 
-    # --- ADDED FOR USER SESSIONS ---
     def get_vpn_sessions(self):
         try:
-            # Requires NetScaler Gateway license/feature
             return self._get('/config/vpnsession')
         except Exception:
             return {'vpnsession': []}
@@ -263,7 +260,6 @@ class NetScalerAPI:
             return self._get('/config/aaasession')
         except Exception:
             return {'aaasession': []}
-    # -------------------------------
 
     def get_hostname(self):
         try:
@@ -368,7 +364,7 @@ class NextGenAPI:
         return r.json()
 
 # --------------------------------------------------------------------------------------
-# Device config
+# Device config (UI Based)
 # --------------------------------------------------------------------------------------
 def _int(v, default):
     try:
@@ -376,33 +372,47 @@ def _int(v, default):
     except Exception:
         return default
 
-NETSCALER_CONFIG = {
-    'primary': {
-        'ip': os.getenv('NS_PRIMARY_IP', ''),
-        'username': os.getenv('NS_PRIMARY_USER', ''),
-        'password': os.getenv('NS_PRIMARY_PASS', ''),
-        'port': _int(os.getenv('NS_PRIMARY_PORT', '80'), 80),
-        'protocol': os.getenv('NS_PRIMARY_PROTO', 'http'),
-    },
-    'secondary': {
-        'ip': os.getenv('NS_SECONDARY_IP', ''),
-        'username': os.getenv('NS_SECONDARY_USER', ''),
-        'password': os.getenv('NS_SECONDARY_PASS', ''),
-        'port': _int(os.getenv('NS_SECONDARY_PORT', '80'), 80),
-        'protocol': os.getenv('NS_SECONDARY_PROTO', 'http'),
+NODES_CONFIG_FILE = 'nodes_config.json'
+
+def load_nodes_config():
+    if os.path.exists(NODES_CONFIG_FILE):
+        with open(NODES_CONFIG_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    # Fallback to .env values for first run
+    return {
+        'primary': {
+            'ip': os.getenv('NS_PRIMARY_IP', ''),
+            'username': os.getenv('NS_PRIMARY_USER', ''),
+            'password': os.getenv('NS_PRIMARY_PASS', ''),
+            'port': _int(os.getenv('NS_PRIMARY_PORT', '80'), 80),
+            'protocol': os.getenv('NS_PRIMARY_PROTO', 'http'),
+        },
+        'secondary': {
+            'ip': os.getenv('NS_SECONDARY_IP', ''),
+            'username': os.getenv('NS_SECONDARY_USER', ''),
+            'password': os.getenv('NS_SECONDARY_PASS', ''),
+            'port': _int(os.getenv('NS_SECONDARY_PORT', '80'), 80),
+            'protocol': os.getenv('NS_SECONDARY_PROTO', 'http'),
+        }
     }
-}
+
+NETSCALER_CONFIG = load_nodes_config()
+
+def save_nodes_config(config):
+    with open(NODES_CONFIG_FILE, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2)
+    global NETSCALER_CONFIG
+    NETSCALER_CONFIG = config
 
 API_MODE = {k: 'nitro' for k in NETSCALER_CONFIG.keys()}
 
 def validate_env():
     missing = []
-    for prefix in ('NS_PRIMARY', 'NS_SECONDARY'):
-        for key in ('IP', 'USER', 'PASS'):
-            if not os.getenv(f'{prefix}_{key}'):
-                missing.append(f'{prefix}_{key}')
+    for prefix in ('primary', 'secondary'):
+        if not NETSCALER_CONFIG.get(prefix, {}).get('ip'):
+            missing.append(f'{prefix}_IP')
     if missing:
-        logger.warning("Missing env vars (set in .env): %s", ", ".join(missing))
+        logger.warning("Missing IP config (set in settings): %s", ", ".join(missing))
 
 # --------------------------------------------------------------------------------------
 # Version detection
@@ -595,18 +605,64 @@ def dashboard():
 # --------------------------------------------------------------------------------------
 # API endpoints
 # --------------------------------------------------------------------------------------
+@app.route('/api/settings', methods=['GET', 'POST'])
+@login_required
+def api_settings():
+    if request.method == 'POST':
+        new_config = request.get_json(force=True, silent=True) or {}
+        
+        if 'primary' not in new_config:
+            new_config['primary'] = {}
+        if 'secondary' not in new_config:
+            new_config['secondary'] = {}
+        
+        # If password is empty in the POST request, keep the old password
+        for k in ('primary', 'secondary'):
+            if not new_config.get(k, {}).get('password'):
+                new_config[k]['password'] = NETSCALER_CONFIG.get(k, {}).get('password', '')
+                
+        save_nodes_config(new_config)
+        
+        # Re-detect API capabilities with new settings
+        for node_key, cfg in NETSCALER_CONFIG.items():
+            detect_api_mode_for_node(node_key, cfg)
+            
+        return jsonify({"success": True, "message": "Settings updated"})
+    
+    safe_config = json.loads(json.dumps(NETSCALER_CONFIG))
+    if 'primary' in safe_config:
+        safe_config['primary']['password'] = ''
+    if 'secondary' in safe_config:
+        safe_config['secondary']['password'] = ''
+    return jsonify(safe_config)
+
+
 @app.route('/api/caps')
 @login_required
 def api_caps():
+    nodes_data = {}
+    for k, v in NETSCALER_CONFIG.items():
+        try:
+            if v.get('ip'):
+                nit = get_nitro(k)
+                hn = nit.get_hostname()
+                if not hn:
+                    hn = "Primary" if k == 'primary' else "Secondary"
+            else:
+                hn = "Primary Node" if k == 'primary' else "Secondary Node"
+        except Exception:
+            hn = "Primary" if k == 'primary' else "Secondary"
+            
+        nodes_data[k] = {
+            'ip': v.get('ip', ''),
+            'protocol': v.get('protocol', 'https'),
+            'port': v.get('port', 443),
+            'name': hn 
+        }
+
     return jsonify({
         'api_mode': API_MODE,
-        'nodes': {
-            k: {
-                'ip': v['ip'],
-                'protocol': v['protocol'],
-                'port': v['port'],
-            } for k, v in NETSCALER_CONFIG.items()
-        }
+        'nodes': nodes_data
     })
 
 @app.route('/api/system-stats')
@@ -826,17 +882,14 @@ def api_user_sessions():
     try:
         nitro = get_nitro(node)
         
-        # 1. Fetch VPN/Gateway sessions
         vpn_resp = nitro.get_vpn_sessions()
         vpn_sessions = vpn_resp.get('vpnsession', []) if isinstance(vpn_resp, dict) else []
         
-        # 2. Fetch AAA sessions
         aaa_resp = nitro.get_aaa_sessions()
         aaa_sessions = aaa_resp.get('aaasession', []) if isinstance(aaa_resp, dict) else []
 
         all_sessions = []
 
-        # Process VPN sessions
         for s in vpn_sessions:
             all_sessions.append({
                 'user': s.get('username', 'Unknown'),
@@ -848,9 +901,7 @@ def api_user_sessions():
                 'start': s.get('logintime', '')
             })
 
-        # Process AAA sessions
         for s in aaa_sessions:
-            # Deduplicate if user exists in VPN sessions
             if not any(x['user'] == s.get('username') for x in all_sessions):
                 all_sessions.append({
                     'user': s.get('username', 'Unknown'),
@@ -869,62 +920,63 @@ def api_user_sessions():
         return jsonify({'sessions': []})
 
 
+FAILOVER_HISTORY_FILE = 'failover_history.json'
+
+def load_failover_history():
+    if os.path.exists(FAILOVER_HISTORY_FILE):
+        with open(FAILOVER_HISTORY_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return []
+
+def save_failover_history(history):
+    with open(FAILOVER_HISTORY_FILE, 'w', encoding='utf-8') as f:
+        json.dump(history, f, indent=2)
+
+
 @app.route('/api/failover-history')
 @login_required
 def api_failover_history():
-    """
-    Returns recent HA transition information.
-    NetScaler API does not provide a full historical event log (requires syslog),
-    so we return the last state transition time.
-    """
     node = request.args.get('node', 'primary')
+    history = load_failover_history()
+    
     try:
         nitro = get_nitro(node)
-        # Use existing HA status method
         ha_data = nitro.get_ha_status()
         nodes = ha_data.get('hanode', []) if isinstance(ha_data, dict) else []
         
-        events = []
-        
         for n in nodes:
-            # Check for transition time and current state
             last_transition = n.get('transtime', '') 
             state = n.get('hacurstate', 'Unknown')
             ip = n.get('ipaddress', 'Unknown')
             
             if last_transition:
-                events.append({
-                    'timestamp': last_transition,
-                    'type': 'State Change',
-                    'reason': f"Node {ip} is currently {state}",
-                    'role_change': f"Current: {state}"
-                })
+                exists = any(ev['timestamp'] == last_transition and ev['ip'] == ip for ev in history)
+                if not exists:
+                    new_event = {
+                        'timestamp': last_transition,
+                        'type': 'State Change',
+                        'reason': f"Node {ip} state is {state}",
+                        'role_change': f"Current: {state}",
+                        'ip': ip
+                    }
+                    history.append(new_event)
+                    save_failover_history(history)
 
-        if not events:
-            # Just show current system uptime/status if no transition info found
-            events.append({
-                'timestamp': datetime.now().isoformat(),
-                'type': 'System Check',
-                'reason': 'System is UP (No recent failover detected via API)',
-                'role_change': '-'
-            })
-            
-        return jsonify({'events': events})
+        history.sort(key=lambda x: x['timestamp'], reverse=True)
+        return jsonify({'events': history})
 
     except Exception as e:
         logger.error(f"Error fetching HA history: {e}")
-        return jsonify({'events': []})
+        return jsonify({'events': history})
 
 @app.route('/api/export/failover-history')
 @login_required
 def api_export_failover():
-    # Placeholder for CSV export - could implement later based on above logic
     return jsonify({'error': 'Export not implemented in this build'}), 501
 
 @app.route('/api/export/user-sessions')
 @login_required
 def api_export_sessions():
-    # Placeholder for CSV export
     return jsonify({'error': 'Export not implemented in this build'}), 501
 
 @app.route('/api/unlock-user', methods=['POST'])
