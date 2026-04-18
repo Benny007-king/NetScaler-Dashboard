@@ -87,6 +87,44 @@
 </head>
 <body class="p-4 md:p-8">
 
+<div id="settingsModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center fade-in">
+  <div class="glass-panel p-6 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
+      <div class="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
+          <h2 class="text-2xl font-bold text-white">Dashboard Settings</h2>
+          <button onclick="closeSettings()" class="text-slate-400 hover:text-white">✕</button>
+      </div>
+      
+      <div class="space-y-6">
+          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+              <h3 class="text-lg font-semibold text-blue-400 mb-4">Primary Node</h3>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div><label class="block text-xs text-slate-400 mb-1">IP Address</label><input type="text" id="setPriIp" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+                  <div><label class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setPriPort" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+                  <div><label class="block text-xs text-slate-400 mb-1">Protocol</label><select id="setPriProto" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"><option value="http">HTTP</option><option value="https">HTTPS</option></select></div>
+                  <div><label class="block text-xs text-slate-400 mb-1">Username</label><input type="text" id="setPriUser" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+                  <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Password (Leave blank to keep current)</label><input type="password" id="setPriPass" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              </div>
+          </div>
+          
+          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+              <h3 class="text-lg font-semibold text-indigo-400 mb-4">Secondary Node</h3>
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div><label class="block text-xs text-slate-400 mb-1">IP Address</label><input type="text" id="setSecIp" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+                  <div><label class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setSecPort" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+                  <div><label class="block text-xs text-slate-400 mb-1">Protocol</label><select id="setSecProto" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"><option value="http">HTTP</option><option value="https">HTTPS</option></select></div>
+                  <div><label class="block text-xs text-slate-400 mb-1">Username</label><input type="text" id="setSecUser" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+                  <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Password (Leave blank to keep current)</label><input type="password" id="setSecPass" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              </div>
+          </div>
+      </div>
+      
+      <div class="mt-6 flex justify-end gap-3 pt-4 border-t border-slate-700">
+          <button onclick="closeSettings()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg">Cancel</button>
+          <button onclick="saveSettings()" id="saveSettingsBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">Save & Apply</button>
+      </div>
+  </div>
+</div>
+
 <header class="glass-panel rounded-2xl mb-6 p-4 flex flex-col md:flex-row items-center justify-between sticky top-4 z-50 fade-in">
   <div class="flex items-center gap-4 mb-4 md:mb-0">
     <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
@@ -106,6 +144,9 @@
     </select>
     <button id="refreshBtn" type="button" onclick="forceRefresh()" class="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg transition-all shadow-lg active:scale-95">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
+    </button>
+    <button onclick="openSettings()" class="bg-slate-700 hover:bg-slate-600 text-white p-2 rounded-lg transition-all ml-1" title="Settings">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
     </button>
     <a href="/logout" class="bg-red-500/10 hover:bg-red-500/20 text-red-400 p-2 rounded-lg transition-all border border-red-500/20" title="Logout">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
@@ -353,30 +394,89 @@ async function getJSON(url, opts) {
     }
 }
 
+// --- SETTINGS LOGIC ---
+async function openSettings() {
+    const r = await getJSON('/api/settings');
+    if(r.ok) {
+        if(r.data.primary) {
+            $('setPriIp').value = r.data.primary.ip || '';
+            $('setPriPort').value = r.data.primary.port || 80;
+            $('setPriProto').value = r.data.primary.protocol || 'http';
+            $('setPriUser').value = r.data.primary.username || '';
+            $('setPriPass').value = '';
+        }
+        if(r.data.secondary) {
+            $('setSecIp').value = r.data.secondary.ip || '';
+            $('setSecPort').value = r.data.secondary.port || 80;
+            $('setSecProto').value = r.data.secondary.protocol || 'http';
+            $('setSecUser').value = r.data.secondary.username || '';
+            $('setSecPass').value = '';
+        }
+    }
+    $('settingsModal').classList.remove('hidden');
+}
+
+function closeSettings() {
+    $('settingsModal').classList.add('hidden');
+}
+
+async function saveSettings() {
+    const btn = $('saveSettingsBtn');
+    btn.textContent = 'Saving...';
+    btn.disabled = true;
+    
+    const payload = {
+        primary: {
+            ip: $('setPriIp').value,
+            port: parseInt($('setPriPort').value) || 80,
+            protocol: $('setPriProto').value,
+            username: $('setPriUser').value,
+            password: $('setPriPass').value
+        },
+        secondary: {
+            ip: $('setSecIp').value,
+            port: parseInt($('setSecPort').value) || 80,
+            protocol: $('setSecProto').value,
+            username: $('setSecUser').value,
+            password: $('setSecPass').value
+        }
+    };
+
+    const r = await getJSON('/api/settings', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+    });
+    
+    btn.textContent = 'Save & Apply';
+    btn.disabled = false;
+    
+    if(r.ok && r.data.success) {
+        closeSettings();
+        forceRefresh();
+    } else {
+        alert("Failed to save settings.");
+    }
+}
+
 // --- TABS LOGIC (FIXED) ---
 function setActiveTab(name) {
-    // Hide all panels
     const panels = document.querySelectorAll('section.panel');
     panels.forEach(p => p.classList.add('hidden'));
     
-    // Show selected panel
     const selected = document.getElementById(`panel-${name}`);
     if(selected) selected.classList.remove('hidden');
 
-    // Update buttons
     const btns = document.querySelectorAll('.tab-btn');
     btns.forEach(b => {
         if(b.dataset.tab === name) b.classList.add('active');
         else b.classList.remove('active');
     });
 
-    // Trigger data load
     if (name === 'overview') loadOverview();
     if (name === 'applications') { loadApplications(); loadServices(); }
     if (name === 'failover') loadFailover();
     if (name === 'sessions') loadSessions();
     
-    // Restart interval to focus on this tab
     startAutoRefresh();
 }
 
@@ -389,10 +489,9 @@ function changeNode(val) {
 
 function forceRefresh() {
     const btn = $('refreshBtn');
-    btn.classList.add('animate-spin'); // Add visual feedback
+    btn.classList.add('animate-spin');
     const currentTab = document.querySelector('.tab-btn.active').dataset.tab;
     
-    // Trigger load
     setActiveTab(currentTab);
     fetchCaps();
     
@@ -435,6 +534,28 @@ async function fetchCaps() {
     const r = await getJSON('/api/caps');
     if (r.ok) {
         state.apiModes = r.data.api_mode || {};
+        
+        const nodeSelect = $('nodeSelect');
+        const unlockNode = $('unlockNode');
+        const currentValue = nodeSelect.value;
+        nodeSelect.innerHTML = ''; 
+        unlockNode.innerHTML = '';
+        
+        if (r.data.nodes) {
+            for (const [key, nodeData] of Object.entries(r.data.nodes)) {
+                const opt = document.createElement('option');
+                opt.value = key;
+                opt.textContent = nodeData.name; 
+                if (key === currentValue) opt.selected = true;
+                nodeSelect.appendChild(opt);
+                
+                const opt2 = document.createElement('option');
+                opt2.value = key;
+                opt2.textContent = nodeData.name; 
+                unlockNode.appendChild(opt2);
+            }
+        }
+
         const p = (state.apiModes.primary || 'nitro').toUpperCase();
         const s = (state.apiModes.secondary || 'nitro').toUpperCase();
         $('capsLine').innerHTML = `Capabilities: <span class="text-blue-400 font-bold mx-1">PRI: ${p}</span> | <span class="text-blue-400 font-bold mx-1">SEC: ${s}</span>`;
@@ -586,7 +707,6 @@ function openPicker(hid, did) {
     }
     renderCalendar();
     
-    // Positioning
     const rect = dp.display.getBoundingClientRect();
     dp.el.style.left = Math.min(rect.left + window.scrollX, window.innerWidth - 320) + 'px';
     dp.el.style.top = (rect.bottom + window.scrollY + 6) + 'px';
@@ -635,14 +755,12 @@ $('dpApply').onclick = () => {
     dp.el.classList.add('hidden');
 };
 
-// Bind pickers
 [['failFrom', 'failFromDisplay', 'failFromBtn'], ['failTo', 'failToDisplay', 'failToBtn'],
  ['sessFrom', 'sessFromDisplay', 'sessFromBtn'], ['sessTo', 'sessToDisplay', 'sessToBtn']].forEach(([h, d, b]) => {
     $(d).onclick = () => openPicker(h, d);
     $(b).onclick = () => openPicker(h, d);
 });
 
-// Quick ranges
 document.querySelectorAll('.dp-quick button').forEach(btn => {
     btn.onclick = () => {
         if (btn.dataset.clear) { dp.target.value = ''; dp.display.value = ''; dp.el.classList.add('hidden'); return; }
@@ -661,7 +779,6 @@ document.addEventListener('click', (e) => {
     if (!dp.el.classList.contains('hidden') && !dp.el.contains(e.target) && !e.target.closest('.dp-wrap')) dp.el.classList.add('hidden');
 });
 
-// --- INIT ---
 function startAutoRefresh() {
     if (state.interval) clearInterval(state.interval);
     state.interval = setInterval(() => {
