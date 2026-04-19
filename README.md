@@ -23,13 +23,11 @@ This project is fully containerized using **Docker** and runs behind **Gunicorn*
 
 ## Project Structure ##
 
-----
-
-netscaler-dashboard/
-├── app.py                      # Main Flask application
-├── requirements.txt            # Python dependencies
-├── .env                        # Environment variables (App secrets)
-├── Dockerfile                  # Docker image blueprint
+```netscaler-dashboard/```
+```├── app.py                      # Main Flask application```
+```├── requirements.txt            # Python dependenciesv```
+```├── .env                        # Environment variables (App secrets)```
+```├── Dockerfile                  # Docker image blueprint```
 ├── docker-compose.yml          # Container orchestration
 ├── .gitignore                  # Git ignore rules
 ├── .dockerignore               # Docker ignore rules
