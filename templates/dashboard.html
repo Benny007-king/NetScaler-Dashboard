@@ -3,7 +3,9 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>NetScaler Dashboard — Ultimate</title>
+  <title>NetScaler Dashboard</title>
+  
+  <link rel="icon" type="image/x-icon" href="/static/netscaler_icon.ico">
   
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -12,6 +14,10 @@
   <script src="https://cdn.tailwindcss.com"></script>
   
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 
   <script>
     tailwind.config = {
@@ -116,6 +122,12 @@
                   <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Password (Leave blank to keep current)</label><input type="password" id="setSecPass" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
               </div>
           </div>
+
+          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
+            <h3 class="text-lg font-semibold text-green-400 mb-2">Dashboard Administration</h3>
+            <p class="text-xs text-slate-400 mb-4">Manage the local dashboard administrator account password directly.</p>
+            <a href="/change-password" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm inline-block border border-slate-600 transition-colors">Change Admin Password</a>
+        </div>
       </div>
       
       <div class="mt-6 flex justify-end gap-3 pt-4 border-t border-slate-700">
@@ -125,10 +137,17 @@
   </div>
 </div>
 
+<div id="unsavedBanner" class="hidden max-w-7xl mx-auto bg-orange-500/20 border-l-4 border-orange-500 p-4 mb-6 rounded-r-lg shadow-lg fade-in">
+    <div class="flex items-center">
+        <span class="text-xl mr-3" aria-hidden="true">🟠</span>
+        <p class="text-orange-200 font-medium tracking-wide">Warning: Your configuration on the primary NetScaler is not saved!</p>
+    </div>
+</div>
+
 <header class="glass-panel rounded-2xl mb-6 p-4 flex flex-col md:flex-row items-center justify-between sticky top-4 z-50 fade-in">
   <div class="flex items-center gap-4 mb-4 md:mb-0">
-    <div class="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-indigo-600 flex items-center justify-center shadow-lg shadow-blue-500/20">
-      <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 8v8m-4-5v5m-4-2v2m-2 4h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+    <div class="h-10 flex items-center justify-center shrink-0">
+      <img src="/static/netscaler_logo.png" alt="Logo" class="w-auto h-full object-contain drop-shadow-md">
     </div>
     <div>
         <h1 class="text-xl font-bold tracking-tight text-white">NetScaler Dashboard</h1>
@@ -197,10 +216,15 @@
       </div>
     </div>
 
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
       <div class="glass-panel rounded-2xl p-6">
         <h3 class="text-lg font-semibold text-white mb-4">Node Statistics</h3>
         <div id="sysStats" class="table-container text-sm">Loading...</div>
+      </div>
+      
+      <div class="glass-panel rounded-2xl p-6 border-t-4 border-purple-500">
+        <h3 class="text-lg font-semibold text-white mb-4">License & Capacity</h3>
+        <div id="licStats" class="table-container text-sm">Loading...</div>
       </div>
 
       <div class="glass-panel rounded-2xl p-6">
@@ -264,7 +288,8 @@
         </div>
         <div class="flex gap-2 ml-auto">
             <button id="failSearch" onclick="loadFailover()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-medium">Search</button>
-            <button id="failExport" onclick="window.open('/api/export/failover-history')" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-lg border border-slate-600">CSV</button>
+            <button onclick="exportToExcel('failTable', 'Failover_History')" class="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg border border-green-600 transition-colors">Excel</button>
+            <button onclick="exportToPDF('failTable', 'Failover_History')" class="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg border border-red-600 transition-colors">PDF</button>
         </div>
       </div>
       <div class="table-container">
@@ -307,7 +332,8 @@
         </div>
         <div class="flex gap-2">
             <button id="sessSearch" onclick="loadSessions()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-medium">Search</button>
-            <button id="sessExport" onclick="window.open('/api/export/user-sessions')" class="bg-slate-700 hover:bg-slate-600 text-slate-200 px-4 py-2 rounded-lg border border-slate-600">CSV</button>
+            <button onclick="exportToExcel('sessTable', 'User_Sessions')" class="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg border border-green-600 transition-colors">Excel</button>
+            <button onclick="exportToPDF('sessTable', 'User_Sessions')" class="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg border border-red-600 transition-colors">PDF</button>
         </div>
       </div>
       <div class="table-container">
@@ -381,6 +407,33 @@ function qs(params) {
 }
 function escapeHtml(s) {
     return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
+}
+
+// Convert UTC/Server ISO string to strictly Israel Timezone safely
+function formatILTime(isoStr) {
+    if (!isoStr) return '';
+    try {
+        const d = new Date(isoStr);
+        if (isNaN(d.getTime())) return isoStr;
+        return d.toLocaleString('en-GB', { timeZone: 'Asia/Jerusalem', hour12: false });
+    } catch(e) {
+        return isoStr;
+    }
+}
+
+// --- CLIENT-SIDE EXPORT FUNCTIONS ---
+function exportToExcel(tableId, filename) {
+    const table = document.getElementById(tableId).closest('table');
+    const wb = XLSX.utils.table_to_book(table, {sheet: "Data"});
+    XLSX.writeFile(wb, `${filename}_${new Date().toISOString().slice(0,10)}.xlsx`);
+}
+
+function exportToPDF(tableId, filename) {
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF();
+    const table = document.getElementById(tableId).closest('table');
+    doc.autoTable({ html: table });
+    doc.save(`${filename}_${new Date().toISOString().slice(0,10)}.pdf`);
 }
 
 // --- API WRAPPER ---
@@ -458,7 +511,7 @@ async function saveSettings() {
     }
 }
 
-// --- TABS LOGIC (FIXED) ---
+// --- TABS LOGIC ---
 function setActiveTab(name) {
     const panels = document.querySelectorAll('section.panel');
     panels.forEach(p => p.classList.add('hidden'));
@@ -588,7 +641,7 @@ async function loadOverview() {
         if (cpuChart) { cpuChart.data.datasets[0].data = [cpu, 100 - cpu]; cpuChart.update(); $('valCpu').innerText = cpu.toFixed(1) + '%'; }
         if (memChart) { memChart.data.datasets[0].data = [mem, 100 - mem]; memChart.update(); $('valMem').innerText = mem.toFixed(1) + '%'; }
         if (httpChart) {
-            const now = new Date().toLocaleTimeString();
+            const now = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Jerusalem', hour12: false });
             if (httpHistory.labels.length > 20) { httpHistory.labels.shift(); httpHistory.data.shift(); }
             httpHistory.labels.push(now); httpHistory.data.push(http);
             httpChart.data.labels = httpHistory.labels; httpChart.data.datasets[0].data = httpHistory.data; httpChart.update();
@@ -597,10 +650,32 @@ async function loadOverview() {
 
         const role = r.data.ha_role || '';
         const badge = role.toUpperCase().includes('PRIMARY') ? 'badge-success' : 'badge-warning';
-        $('sysStats').innerHTML = `<table class="w-full"><tr class="border-b border-slate-700"><td class="text-slate-500 w-32">IP Address</td><td class="font-mono text-white">${escapeHtml(r.data.ip)}</td></tr><tr class="border-b border-slate-700"><td class="text-slate-500">Version</td><td class="text-white">${escapeHtml(r.data.version)}</td></tr><tr><td class="text-slate-500">HA Role</td><td><span class="badge ${badge}">${escapeHtml(role)}</span></td></tr></table>`;
+        
+        $('sysStats').innerHTML = `
+        <table class="w-full">
+            <tr class="border-b border-slate-700"><td class="text-slate-500 w-32">IP Address</td><td class="font-mono text-white">${escapeHtml(r.data.ip)}</td></tr>
+            <tr class="border-b border-slate-700"><td class="text-slate-500">Version</td><td class="text-white">${escapeHtml(r.data.version)}</td></tr>
+            <tr><td class="text-slate-500">HA Role</td><td><span class="badge ${badge}">${escapeHtml(role)}</span></td></tr>
+        </table>`;
+        
+        $('licStats').innerHTML = `
+        <table class="w-full">
+            <tr class="border-b border-slate-700"><td class="text-slate-500 w-32">Edition</td><td class="text-white font-medium">${escapeHtml(r.data.license_type || 'Unknown')}</td></tr>
+            <tr class="border-b border-slate-700"><td class="text-slate-500">Mode</td><td class="text-white">${escapeHtml(r.data.license_mode || 'Unknown')}</td></tr>
+            <tr><td class="text-slate-500">Bandwidth</td><td class="font-mono text-white">${escapeHtml(r.data.bandwidth || 'Unknown')}</td></tr>
+        </table>`;
     }
 
-    if (ha.ok && ha.data.hanode) {
+    if (ha.ok && ha.data.primary) {
+        const banner = $('unsavedBanner');
+        if (ha.data.primary.config_changed === true) {
+            banner.classList.remove('hidden');
+            banner.style.display = 'block';
+        } else {
+            banner.classList.add('hidden');
+            banner.style.display = 'none';
+        }
+
         const rows = ha.data.hanode.map((n, i) => {
             const s = (n.state || '').toUpperCase();
             const cls = s.includes('UP') || s.includes('PRIMARY') ? 'badge-success' : 'badge-danger';
@@ -643,18 +718,45 @@ async function loadServices() {
 
 // --- HISTORY & SESSIONS ---
 async function loadFailover() {
-    const p = { from: $('failFrom').value, to: $('failTo').value, type: $('failType').value };
-    const r = await getJSON(`/api/failover-history?${qs({ ...p, node: state.node })}`);
+    const r = await getJSON(`/api/failover-history`);
     const arr = r.ok ? (r.data.events || []) : [];
-    const rows = arr.length ? arr.map((e, i) => `<tr><td class="text-slate-500">${i + 1}</td><td>${escapeHtml(new Date(e.timestamp).toLocaleString())}</td><td>${escapeHtml(e.type)}</td><td>${escapeHtml(e.reason)}</td><td>${escapeHtml(e.role_change)}</td></tr>`).join('') : '<tr><td colspan="5" class="text-center py-8 text-slate-500">No events found</td></tr>';
+    
+    const fromTime = $('failFrom').value ? new Date($('failFrom').value).getTime() : 0;
+    const toTime = $('failTo').value ? new Date($('failTo').value).getTime() : Infinity;
+    const filterType = $('failType').value.toLowerCase();
+    
+    const filteredArr = arr.filter(e => {
+        const t = new Date(e.timestamp).getTime();
+        const inTime = isNaN(t) ? true : (t >= fromTime && t <= toTime);
+        const inType = filterType ? (e.type || '').toLowerCase().includes(filterType) : true;
+        return inTime && inType;
+    });
+
+    const rows = filteredArr.length ? filteredArr.map((e, i) => `<tr><td class="text-slate-500">${i + 1}</td><td>${escapeHtml(formatILTime(e.timestamp))}</td><td>${escapeHtml(e.type)}</td><td>${escapeHtml(e.reason)}</td><td>${escapeHtml(e.role_change)}</td></tr>`).join('') : '<tr><td colspan="5" class="text-center py-8 text-slate-500">No events found in this time range.</td></tr>';
     $('failTable').innerHTML = rows;
 }
 
 async function loadSessions() {
-    const p = { from: $('sessFrom').value, to: $('sessTo').value, user: $('sessUser').value, type: $('sessType').value, status: $('sessStatus').value };
-    const r = await getJSON(`/api/user-sessions?${qs({ ...p, node: state.node })}`);
+    const p = { node: state.node };
+    const r = await getJSON(`/api/user-sessions?${qs(p)}`);
     const arr = r.ok ? (r.data.sessions || []) : [];
-    const rows = arr.length ? arr.map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.user)}</td><td>${escapeHtml(s.type)}</td><td>${escapeHtml(s.status)}</td><td>${escapeHtml(s.duration)}</td><td>${escapeHtml(s.ip)}</td><td>${escapeHtml(s.node)}</td><td>${escapeHtml(s.start)}</td></tr>`).join('') : '<tr><td colspan="8" class="text-center py-8 text-slate-500">No sessions found</td></tr>';
+    
+    const fromTime = $('sessFrom').value ? new Date($('sessFrom').value).getTime() : 0;
+    const toTime = $('sessTo').value ? new Date($('sessTo').value).getTime() : Infinity;
+    const fUser = $('sessUser').value.toLowerCase();
+    const fType = $('sessType').value.toLowerCase();
+    const fStatus = $('sessStatus').value.toLowerCase();
+
+    const filteredArr = arr.filter(s => {
+        const t = new Date(s.start).getTime();
+        const inTime = isNaN(t) ? true : (t >= fromTime && t <= toTime);
+        const inUser = fUser ? (s.user || '').toLowerCase().includes(fUser) : true;
+        const inType = fType ? (s.type || '').toLowerCase().includes(fType) : true;
+        const inStatus = fStatus ? (s.status || '').toLowerCase().includes(fStatus) : true;
+        return inTime && inUser && inType && inStatus;
+    });
+
+    const rows = filteredArr.length ? filteredArr.map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.user)}</td><td>${escapeHtml(s.type)}</td><td>${escapeHtml(s.status)}</td><td>${escapeHtml(s.duration)}</td><td>${escapeHtml(s.ip)}</td><td>${escapeHtml(s.node)}</td><td>${escapeHtml(formatILTime(s.start))}</td></tr>`).join('') : '<tr><td colspan="8" class="text-center py-8 text-slate-500">No sessions found in this time range.</td></tr>';
     $('sessTable').innerHTML = rows;
 }
 
@@ -679,9 +781,16 @@ dp.el.addEventListener('click', (e) => e.stopPropagation());
 
 function setInitialDateFields() {
     const now = new Date();
-    ['failFrom', 'failTo', 'sessFrom', 'sessTo'].forEach(id => {
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    
+    ['failTo', 'sessTo'].forEach(id => {
         const h = $(id), d = $(id + 'Display');
         if (h && d) { h.value = now.toISOString(); d.value = formatDisplay(now); }
+    });
+    
+    ['failFrom', 'sessFrom'].forEach(id => {
+        const h = $(id), d = $(id + 'Display');
+        if (h && d) { h.value = yesterday.toISOString(); d.value = formatDisplay(yesterday); }
     });
 }
 
@@ -715,7 +824,7 @@ function openPicker(hid, did) {
 
 function renderCalendar() {
     const y = dp.view.getFullYear(), m = dp.view.getMonth();
-    dp.title.textContent = `${dp.view.toLocaleString(undefined, { month: 'long' })} ${y}`;
+    dp.title.textContent = `${dp.view.toLocaleString('en-GB', { month: 'long' })} ${y}`;
     dp.grid.innerHTML = '';
     
     ['Su', 'Mo', 'Tu', 'We', 'Th', 'Fr', 'Sa'].forEach(d => {
@@ -761,6 +870,7 @@ $('dpApply').onclick = () => {
     $(b).onclick = () => openPicker(h, d);
 });
 
+// Quick ranges
 document.querySelectorAll('.dp-quick button').forEach(btn => {
     btn.onclick = () => {
         if (btn.dataset.clear) { dp.target.value = ''; dp.display.value = ''; dp.el.classList.add('hidden'); return; }
@@ -779,6 +889,7 @@ document.addEventListener('click', (e) => {
     if (!dp.el.classList.contains('hidden') && !dp.el.contains(e.target) && !e.target.closest('.dp-wrap')) dp.el.classList.add('hidden');
 });
 
+// --- INIT ---
 function startAutoRefresh() {
     if (state.interval) clearInterval(state.interval);
     state.interval = setInterval(() => {
