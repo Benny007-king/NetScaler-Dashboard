@@ -43,8 +43,7 @@ netscaler-dashboard/
 └── templates/                  # HTML Templates
     ├── dashboard.html
     ├── login.html
-    └── change_password.html   
-
+    └── change_password.html
 ---
 
 Install & Run (Production via Docker)
