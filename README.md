@@ -80,39 +80,39 @@ Using the Dashboard
 On your first login, click the Settings (gear) icon in the top right. Enter your Primary and Secondary NetScaler IPs, ports, protocols (HTTP/HTTPS), and credentials. Click Save & Apply. The app will immediately detect node capabilities.
 
 📊 Overview Tab
-System Stats: Live CPU, Memory, and HTTP request rates.
+* System Stats: Live CPU, Memory, and HTTP request rates.
 
-Node Statistics: Real-time IP, firmware version, and HA role.
+* Node Statistics: Real-time IP, firmware version, and HA role.
 
-License & Capacity: Displays the allocated bandwidth and license edition.
+* License & Capacity: Displays the allocated bandwidth and license edition.
 
-HA Status: Shows sync status and peer states.
+* HA Status: Shows sync status and peer states.
 
-Unsaved Config Warning: An orange banner will appear if the primary node has unsaved changes.
+* Unsaved Config Warning: An orange banner will appear if the primary node has unsaved changes.
 
 🌐 Applications & Services
-Next-Gen Mode: Displays native Next-Gen Applications.
+* Next-Gen Mode: Displays native Next-Gen Applications.
 
-NITRO Mode: Displays Load Balancing vServers and active Services / Service Groups.
+* NITRO Mode: Displays Load Balancing vServers and active Services / Service Groups.
 
 🔄 Failover History
-The dashboard actively tracks role transitions.
+* The dashboard actively tracks role transitions.
 
-Filter historical failovers using a custom date-picker (defaults to the last 24 hours).
+* Filter historical failovers using a custom date-picker (defaults to the last 24 hours).
 
-Export exactly what you see to Excel or PDF.
+* Export exactly what you see to Excel or PDF.
 
 👥 User Sessions
-View active AAA and VPN sessions.
+* View active AAA and VPN sessions.
 
-Filter by User, Type (Web/VPN), and Status.
+* Filter by User, Type (Web/VPN), and Status.
 
-Export results to Excel or PDF.
+* Export results to Excel or PDF.
 
 🔓 Unlock Users
-Select the relevant node (Primary/Secondary).
+* Select the relevant node (Primary/Secondary).
 
-Type the username and instantly release account lockouts.
+* Type the username and instantly release account lockouts.
 
 ---
 
