@@ -1,0 +1,30 @@
+# Git
+.git
+.gitignore
+.dockerignore
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+env/
+
+# Environment variables
+.env
+.env.local
+
+# Logs
+*.log
+
+# App Data & State files 
+# (We ignore them here so they aren't baked into the image, 
+# they will be loaded dynamically via docker volume)
+auth_config.json
+nodes_config.json
+failover_history.json
+ha_last_state.json
+
+# IDE
+.vscode/
+.idea/
