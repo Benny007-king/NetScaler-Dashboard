@@ -140,7 +140,7 @@
 <div id="unsavedBanner" class="hidden max-w-7xl mx-auto bg-orange-500/20 border-l-4 border-orange-500 p-4 mb-6 rounded-r-lg shadow-lg fade-in">
     <div class="flex items-center">
         <span class="text-xl mr-3" aria-hidden="true">🟠</span>
-        <p class="text-orange-200 font-medium tracking-wide">Warning: Your configuration on the primary NetScaler is not saved!</p>
+        <p class="text-orange-200 font-medium tracking-wide">Warning: Unsaved configuration detected on NetScaler!</p>
     </div>
 </div>
 
@@ -409,7 +409,6 @@ function escapeHtml(s) {
     return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 }
 
-// Convert UTC/Server ISO string to strictly Israel Timezone safely
 function formatILTime(isoStr) {
     if (!isoStr) return '';
     try {
@@ -666,22 +665,32 @@ async function loadOverview() {
         </table>`;
     }
 
-    if (ha.ok && ha.data.primary) {
+    if (ha.ok) {
         const banner = $('unsavedBanner');
-        if (ha.data.primary.config_changed === true) {
+        const priChanged = ha.data.primary && ha.data.primary.config_changed;
+        const secChanged = ha.data.secondary && ha.data.secondary.config_changed;
+        
+        if (priChanged || secChanged) {
             banner.classList.remove('hidden');
-            banner.style.display = 'block';
+            banner.classList.add('flex');
+            
+            let nodes = [];
+            if (priChanged) nodes.push("Primary");
+            if (secChanged) nodes.push("Secondary");
+            banner.querySelector('p').textContent = `Warning: Unsaved configuration detected on ${nodes.join(' and ')} NetScaler!`;
         } else {
             banner.classList.add('hidden');
-            banner.style.display = 'none';
+            banner.classList.remove('flex');
         }
 
-        const rows = ha.data.hanode.map((n, i) => {
-            const s = (n.state || '').toUpperCase();
-            const cls = s.includes('UP') || s.includes('PRIMARY') ? 'badge-success' : 'badge-danger';
-            return `<tr class="border-b border-slate-800/50"><td class="text-slate-500">${i + 1}</td><td class="font-mono text-slate-300">${escapeHtml(n.ipaddress || n.ip)}</td><td><span class="badge ${cls}">${s}</span></td><td class="text-slate-500 text-xs">${escapeHtml(n.hasync || '')}</td></tr>`;
-        }).join('');
-        $('haStatus').innerHTML = `<table><thead><tr><th>#</th><th>IP</th><th>State</th><th>Sync</th></tr></thead><tbody>${rows}</tbody></table>`;
+        if (ha.data.hanode) {
+            const rows = ha.data.hanode.map((n, i) => {
+                const s = (n.state || '').toUpperCase();
+                const cls = s.includes('UP') || s.includes('PRIMARY') ? 'badge-success' : 'badge-danger';
+                return `<tr class="border-b border-slate-800/50"><td class="text-slate-500">${i + 1}</td><td class="font-mono text-slate-300">${escapeHtml(n.ipaddress || n.ip)}</td><td><span class="badge ${cls}">${s}</span></td><td class="text-slate-500 text-xs">${escapeHtml(n.hasync || '')}</td></tr>`;
+            }).join('');
+            $('haStatus').innerHTML = `<table><thead><tr><th>#</th><th>IP</th><th>State</th><th>Sync</th></tr></thead><tbody>${rows}</tbody></table>`;
+        }
     }
 }
 
