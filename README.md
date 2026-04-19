@@ -23,6 +23,8 @@ This project is fully containerized using **Docker** and runs behind **Gunicorn*
 
 ## Project Structure
 
+```Text```
+
 netscaler-dashboard/
 ├── app.py                      # Main Flask application
 ├── requirements.txt            # Python dependencies
@@ -44,6 +46,8 @@ netscaler-dashboard/
     ├── dashboard.html
     ├── login.html
     └── change_password.html
+    
+```Text```
 
 ---
 
