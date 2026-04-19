@@ -2,7 +2,7 @@
 """
 NetScaler Dashboard (Dual-Stack: NITRO + Next-Gen API)
 Compat edition + Unlock Users, with .env configuration (python-dotenv)
-UPDATED: Dynamic HA State Tracking, UI Settings, License Info & pytz Timezone
+UPDATED: Bulletproof HA Tracking, Unsaved Config alerts, License Info
 PRODUCTION READY (GUNICORN WSGI)
 """
 from __future__ import annotations
@@ -481,56 +481,64 @@ def get_nextgen(node_key: str) -> NextGenAPI:
     )
 
 def _roles_from_ha() -> tuple[dict, dict]:
-    try:
-        nitro = get_nitro('primary')
-        raw = nitro.get_ha_status() or {}
-        roles = {}
-        nodes = raw.get('hanode', []) if isinstance(raw, dict) else []
-        
-        # State tracking for Failover History
-        last_states = {}
-        if os.path.exists(HA_STATE_FILE):
-            try:
-                with open(HA_STATE_FILE, 'r', encoding='utf-8') as f:
-                    last_states = json.load(f)
-            except Exception: pass
-            
-        history = load_failover_history()
-        changed = False
-        
-        for n in nodes:
-            if not isinstance(n, dict): continue
-            ip = n.get('ipaddress') or n.get('ip') or n.get('nsip') or ''
-            role = n.get('state') or n.get('hacurstate') or n.get('haStatus') or n.get('status') or ''
-            role_upper = str(role).upper()
-            if ip and role_upper:
-                roles[ip] = str(role)
-                
-                prev = last_states.get(ip)
-                if prev and prev != role_upper and 'UNKNOWN' not in role_upper:
-                    # HA State change detected!
-                    new_event = {
-                        'timestamp': datetime.now(IL_TZ).isoformat(),
-                        'type': 'Role Change',
-                        'reason': f"Node HA State Shift",
-                        'role_change': f"{prev} -> {role_upper}",
-                        'ip': ip
-                    }
-                    history.append(new_event)
-                    changed = True
-                last_states[ip] = role_upper
-                
-        if changed:
-            save_failover_history(history)
-            
+    # Fallback mechanism: Try primary, if down, try secondary
+    raw = {}
+    for node_key in ['primary', 'secondary']:
         try:
-            with open(HA_STATE_FILE, 'w', encoding='utf-8') as f:
-                json.dump(last_states, f)
-        except Exception: pass
+            nitro = get_nitro(node_key)
+            raw = nitro.get_ha_status() or {}
+            if raw and 'hanode' in raw:
+                break
+        except Exception:
+            continue
             
-        return roles, raw
-    except Exception as e:
+    if not raw:
         return {}, {'hanode': []}
+
+    roles = {}
+    nodes = raw.get('hanode', []) if isinstance(raw, dict) else []
+    
+    last_states = {}
+    if os.path.exists(HA_STATE_FILE):
+        try:
+            with open(HA_STATE_FILE, 'r', encoding='utf-8') as f:
+                last_states = json.load(f)
+        except Exception: pass
+        
+    history = load_failover_history()
+    changed = False
+    
+    for n in nodes:
+        if not isinstance(n, dict): continue
+        ip = n.get('ipaddress') or n.get('ip') or n.get('nsip') or ''
+        role = n.get('state') or n.get('hacurstate') or n.get('haStatus') or n.get('status') or ''
+        role_upper = str(role).upper()
+        if ip and role_upper:
+            roles[ip] = str(role)
+            
+            prev = last_states.get(ip)
+            if prev and prev != role_upper and 'UNKNOWN' not in role_upper:
+                # HA State change detected natively!
+                new_event = {
+                    'timestamp': datetime.now(IL_TZ).isoformat(),
+                    'type': 'Role Change',
+                    'reason': f"Node HA State Shift",
+                    'role_change': f"{prev} -> {role_upper}",
+                    'ip': ip
+                }
+                history.append(new_event)
+                changed = True
+            last_states[ip] = role_upper
+            
+    if changed:
+        save_failover_history(history)
+        
+    try:
+        with open(HA_STATE_FILE, 'w', encoding='utf-8') as f:
+            json.dump(last_states, f)
+    except Exception: pass
+        
+    return roles, raw
 
 
 def _build_node_overview(node_key: str) -> dict:
@@ -544,7 +552,7 @@ def _build_node_overview(node_key: str) -> dict:
         roles, _ = _roles_from_ha()
         role = roles.get(ip, 'Unknown')
     except Exception:
-        return {'connected': False, 'ip': ip}
+        return {'connected': False, 'ip': ip, 'config_changed': False}
 
     version = None
     try:
@@ -555,17 +563,19 @@ def _build_node_overview(node_key: str) -> dict:
     except Exception:
         pass
 
-    # Check for unsaved configuration explicitly for this node
+    # Bulletproof Check for unsaved configuration
     config_changed = False
     try:
         nsconfig_resp = nitro.get_nsconfig()
         if isinstance(nsconfig_resp, dict) and nsconfig_resp.get('nsconfig'):
-            cfg_list = nsconfig_resp['nsconfig']
-            if isinstance(cfg_list, list) and len(cfg_list) > 0:
-                val = str(cfg_list[0].get('configchanged', 'false')).lower()
+            cfg_data = nsconfig_resp['nsconfig']
+            if isinstance(cfg_data, list) and len(cfg_data) > 0:
+                cfg_data = cfg_data[0]
+            if isinstance(cfg_data, dict):
+                val = str(cfg_data.get('configchanged', 'false')).lower()
                 config_changed = (val in ['true', '1', 'yes'])
-    except Exception:
-        pass
+    except Exception as e:
+        logger.warning(f"Could not fetch configchanged for {node_key}: {e}")
 
     # Fetch License Information
     lic_type = "Base / Express"
@@ -796,6 +806,7 @@ def api_ha_status():
             })
         except Exception: return jsonify({'hanode': []})
 
+    # Global tracking called from UI without specific node param
     roles, raw = _roles_from_ha()
     nodes = raw.get('hanode', []) if isinstance(raw, dict) else []
     primary = _build_node_overview('primary')
@@ -923,8 +934,46 @@ def api_user_sessions():
 @login_required
 def api_failover_history():
     history = load_failover_history()
-    history.sort(key=lambda x: x['timestamp'], reverse=True)
+    changed = False
+    
+    # Check BOTH nodes to make sure we don't miss transtime if one is down
+    ha_data = {}
+    for node_key in ['primary', 'secondary']:
+        try:
+            nitro = get_nitro(node_key)
+            ha_data = nitro.get_ha_status() or {}
+            if ha_data and 'hanode' in ha_data:
+                break
+        except Exception:
+            continue
+            
+    nodes = ha_data.get('hanode', []) if isinstance(ha_data, dict) else []
+    
+    for n in nodes:
+        last_transition = n.get('transtime', '') 
+        state = n.get('hacurstate', 'Unknown')
+        ip = n.get('ipaddress', 'Unknown')
+        
+        if last_transition:
+            # Verify if this specific transtime is already in history
+            exists = any(ev.get('timestamp') == last_transition and ev.get('ip') == ip for ev in history)
+            if not exists:
+                new_event = {
+                    'timestamp': last_transition,
+                    'type': 'State Change',
+                    'reason': f"Node {ip} state is {state}",
+                    'role_change': f"Current: {state}",
+                    'ip': ip
+                }
+                history.append(new_event)
+                changed = True
+                
+    if changed:
+        save_failover_history(history)
+
+    history.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return jsonify({'events': history})
+
 
 @app.route('/api/unlock-user', methods=['POST'])
 @login_required
