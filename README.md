@@ -46,6 +46,8 @@ netscaler-dashboard/
     ├── login.html
     └── change_password.html
 
+---
+
 Install & Run (Production via Docker)
 The recommended way to run this application is using Docker and Docker Compose. This ensures the app runs consistently with Gunicorn.
 1. Clone the repository:
@@ -60,6 +62,8 @@ Create a .env file in the root directory for Flask/App secrets. (NetScaler node 
 4. Access the Dashboard:
 Open your browser and navigate to http://<your-server-ip>:5000
 
+---
+
 Local Development (Without Docker)
 If you wish to run the app locally for development purposes:
 
@@ -69,6 +73,9 @@ If you wish to run the app locally for development purposes:
 2. Start the Flask development server:
   ```Bash```
   python app.py
+
+---
+
 Using the Dashboard
 ⚙️ Initial Setup (Settings)
 On your first login, click the Settings (gear) icon in the top right. Enter your Primary and Secondary NetScaler IPs, ports, protocols (HTTP/HTTPS), and credentials. Click Save & Apply. The app will immediately detect node capabilities.
@@ -108,12 +115,16 @@ Select the relevant node (Primary/Secondary).
 
 Type the username and instantly release account lockouts.
 
+---
+
 Security & Best Practices
 Never commit .env or *.json files: Passwords, hashes, and node configurations are stored in nodes_config.json and auth_config.json. Ensure they are ignored via .gitignore.
 
 Docker Volumes: The docker-compose.yml file uses volumes to ensure your JSON databases and configurations survive container restarts.
 
 Admin Password: The default dashboard login is admin / admin. You will be prompted to change this upon your first login.
+
+---
 
 License
 This project is licensed under the terms specified in the LICENSE file.
