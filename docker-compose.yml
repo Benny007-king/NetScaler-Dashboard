@@ -1,0 +1,11 @@
+version: '3.8'
+
+services:
+  netscaler-dashboard:
+    build: .
+    container_name: netscaler-dashboard
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./:/app
+    restart: unless-stopped
