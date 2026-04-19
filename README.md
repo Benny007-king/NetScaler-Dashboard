@@ -1,184 +1,119 @@
-# NetScaler Dashboard — Dual-Stack (NITRO + Next-Gen)
+# NetScaler Dashboard — Ultimate Edition
 
-A modern Flask dashboard for NetScaler with **parallel support** for both **NITRO API** and the **Next-Gen API**.  
+A modern, production-ready Flask dashboard for NetScaler with **parallel support** for both **NITRO API** and the **Next-Gen API**.  
 The app automatically detects which API is supported per node and **falls back to NITRO** when Next-Gen is unavailable.
 
-Tabs included: **Overview**, **Applications / Services**, **Failover History**, **User Sessions**, and **Unlock Users**.
+This project is fully containerized using **Docker** and runs behind **Gunicorn** for optimal production performance.
 
 ---
 
 ## Key Features
 
-- **Dual-Stack** runtime: auto-detect Next-Gen per node; fallback to NITRO when needed.
-- **Applications / Services**:
-  - In **Next-Gen** mode: shows Applications.
-  - In **NITRO** mode: shows LB vservers plus Services / Service Groups.
-- **Failover History & User Sessions**:
-  - Date-range filters with a pop-up **date picker** that stays open until **Apply/Cancel**.
-  - **Search** buttons trigger fresh API calls; **Export CSV** available.
-- **Unlock Users**: unlock a locked AAA user (NITRO, with automatic `?action=unlock` fallback).
-- **HTTPS** support for local secure runs.
-- Lightweight, responsive, dark UI.
+- **Production Ready:** Fully dockerized with `docker-compose` and Gunicorn WSGI.
+- **Dual-Stack Runtime:** Auto-detects Next-Gen API support per node; seamless fallback to NITRO.
+- **Dynamic HA State Tracking:** Continuously monitors and logs NetScaler High Availability (HA) state changes (Primary/Secondary) natively.
+- **UI-Driven Configuration:** Easily configure NetScaler IP addresses, ports, protocols, and credentials directly from the Dashboard Settings modal (no need to restart the server).
+- **Client-Side Exports:** Instantly export table data (Failover History, User Sessions) to **Excel** or **PDF** without server overhead.
+- **License & Capacity Visibility:** Displays node license edition (Standard, Advanced, Premium), mode, and allocated bandwidth.
+- **Unsaved Configuration Alerts:** Automatically alerts you with an orange banner if the Primary NetScaler has unsaved running configurations.
+- **Timezone Aware:** Fully synchronized to Israel Standard Time (IDT/IST) using `pytz`.
+- **Unlock Users:** Quickly unlock AAA users directly from the UI.
 
 ---
 
 ## Project Structure
 
-```
+```text```
 netscaler-dashboard/
-├── app.py
-├── requirements.txt
-├── .env
-├── auth_config.json
-├── netscaler_complete.log
-├── templates/
-│   ├── dashboard.html
-│   ├── login.html
-│   └── change_password.html
-└── README.md
-```
+├── app.py                      # Main Flask application
+├── requirements.txt            # Python dependencies
+├── .env                        # Environment variables (App secrets)
+├── Dockerfile                  # Docker image blueprint
+├── docker-compose.yml          # Container orchestration
+├── .gitignore                  # Git ignore rules
+├── .dockerignore               # Docker ignore rules
+├── LICENSE                     # License file
+├── auth_config.json            # Local dashboard admin credentials
+├── nodes_config.json           # NetScaler nodes configuration (UI managed)
+├── failover_history.json       # Persistent HA state history
+├── ha_last_state.json          # Last known HA state tracker
+├── netscaler_complete.log      # Application logs
+├── static/                     # Static assets
+│   ├── netscaler_logo.png
+│   └── netscaler_icon.ico
+└── templates/                  # HTML Templates
+    ├── dashboard.html
+    ├── login.html
+    └── change_password.html
 
----
+Install & Run (Production via Docker)
+The recommended way to run this application is using Docker and Docker Compose. This ensures the app runs consistently with Gunicorn.
+1. Clone the repository:
+   ```Bash```
+   git clone <your-repo-url>
+   cd netscaler-dashboard
+2. Configure App Secrets:
+Create a .env file in the root directory for Flask/App secrets. (NetScaler node IPs and passwords are now configured directly from the UI).
+3. Build and Run:
+  ```Bash```
+  docker-compose up -d --build
+4. Access the Dashboard:
+Open your browser and navigate to http://<your-server-ip>:5000
 
-## Configuration
-
-> Environment variables are expected to be provided via a `.env` file, but the exact keys and values are **omitted here** per your request.  
-> Keep secrets in `.env` and never commit that file.
-
-### `auth_config.json`
-
-Runtime config for nodes and default API mode hints (the app also auto-detects capabilities at runtime):
-
-```json
-{
-  "api_mode": {
-    "primary": "nitro",
-    "secondary": "nitro"
-  },
-  "nodes": {
-    "primary": { "ip": "10.0.0.90", "port": 80, "protocol": "http" },
-    "secondary": { "ip": "10.0.0.92", "port": 80, "protocol": "http" }
-  }
-}
-```
-
-- If this file is missing, it is created on first run.
-- To reset the dashboard’s admin password/policy, delete `auth_config.json`, start the app, log in, and set a new password from **Change Password**.
-
----
-
-## Install & Run
+Local Development (Without Docker)
+If you wish to run the app locally for development purposes:
 
 1. Install dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
+  ```Bash```
+  pip install -r requirements.txt
+2. Start the Flask development server:
+  ```Bash```
+  python app.py
+Using the Dashboard
+⚙️ Initial Setup (Settings)
+On your first login, click the Settings (gear) icon in the top right. Enter your Primary and Secondary NetScaler IPs, ports, protocols (HTTP/HTTPS), and credentials. Click Save & Apply. The app will immediately detect node capabilities.
 
-2. Provide your environment variables in `.env` (not documented here) and adjust `auth_config.json` as needed.
+📊 Overview Tab
+System Stats: Live CPU, Memory, and HTTP request rates.
 
-3. Start:
-   ```bash
-   python app.py
-   ```
-   - If HTTPS is enabled via your environment (certificate + key), the server starts over HTTPS.
-   - Open `http://127.0.0.1:5000` (or `https://...` accordingly).
+Node Statistics: Real-time IP, firmware version, and HA role.
 
-**Windows console note:**  
-If you ever see Unicode logging issues in classic `cmd.exe`, set:
-```bat
-set PYTHONIOENCODING=utf-8
-```
-(Or use PowerShell.)
+License & Capacity: Displays the allocated bandwidth and license edition.
 
----
+HA Status: Shows sync status and peer states.
 
-## Using the Dashboard
+Unsaved Config Warning: An orange banner will appear if the primary node has unsaved changes.
 
-### Overview
-- System stats, versions, HA roles, CPU/Mem, HTTP rates.
-- HA table with status, sync, and route monitor state.
-- The capability bar shows the active API mode per node (`nextgen` / `nitro`).
+🌐 Applications & Services
+Next-Gen Mode: Displays native Next-Gen Applications.
 
-### Applications & Services
-- **Next-Gen** mode: Applications from the Next-Gen API.
-- **NITRO** mode: LB vservers and Services / Service Groups from NITRO.
+NITRO Mode: Displays Load Balancing vServers and active Services / Service Groups.
 
-### Failover History
-- Two date pickers (From/To). The pop-up stays open until you click **Apply** or **Cancel**.
-- Filter by Type (Automatic / Manual / Failure / Role change).
-- **Search** refreshes the table; **Export CSV** downloads results (when enabled server-side).
+🔄 Failover History
+The dashboard actively tracks role transitions.
 
-### User Sessions
-- Date range, User, Type (Web/VPN/Workspace), and Status (Active/Terminated).
-- **Search** and **Export CSV**.
+Filter historical failovers using a custom date-picker (defaults to the last 24 hours).
 
-### Unlock Users
-- Select node (primary/secondary), enter username, click **Unlock**.
-- Uses NITRO `/nitro/v1/config/aaauser`, with automatic fallback to `?action=unlock`.
+Export exactly what you see to Excel or PDF.
 
----
+👥 User Sessions
+View active AAA and VPN sessions.
 
-## REST Endpoints (summary)
+Filter by User, Type (Web/VPN), and Status.
 
-**Capabilities & system**
-- `GET /api/caps` — Next-Gen/NITRO capability report per node.
-- `GET /api/system-stats`
-- `GET /api/ha-status`
+Export results to Excel or PDF.
 
-**Apps/Services**
-- `GET /api/applications?node=primary|secondary`  _(Next-Gen)_
-- `GET /api/lb-vservers?node=...`                   _(NITRO)_
-- `GET /api/services?node=...`                      _(NITRO)_
+🔓 Unlock Users
+Select the relevant node (Primary/Secondary).
 
-**Failover**
-- `GET /api/failover-history?from=ISO&to=ISO&type=&node=...`
-- `GET /api/export/failover-history`  _(CSV)_
+Type the username and instantly release account lockouts.
 
-**User Sessions**
-- `GET /api/user-sessions?from=ISO&to=ISO&user=&type=&status=&node=...`
-- `GET /api/export/user-sessions`      _(CSV)_
+Security & Best Practices
+Never commit .env or *.json files: Passwords, hashes, and node configurations are stored in nodes_config.json and auth_config.json. Ensure they are ignored via .gitignore.
 
-**Actions**
-- `POST /api/unlock-user`
-  ```json
-  { "node": "primary", "username": "user1" }
-  ```
+Docker Volumes: The docker-compose.yml file uses volumes to ensure your JSON databases and configurations survive container restarts.
 
----
+Admin Password: The default dashboard login is admin / admin. You will be prompted to change this upon your first login.
 
-## Security
-
-- Keep secrets in `.env`; do not hard-code credentials.
-- Optional local HTTPS (certificate + key).
-- Restrict access to NetScaler management networks (firewall/allowlist).
-
----
-
-## Troubleshooting
-
-- **Applications tab empty / disabled look:** The node likely does not support Next-Gen (cap bar shows `nitro`). In NITRO mode you’ll see LB vservers/Services instead.
-- **No Failover / Sessions listed:** Verify the selected date range. Empty results can be normal if there were no events or sessions in that window.
-- **SSL verification errors in lab:** Temporarily disable verification via env (not documented here).
-- **Secondary name shows as `node-2`:** The UI displays names as provided by the API; if the device doesn’t return a friendly label, a fallback like `node-2` is shown.
-
----
-
-## Logging
-
-- Runtime logs go to stdout and to `netscaler_complete.log` by default.
-- For production, prefer running behind a process manager (e.g., `gunicorn`, `supervisor`) and reverse proxy.
-
----
-
-## Production Recommendations
-
-- Reverse proxy (Nginx/Apache) with a real certificate.
-- Gunicorn/uWSGI instead of Flask dev server.
-- Persist historical data (failover/sessions) in a proper datastore if you need long-term reports.
-- CI/CD and basic tests as needed.
-
----
-
-## License
-
-Private / Internal. All rights reserved by the repository owner.
+License
+This project is licensed under the terms specified in the LICENSE file.
