@@ -3,6 +3,7 @@
 NetScaler Dashboard (Dual-Stack: NITRO + Next-Gen API)
 Compat edition + Unlock Users, with .env configuration (python-dotenv)
 UPDATED: Dynamic HA State Tracking, UI Settings, License Info & pytz Timezone
+PRODUCTION READY (GUNICORN WSGI)
 """
 from __future__ import annotations
 
@@ -152,7 +153,6 @@ def save_failover_history(history):
         with open(FAILOVER_HISTORY_FILE, 'w', encoding='utf-8') as f:
             json.dump(history, f, indent=2)
     except Exception: pass
-
 
 def login_required(fn):
     @wraps(fn)
@@ -796,7 +796,6 @@ def api_ha_status():
             })
         except Exception: return jsonify({'hanode': []})
 
-    # When called globally by JS without node, we track roles and return both info!
     roles, raw = _roles_from_ha()
     nodes = raw.get('hanode', []) if isinstance(raw, dict) else []
     primary = _build_node_overview('primary')
@@ -923,8 +922,6 @@ def api_user_sessions():
 @app.route('/api/failover-history')
 @login_required
 def api_failover_history():
-    # Frontend filtering depends on this returning all the history points.
-    # New backend logic relies on `_roles_from_ha()` tracking changes independently of `transtime`.
     history = load_failover_history()
     history.sort(key=lambda x: x['timestamp'], reverse=True)
     return jsonify({'events': history})
@@ -974,17 +971,27 @@ def _500(err):
     return render_template('dashboard.html'), 500
 
 # --------------------------------------------------------------------------------------
-# Main
+# Application Initialization (Runs on both Gunicorn and Flask Dev Server)
+# --------------------------------------------------------------------------------------
+validate_env()
+
+for node_key, cfg in NETSCALER_CONFIG.items():
+    detect_api_mode_for_node(node_key, cfg)
+
+logger.info(f"API modes at startup: {API_MODE}")
+logger.info("========================================")
+logger.info("Starting NetScaler Dashboard (Production Ready via WSGI)")
+logger.info(f"Next-Gen verify SSL: {os.getenv('NEXTGEN_VERIFY_SSL', '0')}")
+logger.info(f"Next-Gen timeout (s): {os.getenv('NEXTGEN_TIMEOUT_SECS', '15')}")
+logger.info("========================================")
+
+# --------------------------------------------------------------------------------------
+# Main (Only used when running locally without Docker/Gunicorn)
 # --------------------------------------------------------------------------------------
 if __name__ == '__main__':
     host = os.getenv('APP_HOST', '0.0.0.0')
     port = int(os.getenv('APP_PORT', '5000'))
     debug = os.getenv('APP_DEBUG', '0').lower() in ('1', 'true', 'yes')
-
-    validate_env()
-
-    for node_key, cfg in NETSCALER_CONFIG.items():
-        detect_api_mode_for_node(node_key, cfg)
 
     use_ssl = os.getenv('APP_SSL', '0').lower() in ('1', 'true', 'yes')
     ssl_context = 'adhoc' if use_ssl else None
