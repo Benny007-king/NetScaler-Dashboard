@@ -21,31 +21,6 @@ This project is fully containerized using **Docker** and runs behind **Gunicorn*
 
 ---
 
-## Project Structure ##
-
-```netscaler-dashboard/```
-```├── app.py                      # Main Flask application```
-```├── requirements.txt            # Python dependenciesv```
-```├── .env                        # Environment variables (App secrets)```
-```├── Dockerfile                  # Docker image blueprint```
-├── docker-compose.yml          # Container orchestration
-├── .gitignore                  # Git ignore rules
-├── .dockerignore               # Docker ignore rules
-├── LICENSE                     # License file
-├── auth_config.json            # Local dashboard admin credentials
-├── nodes_config.json           # NetScaler nodes configuration (UI managed)
-├── failover_history.json       # Persistent HA state history
-├── ha_last_state.json          # Last known HA state tracker
-├── netscaler_complete.log      # Application logs
-├── static/                     # Static assets
-│   ├── netscaler_logo.png
-│   └── netscaler_icon.ico
-└── templates/                  # HTML Templates
-    ├── dashboard.html
-    ├── login.html
-    └── change_password.html
----
-
 Install & Run (Production via Docker)
 The recommended way to run this application is using Docker and Docker Compose. This ensures the app runs consistently with Gunicorn.
 1. Clone the repository:
