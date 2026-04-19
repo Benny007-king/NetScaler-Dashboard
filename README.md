@@ -21,7 +21,9 @@ This project is fully containerized using **Docker** and runs behind **Gunicorn*
 
 ---
 
-## Project Structure
+## Project Structure ##
+
+----
 
 netscaler-dashboard/
 ├── app.py                      # Main Flask application
