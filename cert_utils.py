@@ -28,11 +28,20 @@ def _present(*paths: str) -> bool:
 
 
 def _write(path: str, data: bytes, secret: bool = False) -> None:
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "wb") as f:
-        f.write(data)
-    if secret:
-        try: os.chmod(path, 0o600)
+    """Atomically write bytes. Secret files (private keys) are created with 0600
+    up-front — no world-readable window and no torn/corrupt file on crash."""
+    p = Path(path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name(p.name + ".tmp")
+    mode = 0o600 if secret else 0o644
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        with os.fdopen(fd, "wb") as f:
+            f.write(data)
+        os.replace(str(tmp), str(path))
+    finally:
+        try:
+            if os.path.exists(tmp): os.remove(tmp)
         except Exception: pass
 
 

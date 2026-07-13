@@ -82,9 +82,14 @@ def _load_or_create_secret() -> str:
                 s = f.read().strip()
             if s: return s
         s = secrets.token_hex(32)
-        with open(path, "w") as f: f.write(s)
-        try: os.chmod(path, 0o600)
-        except Exception: pass
+        try:
+            # Create with 0600 up-front to avoid a world-readable window.
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f: f.write(s)
+        except Exception:
+            with open(path, "w") as f: f.write(s)
+            try: os.chmod(path, 0o600)
+            except Exception: pass
         return s
     except Exception:
         return secrets.token_hex(32)
@@ -206,31 +211,32 @@ def ldap_authenticate(username: str, password: str) -> bool:
                         use_ssl=LDAP_CFG['use_ssl'], get_info=ALL,
                         connect_timeout=LDAP_CFG['timeout'])
         # Bind with the service account (or anonymously) to resolve the user's DN.
-        finder = Connection(server, user=LDAP_CFG['bind_dn'] or None,
-                            password=LDAP_CFG['bind_pw'] or None,
-                            auto_bind=True, receive_timeout=LDAP_CFG['timeout'])
-        flt = f"({LDAP_CFG['user_attr']}={escape_filter_chars(username)})"
-        finder.search(LDAP_CFG['base_dn'], flt, search_scope=SUBTREE, attributes=['memberOf'])
-        if not finder.entries:
-            finder.unbind(); return False
-        entry = finder.entries[0]
-        user_dn = entry.entry_dn
-        allowed_group = LDAP_CFG['allowed_group_dn']
-        if allowed_group:
-            try: groups = [str(g) for g in entry.memberOf.values]
-            except Exception: groups = []
-            if not any(allowed_group.lower() == g.lower() for g in groups):
-                finder.unbind()
-                logger.info(f"LDAP user '{username}' not in allowed group")
+        # `with` guarantees the socket is unbound even if search() raises.
+        with Connection(server, user=LDAP_CFG['bind_dn'] or None,
+                        password=LDAP_CFG['bind_pw'] or None,
+                        auto_bind=True, receive_timeout=LDAP_CFG['timeout']) as finder:
+            flt = f"({LDAP_CFG['user_attr']}={escape_filter_chars(username)})"
+            finder.search(LDAP_CFG['base_dn'], flt, search_scope=SUBTREE, attributes=['memberOf'])
+            if not finder.entries:
                 return False
-        finder.unbind()
+            entry = finder.entries[0]
+            user_dn = entry.entry_dn
+            allowed_group = LDAP_CFG['allowed_group_dn']
+            if allowed_group:
+                try: groups = [str(g) for g in entry.memberOf.values]
+                except Exception: groups = []
+                if not any(allowed_group.lower() == g.lower() for g in groups):
+                    logger.info(f"LDAP user '{username}' not in allowed group")
+                    return False
+
+        # Empty DN + password would be an anonymous simple bind on many servers,
+        # which returns success and would bypass authentication — reject it.
+        if not user_dn:
+            return False
         # Rebind as the user to actually verify their password.
-        user_conn = Connection(server, user=user_dn, password=password,
-                               receive_timeout=LDAP_CFG['timeout'])
-        ok = user_conn.bind()
-        try: user_conn.unbind()
-        except Exception: pass
-        return bool(ok)
+        with Connection(server, user=user_dn, password=password,
+                        receive_timeout=LDAP_CFG['timeout']) as user_conn:
+            return bool(user_conn.bind())
     except Exception as e:
         logger.warning(f"LDAP auth error for '{username}': {e}")
         return False
@@ -631,14 +637,17 @@ def dashboard():
 @login_required
 def api_settings():
     if request.method == 'POST':
-        new_config = request.get_json(force=True, silent=True) or {}
+        new_config = request.get_json(force=True, silent=True)
+        if not isinstance(new_config, dict):
+            return jsonify({"success": False, "error": "Invalid payload"}), 400
         mode = str(new_config.get('mode', NETSCALER_CONFIG.get('mode', 'ha'))).lower()
         new_config['mode'] = mode if mode in VALID_MODES else 'ha'
-        if 'primary' not in new_config: new_config['primary'] = {}
-        if 'secondary' not in new_config: new_config['secondary'] = {}
         for k in ('primary', 'secondary'):
+            # Coerce missing/non-dict node entries so .get() below can't crash.
+            if not isinstance(new_config.get(k), dict):
+                new_config[k] = {}
             # Keep the stored password when the field is left blank.
-            if not new_config.get(k, {}).get('password'):
+            if not new_config[k].get('password'):
                 new_config[k]['password'] = NETSCALER_CONFIG.get(k, {}).get('password', '')
         save_nodes_config(new_config)
         for node_key, cfg in node_items(): detect_api_mode_for_node(node_key, cfg)
@@ -654,8 +663,12 @@ def api_settings():
 @login_required
 def api_tls_cert():
     body = request.get_json(force=True, silent=True) or {}
-    cert_pem = (body.get('cert') or '').strip().encode('utf-8')
-    key_pem = (body.get('key') or '').strip().encode('utf-8')
+    cert_val = body.get('cert')
+    key_val = body.get('key')
+    if not isinstance(cert_val, str) or (key_val is not None and not isinstance(key_val, str)):
+        return jsonify({"success": False, "error": "Certificate and key must be PEM strings"}), 400
+    cert_pem = cert_val.strip().encode('utf-8')
+    key_pem = (key_val or '').strip().encode('utf-8')
     if not cert_pem:
         return jsonify({"success": False, "error": "Certificate (PEM) is required"}), 400
     try:
@@ -946,8 +959,12 @@ def api_failover_history():
 @login_required
 def api_unlock_user():
     body = request.get_json(force=True, silent=True) or {}
-    node = (body.get('node') or 'primary').strip()
-    username = (body.get('username') or '').strip()
+    node_val = body.get('node') or 'primary'
+    username_val = body.get('username') or ''
+    if not isinstance(node_val, str) or not isinstance(username_val, str):
+        return jsonify({"success": False, "error": "node and username must be strings"}), 400
+    node = node_val.strip()
+    username = username_val.strip()
 
     if not username: return jsonify({"success": False, "error": "Missing username"}), 400
 
