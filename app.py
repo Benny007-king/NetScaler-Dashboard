@@ -97,6 +97,34 @@ app.config.update(
     SESSION_COOKIE_SECURE=os.getenv('APP_SSL', '1').lower() in ('1', 'true', 'yes'),
 )
 
+# Honor X-Forwarded-* when running behind a reverse proxy (set TRUST_PROXY=1).
+if os.getenv('TRUST_PROXY', '0').lower() in ('1', 'true', 'yes'):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
+# Content Security Policy — allows exactly the CDNs/fonts the dashboard loads.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com "
+    "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; "
+    "font-src 'self' https://fonts.gstatic.com data:; "
+    "img-src 'self' data:; connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+)
+
+@app.after_request
+def _security_headers(resp):
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('X-Frame-Options', 'DENY')
+    resp.headers.setdefault('Referrer-Policy', 'no-referrer')
+    resp.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+    resp.headers.setdefault('Content-Security-Policy', _CSP)
+    # HSTS only makes sense once we're actually on HTTPS.
+    if request.is_secure and os.getenv('HSTS_ENABLED', '1').lower() in ('1', 'true', 'yes'):
+        resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    return resp
+
 LOG_FILE = os.getenv("APP_LOG_FILE", "netscaler_complete.log")
 logging.basicConfig(
     level=logging.INFO,
@@ -628,17 +656,53 @@ def api_tls_cert():
     body = request.get_json(force=True, silent=True) or {}
     cert_pem = (body.get('cert') or '').strip().encode('utf-8')
     key_pem = (body.get('key') or '').strip().encode('utf-8')
-    if not cert_pem or not key_pem:
-        return jsonify({"success": False, "error": "Both certificate and private key (PEM) are required"}), 400
+    if not cert_pem:
+        return jsonify({"success": False, "error": "Certificate (PEM) is required"}), 400
     try:
-        from cert_utils import save_pair
-        save_pair(cert_pem, key_pem)
+        if key_pem:
+            from cert_utils import save_pair
+            save_pair(cert_pem, key_pem)
+        else:
+            # No key supplied: pair the cert with the key left on disk from a CSR.
+            from cert_utils import save_signed_cert
+            save_signed_cert(cert_pem)
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:
         logger.error(f"TLS cert replace failed: {e}")
         return jsonify({"success": False, "error": "Could not save certificate"}), 500
     return jsonify({"success": True, "message": "Certificate saved. Restart the dashboard to apply."})
+
+@app.route('/api/tls-ca')
+@login_required
+def api_tls_ca():
+    """Download the local CA certificate to install in a trust store."""
+    try:
+        from cert_utils import CA_CERT_FILE, ensure_ca
+        ensure_ca()
+        with open(CA_CERT_FILE, 'rb') as f:
+            pem = f.read()
+    except Exception as e:
+        logger.error(f"CA download failed: {e}")
+        return jsonify({"success": False, "error": "No CA certificate available"}), 404
+    from flask import Response
+    return Response(pem, mimetype='application/x-pem-file',
+                    headers={'Content-Disposition': 'attachment; filename="netscaler-dashboard-ca.crt"'})
+
+@app.route('/api/tls-csr', methods=['POST'])
+@login_required
+def api_tls_csr():
+    """Generate a new key + CSR to be signed by your own/corporate CA."""
+    body = request.get_json(force=True, silent=True) or {}
+    cn = (body.get('common_name') or '').strip() or None
+    try:
+        from cert_utils import generate_csr
+        csr_pem = generate_csr(common_name=cn).decode('utf-8')
+    except Exception as e:
+        logger.error(f"CSR generation failed: {e}")
+        return jsonify({"success": False, "error": "Could not generate CSR"}), 500
+    return jsonify({"success": True, "csr": csr_pem,
+                    "message": "CSR generated (a new private key was written). Get it signed, then upload the signed certificate below and restart."})
 
 @app.route('/api/caps')
 @login_required
@@ -929,6 +993,6 @@ if __name__ == '__main__':
     use_ssl = os.getenv('APP_SSL', '1').lower() in ('1', 'true', 'yes')
     ssl_context = None
     if use_ssl:
-        from cert_utils import CERT_FILE, KEY_FILE, ensure_self_signed
-        ssl_context = ensure_self_signed(CERT_FILE, KEY_FILE)
+        from cert_utils import CERT_FILE, KEY_FILE, ensure_signed
+        ssl_context = ensure_signed(CERT_FILE, KEY_FILE)
     app.run(host=host, port=port, debug=debug, ssl_context=ssl_context)

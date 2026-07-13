@@ -5,7 +5,7 @@ Gunicorn auto-loads this file. Replace the cert from the dashboard Settings page
 """
 import os
 
-from cert_utils import CERT_FILE, KEY_FILE, ensure_self_signed
+from cert_utils import CERT_FILE, KEY_FILE, ensure_signed
 
 bind = f"0.0.0.0:{os.getenv('APP_PORT', '443')}"
 workers = int(os.getenv("GUNICORN_WORKERS", "4"))
@@ -16,5 +16,6 @@ keyfile = KEY_FILE
 
 
 def on_starting(server):
-    # Runs once in the master before workers fork — ensure TLS material exists.
-    ensure_self_signed(CERT_FILE, KEY_FILE)
+    # Runs once in the master before workers fork — ensure a CA-signed server
+    # cert exists (generates the local CA + leaf on first boot).
+    ensure_signed(CERT_FILE, KEY_FILE)

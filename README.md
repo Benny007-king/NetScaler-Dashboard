@@ -12,7 +12,7 @@ Tabs: **Overview**, **Applications / Services**, **Failover History**, **User Se
 
 - **Deployment modes**: `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode`). Selectable in **Settings**.
 - **Dual-Stack** runtime: auto-detect Next-Gen per node, fall back to NITRO.
-- **HTTPS on 443** with a self-signed cert generated on first boot; upload your own PEM cert/key from **Settings → TLS Certificate** and restart to apply.
+- **HTTPS on 443** with a cert signed by a **local CA** generated on first boot. Install the CA for warning-free HTTPS, upload your own PEM cert/key, or generate a CSR for your corporate CA — all from **Settings → TLS Certificate**.
 - **Authentication**: local admin account and/or **LDAP/Active Directory** (`AUTH_BACKENDS=local,ldap`), with optional allowed-group enforcement.
 - **Applications / Services**: Next-Gen mode shows Applications; NITRO mode shows LB vServers plus Services / Service Groups.
 - **Failover History & User Sessions**: date-range filters with a pop-up picker; **Excel/PDF** export (client-side).
@@ -100,14 +100,35 @@ python app.py            # serves HTTPS on :443 by default
 - `GET  /api/failover-history` · `GET /api/user-sessions?node=...`
 - `POST /api/unlock-user` — `{ "node": "primary", "username": "user1" }`
 - `GET/POST /api/settings` — read/update nodes + mode
-- `POST /api/tls-cert` — replace the TLS cert (`{ "cert": "...PEM...", "key": "...PEM..." }`)
+- `POST /api/tls-cert` — replace the TLS cert (`{ "cert": "...PEM...", "key": "...PEM..." }`; key optional after a CSR)
+- `GET  /api/tls-ca` — download the local CA certificate
+- `POST /api/tls-csr` — generate a CSR (`{ "common_name": "..." }`)
 
 ---
 
+## TLS certificates
+
+On first boot the app generates a **local CA** (`certs/ca.crt` / `certs/ca.key`) and issues a server cert signed by it. Three ways to get trusted HTTPS, all under **Settings → TLS Certificate**:
+
+1. **Install the local CA** — click *Download CA Certificate* and add it to each client's trust store (Windows: *Trusted Root Certification Authorities*; browsers may have their own store). The default server cert then validates cleanly. Add extra hostnames/IPs to the cert via `TLS_SAN`.
+2. **Upload your own** cert + key (PEM), then restart.
+3. **Generate a CSR** — click *Generate CSR*, have it signed by your corporate CA, then upload the signed certificate (leave the key field blank — the matching key stays on disk). Restart to apply.
+
+## Running behind a reverse proxy
+
+`deploy/nginx.conf` + `deploy/docker-compose.proxy.yml` terminate TLS at nginx and proxy to the app over internal HTTP:
+
+```bash
+docker compose -f docker-compose.yml -f deploy/docker-compose.proxy.yml up -d --build
+```
+
+This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it honors `X-Forwarded-Proto` for secure cookies/redirects) and publishes 443/80 from nginx. Put a cert/key in `./certs` (a prior default run generates one, or drop your own).
+
 ## Security
 
-- HTTPS-only on 443; replace the self-signed cert with your own from Settings.
-- Secrets live in gitignored files (`nodes_config.json`, `.env`, `.app_secret`); never commit them.
+- HTTPS-only on 443; CA-signed cert out of the box, replaceable from Settings.
+- Response headers: HSTS (on HTTPS), CSP (scoped to the CDNs used), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`.
+- Secrets live in gitignored files (`nodes_config.json`, `.env`, `.app_secret`, `certs/`); never commit them.
 - Session cookies are HttpOnly + SameSite=Lax + Secure. The session secret is random and persisted to `.app_secret`.
 - Restrict access to NetScaler management networks (firewall / allowlist).
 

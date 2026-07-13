@@ -1,0 +1,32 @@
+# Reverse-proxy deployment: nginx terminates TLS on 443, the app runs on
+# internal HTTP behind it. Run from the repo root:
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.proxy.yml up -d --build
+#
+# The app no longer publishes 443 directly; nginx does. TRUST_PROXY makes the app
+# honor X-Forwarded-Proto so secure cookies and redirects work correctly.
+name: netscaler-dashboard
+
+services:
+  netscaler-dashboard:
+    environment:
+      APP_SSL: "0"
+      APP_PORT: "8080"
+      TRUST_PROXY: "1"
+    command: ["gunicorn", "-b", "0.0.0.0:8080", "--workers", "4", "--threads", "2", "app:app"]
+    ports: !reset []
+    expose:
+      - "8080"
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: netscaler-dashboard-nginx
+    depends_on:
+      - netscaler-dashboard
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./deploy/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/nginx/certs:ro
+    restart: unless-stopped
