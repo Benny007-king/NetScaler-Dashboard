@@ -1,25 +1,27 @@
-# Python
-__pycache__/
-*.pyc
-venv/
-env/
-
-# Environments
+# Environment / secrets
 .env
 .env.local
 
+# Runtime config & state (contain credentials / live data — never commit)
+nodes_config.json
+auth_config.json
+ha_last_state.json
+failover_history.json
+
+# Flask session secret
+.app_secret
+
+# TLS material
+certs/
+*.pem
+*.key
+*.crt
+
 # Logs
 *.log
-netscaler_complete.log
 
-# App Data / Database files (CRITICAL: Do not upload to Git!)
-auth_config.json
-nodes_config.json
-failover_history.json
-ha_last_state.json
-
-# IDEs
-.vscode/
-.idea/
-*.swp
-.DS_Store
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

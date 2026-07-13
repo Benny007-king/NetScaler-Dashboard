@@ -5,5 +5,6 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
-EXPOSE 5000
-CMD ["gunicorn", "--bind", "0.0.0.0:5000", "--workers", "4", "--threads", "2", "app:app"]
+EXPOSE 443
+# HTTPS on 443 with a self-signed cert (generated on first boot via gunicorn.conf.py)
+CMD ["gunicorn", "-c", "gunicorn.conf.py", "app:app"]

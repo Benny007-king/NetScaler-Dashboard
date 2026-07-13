@@ -13,6 +13,7 @@ import json
 import re
 import hashlib
 import logging
+import secrets
 from datetime import datetime
 from functools import wraps
 from pathlib import Path
@@ -69,8 +70,65 @@ except Exception: pass
 # ======================================================================================
 # Flask App Initialization & Logging
 # ======================================================================================
+def _load_or_create_secret() -> str:
+    """Use APP_SECRET if set, else a persisted random secret so sessions survive
+    restarts without shipping a known default key."""
+    env = os.getenv("APP_SECRET")
+    if env: return env
+    path = os.getenv("APP_SECRET_FILE", ".app_secret")
+    try:
+        if os.path.exists(path):
+            with open(path) as f:
+                s = f.read().strip()
+            if s: return s
+        s = secrets.token_hex(32)
+        try:
+            # Create with 0600 up-front to avoid a world-readable window.
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "w") as f: f.write(s)
+        except Exception:
+            with open(path, "w") as f: f.write(s)
+            try: os.chmod(path, 0o600)
+            except Exception: pass
+        return s
+    except Exception:
+        return secrets.token_hex(32)
+
 app = Flask(__name__)
-app.secret_key = os.getenv("APP_SECRET", "dev-secret-change-me")
+app.secret_key = _load_or_create_secret()
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE='Lax',
+    SESSION_COOKIE_SECURE=os.getenv('APP_SSL', '1').lower() in ('1', 'true', 'yes'),
+)
+
+# Honor X-Forwarded-* when running behind a reverse proxy (set TRUST_PROXY=1).
+if os.getenv('TRUST_PROXY', '0').lower() in ('1', 'true', 'yes'):
+    from werkzeug.middleware.proxy_fix import ProxyFix
+    app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
+
+# Content Security Policy — allows exactly the CDNs/fonts the dashboard loads.
+_CSP = (
+    "default-src 'self'; "
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com "
+    "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; "
+    "font-src 'self' https://fonts.gstatic.com data:; "
+    "img-src 'self' data:; connect-src 'self'; "
+    "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
+)
+
+@app.after_request
+def _security_headers(resp):
+    resp.headers.setdefault('X-Content-Type-Options', 'nosniff')
+    resp.headers.setdefault('X-Frame-Options', 'DENY')
+    resp.headers.setdefault('Referrer-Policy', 'no-referrer')
+    resp.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
+    resp.headers.setdefault('Content-Security-Policy', _CSP)
+    # HSTS only makes sense once we're actually on HTTPS.
+    if request.is_secure and os.getenv('HSTS_ENABLED', '1').lower() in ('1', 'true', 'yes'):
+        resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+    return resp
 
 LOG_FILE = os.getenv("APP_LOG_FILE", "netscaler_complete.log")
 logging.basicConfig(
@@ -134,11 +192,54 @@ def login_required(fn):
         if not session.get('logged_in'):
             if request.is_json: return jsonify({'error': 'Authentication required'}), 401
             return redirect(url_for('login'))
-        if auth_config.get('is_default_password', False) and request.endpoint not in ("change_password", "logout"):
+        # Force-change gate only applies to the local admin account, not LDAP users.
+        if (session.get('auth_backend') == 'local' and auth_config.get('is_default_password', False)
+                and request.endpoint not in ("change_password", "logout")):
             if request.is_json: return jsonify({'error': 'Password change required'}), 403
             return redirect(url_for('change_password'))
         return fn(*args, **kwargs)
     return _wrapped
+
+def ldap_authenticate(username: str, password: str) -> bool:
+    """Verify credentials against LDAP/AD by rebinding as the resolved user DN."""
+    if not (LDAP_ENABLED and 'ldap' in AUTH_BACKENDS): return False
+    if not username or not password: return False
+    try:
+        from ldap3 import Server, Connection, ALL, SUBTREE
+        from ldap3.utils.conv import escape_filter_chars
+        server = Server(LDAP_CFG['server'], port=LDAP_CFG['port'],
+                        use_ssl=LDAP_CFG['use_ssl'], get_info=ALL,
+                        connect_timeout=LDAP_CFG['timeout'])
+        # Bind with the service account (or anonymously) to resolve the user's DN.
+        # `with` guarantees the socket is unbound even if search() raises.
+        with Connection(server, user=LDAP_CFG['bind_dn'] or None,
+                        password=LDAP_CFG['bind_pw'] or None,
+                        auto_bind=True, receive_timeout=LDAP_CFG['timeout']) as finder:
+            flt = f"({LDAP_CFG['user_attr']}={escape_filter_chars(username)})"
+            finder.search(LDAP_CFG['base_dn'], flt, search_scope=SUBTREE, attributes=['memberOf'])
+            if not finder.entries:
+                return False
+            entry = finder.entries[0]
+            user_dn = entry.entry_dn
+            allowed_group = LDAP_CFG['allowed_group_dn']
+            if allowed_group:
+                try: groups = [str(g) for g in entry.memberOf.values]
+                except Exception: groups = []
+                if not any(allowed_group.lower() == g.lower() for g in groups):
+                    logger.info(f"LDAP user '{username}' not in allowed group")
+                    return False
+
+        # Empty DN + password would be an anonymous simple bind on many servers,
+        # which returns success and would bypass authentication — reject it.
+        if not user_dn:
+            return False
+        # Rebind as the user to actually verify their password.
+        with Connection(server, user=user_dn, password=password,
+                        receive_timeout=LDAP_CFG['timeout']) as user_conn:
+            return bool(user_conn.bind())
+    except Exception as e:
+        logger.warning(f"LDAP auth error for '{username}': {e}")
+        return False
 
 # ======================================================================================
 # NITRO Client
@@ -235,12 +336,17 @@ def _int(v, default):
 
 NODES_CONFIG_FILE = 'nodes_config.json'
 
+# Deployment topology: 'standalone' (primary only), 'ha' (primary+secondary pair),
+# or 'cluster' (primary = Cluster IP / CLIP; members read from /config/clusternode).
+VALID_MODES = ('standalone', 'ha', 'cluster')
+
 def load_nodes_config():
     if os.path.exists(NODES_CONFIG_FILE):
         with open(NODES_CONFIG_FILE, 'r', encoding='utf-8') as f: return json.load(f)
     return {
-        'primary': { 'ip': '', 'username': '', 'password': '', 'port': 80, 'protocol': 'http'},
-        'secondary': { 'ip': '', 'username': '', 'password': '', 'port': 80, 'protocol': 'http'}
+        'mode': 'ha',
+        'primary': { 'ip': '', 'username': '', 'password': '', 'port': 443, 'protocol': 'https'},
+        'secondary': { 'ip': '', 'username': '', 'password': '', 'port': 443, 'protocol': 'https'}
     }
 
 NETSCALER_CONFIG = load_nodes_config()
@@ -250,13 +356,26 @@ def save_nodes_config(config):
     global NETSCALER_CONFIG
     NETSCALER_CONFIG = config
 
-API_MODE = {k: 'nitro' for k in NETSCALER_CONFIG.keys()}
+def get_mode() -> str:
+    m = str(NETSCALER_CONFIG.get('mode', 'ha')).lower()
+    return m if m in VALID_MODES else 'ha'
+
+def node_items():
+    """(key, cfg) pairs for real node entries only (skips the 'mode' scalar)."""
+    return [(k, v) for k, v in NETSCALER_CONFIG.items() if isinstance(v, dict)]
+
+def active_node_keys():
+    """Node keys the UI should surface, per deployment mode."""
+    if get_mode() in ('standalone', 'cluster'):
+        return ['primary']
+    return [k for k, _ in node_items()]
+
+API_MODE = {k: 'nitro' for k, _ in node_items()}
 
 def validate_env():
-    missing = []
-    for prefix in ('primary', 'secondary'):
-        if not NETSCALER_CONFIG.get(prefix, {}).get('ip'):
-            missing.append(f'{prefix}_IP')
+    missing = [k for k, v in node_items() if k in active_node_keys() and not v.get('ip')]
+    if missing:
+        logger.warning(f"Nodes without an IP configured: {', '.join(missing)}")
 
 # ======================================================================================
 # API Detection & Client Helpers
@@ -300,8 +419,31 @@ def get_nextgen(node_key: str) -> NextGenAPI:
 # ======================================================================================
 # System Overview & Fast HA Tracking Logic
 # ======================================================================================
+def _get_cluster_nodes_normalized():
+    """Read cluster members from the CLIP (primary) and map them to the hanode shape."""
+    try:
+        r = get_nitro('primary')._get('/config/clusternode', custom_timeout=4)
+        nodes = r.get('clusternode', []) if isinstance(r, dict) else []
+    except Exception:
+        return {}
+    norm = []
+    for n in nodes:
+        if not isinstance(n, dict): continue
+        norm.append({
+            'id': n.get('nodeid'),
+            'name': (f"Cluster Node {n.get('nodeid')}" if n.get('nodeid') is not None else None),
+            'ipaddress': n.get('ipaddress') or n.get('nodeip') or n.get('ip') or '',
+            'state': str(n.get('masterstate') or n.get('state') or n.get('health') or 'Unknown'),
+            'hasync': str(n.get('operationalsyncstate') or n.get('effectivestate') or ''),
+        })
+    return {'hanode': norm} if norm else {}
+
 def _get_ha_data_fast():
-    for nk in ('primary', 'secondary'):
+    # Cluster members and HA nodes are normalized to the same {'hanode': [...]} shape
+    # so every downstream caller works regardless of deployment mode.
+    if get_mode() == 'cluster':
+        return _get_cluster_nodes_normalized()
+    for nk in active_node_keys():
         try:
             nit = get_nitro(nk)
             r = nit._get('/config/hanode', custom_timeout=3)
@@ -423,13 +565,27 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
-        if username == auth_config.get('username') and hash_password(password) == auth_config.get('password_hash'):
+
+        # Local admin account first, then LDAP if enabled.
+        local_ok = ('local' in AUTH_BACKENDS
+                    and username == auth_config.get('username')
+                    and hash_password(password) == auth_config.get('password_hash'))
+        backend = None
+        if local_ok:
+            backend = 'local'
+        elif ldap_authenticate(username, password):
+            backend = 'ldap'
+
+        if backend:
             session['logged_in'] = True
             session['user'] = username
-            auth_config['last_login'] = datetime.now(IL_TZ).isoformat()
-            auth_config['login_attempts'] = 0
-            save_auth_config(auth_config)
+            session['auth_backend'] = backend
+            if backend == 'local':
+                auth_config['last_login'] = datetime.now(IL_TZ).isoformat()
+                auth_config['login_attempts'] = 0
+                save_auth_config(auth_config)
             return redirect(url_for('dashboard'))
+
         auth_config['login_attempts'] = int(auth_config.get('login_attempts', 0)) + 1
         save_auth_config(auth_config)
         flash('Invalid credentials', 'error')
@@ -481,34 +637,102 @@ def dashboard():
 @login_required
 def api_settings():
     if request.method == 'POST':
-        new_config = request.get_json(force=True, silent=True) or {}
-        if 'primary' not in new_config: new_config['primary'] = {}
-        if 'secondary' not in new_config: new_config['secondary'] = {}
+        new_config = request.get_json(force=True, silent=True)
+        if not isinstance(new_config, dict):
+            return jsonify({"success": False, "error": "Invalid payload"}), 400
+        mode = str(new_config.get('mode', NETSCALER_CONFIG.get('mode', 'ha'))).lower()
+        new_config['mode'] = mode if mode in VALID_MODES else 'ha'
         for k in ('primary', 'secondary'):
-            if not new_config.get(k, {}).get('password'):
+            # Coerce missing/non-dict node entries so .get() below can't crash.
+            if not isinstance(new_config.get(k), dict):
+                new_config[k] = {}
+            # Keep the stored password when the field is left blank.
+            if not new_config[k].get('password'):
                 new_config[k]['password'] = NETSCALER_CONFIG.get(k, {}).get('password', '')
         save_nodes_config(new_config)
-        for node_key, cfg in NETSCALER_CONFIG.items(): detect_api_mode_for_node(node_key, cfg)
+        for node_key, cfg in node_items(): detect_api_mode_for_node(node_key, cfg)
         return jsonify({"success": True, "message": "Settings updated"})
-    
+
     safe_config = json.loads(json.dumps(NETSCALER_CONFIG))
-    if 'primary' in safe_config: safe_config['primary']['password'] = ''
-    if 'secondary' in safe_config: safe_config['secondary']['password'] = ''
+    for k, _ in node_items():
+        safe_config[k]['password'] = ''
+    safe_config['mode'] = get_mode()
     return jsonify(safe_config)
+
+@app.route('/api/tls-cert', methods=['POST'])
+@login_required
+def api_tls_cert():
+    body = request.get_json(force=True, silent=True) or {}
+    cert_val = body.get('cert')
+    key_val = body.get('key')
+    if not isinstance(cert_val, str) or (key_val is not None and not isinstance(key_val, str)):
+        return jsonify({"success": False, "error": "Certificate and key must be PEM strings"}), 400
+    cert_pem = cert_val.strip().encode('utf-8')
+    key_pem = (key_val or '').strip().encode('utf-8')
+    if not cert_pem:
+        return jsonify({"success": False, "error": "Certificate (PEM) is required"}), 400
+    try:
+        if key_pem:
+            from cert_utils import save_pair
+            save_pair(cert_pem, key_pem)
+        else:
+            # No key supplied: pair the cert with the key left on disk from a CSR.
+            from cert_utils import save_signed_cert
+            save_signed_cert(cert_pem)
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        logger.error(f"TLS cert replace failed: {e}")
+        return jsonify({"success": False, "error": "Could not save certificate"}), 500
+    return jsonify({"success": True, "message": "Certificate saved. Restart the dashboard to apply."})
+
+@app.route('/api/tls-ca')
+@login_required
+def api_tls_ca():
+    """Download the local CA certificate to install in a trust store."""
+    try:
+        from cert_utils import CA_CERT_FILE, ensure_ca
+        ensure_ca()
+        with open(CA_CERT_FILE, 'rb') as f:
+            pem = f.read()
+    except Exception as e:
+        logger.error(f"CA download failed: {e}")
+        return jsonify({"success": False, "error": "No CA certificate available"}), 404
+    from flask import Response
+    return Response(pem, mimetype='application/x-pem-file',
+                    headers={'Content-Disposition': 'attachment; filename="netscaler-dashboard-ca.crt"'})
+
+@app.route('/api/tls-csr', methods=['POST'])
+@login_required
+def api_tls_csr():
+    """Generate a new key + CSR to be signed by your own/corporate CA."""
+    body = request.get_json(force=True, silent=True) or {}
+    cn = (body.get('common_name') or '').strip() or None
+    try:
+        from cert_utils import generate_csr
+        csr_pem = generate_csr(common_name=cn).decode('utf-8')
+    except Exception as e:
+        logger.error(f"CSR generation failed: {e}")
+        return jsonify({"success": False, "error": "Could not generate CSR"}), 500
+    return jsonify({"success": True, "csr": csr_pem,
+                    "message": "CSR generated (a new private key was written). Get it signed, then upload the signed certificate below and restart."})
 
 @app.route('/api/caps')
 @login_required
 def api_caps():
+    mode = get_mode()
+    default_name = {'primary': 'Cluster (CLIP)' if mode == 'cluster' else 'Primary', 'secondary': 'Secondary'}
     nodes_data = {}
-    for k, v in NETSCALER_CONFIG.items():
+    for k in active_node_keys():
+        v = NETSCALER_CONFIG.get(k, {})
         try:
             if v.get('ip'):
                 hn = get_nitro(k)._get('/config/nshostname', custom_timeout=3).get('nshostname', [{}])[0].get('hostname')
-                if not hn: hn = "Primary" if k == 'primary' else "Secondary"
-            else: hn = "Primary Node" if k == 'primary' else "Secondary Node"
-        except Exception: hn = "Primary" if k == 'primary' else "Secondary"
+                if not hn: hn = default_name.get(k, k.title())
+            else: hn = f"{default_name.get(k, k.title())} Node"
+        except Exception: hn = default_name.get(k, k.title())
         nodes_data[k] = {'ip': v.get('ip', ''), 'protocol': v.get('protocol', 'https'), 'port': v.get('port', 443), 'name': hn }
-    return jsonify({'api_mode': API_MODE, 'nodes': nodes_data})
+    return jsonify({'api_mode': API_MODE, 'nodes': nodes_data, 'mode': mode})
 
 @app.route('/api/system-stats')
 @login_required
@@ -543,10 +767,11 @@ def api_ha_status():
         except Exception: return False
 
     hostnames = {}
-    for nk in ('primary', 'secondary'):
+    for nk in active_node_keys():
         try:
-            hn = get_nitro(nk)._get('/config/nshostname', custom_timeout=2).get('nshostname', [{}])[0].get('hostname')
-            if hn: hostnames[get_nitro(nk).ip] = hn
+            nit = get_nitro(nk)
+            hn = nit._get('/config/nshostname', custom_timeout=2).get('nshostname', [{}])[0].get('hostname')
+            if hn: hostnames[nit.ip] = hn
         except Exception: pass
 
     for n in nodes:
@@ -557,11 +782,10 @@ def api_ha_status():
             st = str(n.get('state', '')).upper()
             n['name'] = 'Primary' if 'PRIMARY' in st else ('Secondary' if 'SECONDARY' in st else (hostnames.get(ip) or 'node'))
 
-    return jsonify({
-        'primary': {'config_changed': get_config_changed('primary')},
-        'secondary': {'config_changed': get_config_changed('secondary')},
-        'hanode': nodes
-    })
+    result = {'mode': get_mode(), 'hanode': nodes}
+    for nk in active_node_keys():
+        result[nk] = {'config_changed': get_config_changed(nk)}
+    return jsonify(result)
 
 @app.route('/api/lb-vservers')
 @login_required
@@ -705,20 +929,13 @@ def api_user_sessions():
 def api_failover_history():
     history = load_failover_history()
     changed = False
-    
-    ha_data = {}
-    for node_key in ['primary', 'secondary']:
-        try:
-            nitro = get_nitro(node_key)
-            ha_data = nitro._get('/config/hanode', custom_timeout=3) or {}
-            if ha_data and 'hanode' in ha_data: break
-        except Exception: continue
-            
+
+    ha_data = _get_ha_data_fast()
     nodes = ha_data.get('hanode', []) if isinstance(ha_data, dict) else []
-    
+
     for n in nodes:
-        last_transition = n.get('transtime', '') 
-        state = n.get('hacurstate', 'Unknown')
+        last_transition = n.get('transtime', '')
+        state = n.get('hacurstate') or n.get('state') or 'Unknown'
         ip = n.get('ipaddress', 'Unknown')
         
         if last_transition:
@@ -742,8 +959,12 @@ def api_failover_history():
 @login_required
 def api_unlock_user():
     body = request.get_json(force=True, silent=True) or {}
-    node = (body.get('node') or 'primary').strip()
-    username = (body.get('username') or '').strip()
+    node_val = body.get('node') or 'primary'
+    username_val = body.get('username') or ''
+    if not isinstance(node_val, str) or not isinstance(username_val, str):
+        return jsonify({"success": False, "error": "node and username must be strings"}), 400
+    node = node_val.strip()
+    username = username_val.strip()
 
     if not username: return jsonify({"success": False, "error": "Missing username"}), 400
 
@@ -773,7 +994,7 @@ def _500(err): return jsonify({'error': 'Internal Server Error'}) if request.pat
 # Application Startup (Runs on Gunicorn / Flask Dev)
 # ======================================================================================
 validate_env()
-for node_key, cfg in NETSCALER_CONFIG.items(): detect_api_mode_for_node(node_key, cfg)
+for node_key, cfg in node_items(): detect_api_mode_for_node(node_key, cfg)
 
 logger.info(f"API modes at startup: {API_MODE}")
 logger.info("========================================")
@@ -784,7 +1005,11 @@ logger.info("========================================")
 
 if __name__ == '__main__':
     host = os.getenv('APP_HOST', '0.0.0.0')
-    port = int(os.getenv('APP_PORT', '5000'))
+    port = int(os.getenv('APP_PORT', '443'))
     debug = os.getenv('APP_DEBUG', '0').lower() in ('1', 'true', 'yes')
-    use_ssl = os.getenv('APP_SSL', '0').lower() in ('1', 'true', 'yes')
-    app.run(host=host, port=port, debug=debug, ssl_context='adhoc' if use_ssl else None)
+    use_ssl = os.getenv('APP_SSL', '1').lower() in ('1', 'true', 'yes')
+    ssl_context = None
+    if use_ssl:
+        from cert_utils import CERT_FILE, KEY_FILE, ensure_signed
+        ssl_context = ensure_signed(CERT_FILE, KEY_FILE)
+    app.run(host=host, port=port, debug=debug, ssl_context=ssl_context)
