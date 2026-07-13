@@ -6,6 +6,13 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.1.1
+- Fix "Failed to save settings" caused by the idle timeout: real user interaction
+  (typing, clicking, mouse movement) now keeps the session alive via a throttled
+  `/api/ping` keepalive, so you're not logged out mid-configuration. A truly idle
+  session still expires and now redirects cleanly to the login page with a
+  "session expired" notice instead of a generic error alert.
+
 ## 1.1.0
 - **Session inactivity timeout** — logs users out after N minutes of inactivity
   (default **15**), configurable in Settings → Session Timeout. Enforced

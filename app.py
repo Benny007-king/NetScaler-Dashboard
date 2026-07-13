@@ -768,6 +768,13 @@ def api_tls_csr():
     return jsonify({"success": True, "csr": csr_pem,
                     "message": "CSR generated (a new private key was written). Get it signed, then upload the signed certificate below and restart."})
 
+@app.route('/api/ping')
+@login_required
+def api_ping():
+    # Cheap keepalive: reaching here already refreshed activity (before_request),
+    # since the frontend sends it without the X-Idle-Refresh header on real interaction.
+    return jsonify({"ok": True, "timeout_min": get_session_timeout_min()})
+
 @app.route('/api/caps')
 @login_required
 def api_caps():

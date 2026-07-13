@@ -470,8 +470,11 @@ async function getJSON(url, opts) {
     opts = opts || {};
     try {
         const res = await fetch(url, { ...opts, headers: { 'Accept': 'application/json', ...(opts.headers || {}) } });
-        // Session expired / not authenticated → back to login.
-        if (res.status === 401) { window.location.href = '/login'; return { ok: false, status: 401, data: {} }; }
+        // Session expired / not authenticated → back to login with a notice.
+        if (res.status === 401) {
+            if (!location.pathname.startsWith('/login')) location.href = '/login?expired=1';
+            return { ok: false, status: 401, expired: true, data: {} };
+        }
         const text = await res.text();
         return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : {} };
     } catch (e) {
@@ -584,8 +587,9 @@ async function saveSettings() {
     if(r.ok && r.data.success) {
         closeSettings();
         forceRefresh();
-    } else {
-        alert("Failed to save settings.");
+    } else if (!r.expired) {
+        // Don't show a scary alert on session expiry — the redirect handles that.
+        alert("Failed to save settings" + (r.data && r.data.error ? ": " + r.data.error : "."));
     }
 }
 
@@ -993,6 +997,20 @@ function startAutoRefresh() {
         if (active === 'overview') loadOverview(true); // background poll
     }, state.refreshMs);
 }
+
+// Keep the session alive while the user is actually interacting (typing in the
+// settings form, clicking, moving the mouse). Throttled; a walked-away user with
+// no interaction still hits the idle timeout. Ping omits X-Idle-Refresh so it
+// counts as activity server-side.
+let lastActivityPing = 0;
+function activityPing() {
+    const now = Date.now();
+    if (now - lastActivityPing < 60000) return; // at most once/minute
+    lastActivityPing = now;
+    fetch('/api/ping', { headers: { 'Accept': 'application/json' } }).catch(() => {});
+}
+['keydown', 'click', 'mousemove', 'touchstart'].forEach(ev =>
+    document.addEventListener(ev, activityPing, { passive: true }));
 
 (async function init() {
     setInitialDateFields();
