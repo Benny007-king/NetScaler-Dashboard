@@ -9,11 +9,11 @@ name: netscaler-dashboard
 
 services:
   netscaler-dashboard:
+    # APP_SSL=0 makes gunicorn.conf.py bind plain HTTP on APP_PORT (nginx does TLS).
     environment:
       APP_SSL: "0"
       APP_PORT: "8080"
       TRUST_PROXY: "1"
-    command: ["gunicorn", "-b", "0.0.0.0:8080", "--workers", "4", "--threads", "2", "app:app"]
     ports: !reset []
     expose:
       - "8080"

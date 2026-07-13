@@ -122,7 +122,11 @@ On first boot the app generates a **local CA** (`certs/ca.crt` / `certs/ca.key`)
 docker compose -f docker-compose.yml -f deploy/docker-compose.proxy.yml up -d --build
 ```
 
-This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it honors `X-Forwarded-Proto` for secure cookies/redirects) and publishes 443/80 from nginx. Put a cert/key in `./certs` (a prior default run generates one, or drop your own).
+This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it honors `X-Forwarded-Proto` for secure cookies/redirects) and publishes 443/80 from nginx. `gunicorn.conf.py` binds plain HTTP when `APP_SSL=0`, so nginx alone terminates TLS. Put a cert/key in `./certs` (a prior default run generates one, or drop your own).
+
+## Versioning
+
+`major.minor.patch`, starting at `1.0.0`. A small change/fix bumps the patch (`1.0.0 → 1.0.1`); a significant change/feature bumps the minor and resets patch (`1.0.0 → 1.1.0`). Each release is tagged `vX.Y.Z`; see [CHANGELOG.md](CHANGELOG.md).
 
 ## Security
 
