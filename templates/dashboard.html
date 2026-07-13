@@ -95,7 +95,17 @@
       
       <div class="space-y-6">
           <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-              <h3 class="text-lg font-semibold text-blue-400 mb-4">Primary Node</h3>
+              <label class="block text-sm font-semibold text-white mb-2">Deployment Mode</label>
+              <select id="setMode" onchange="onModeChange()" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm">
+                  <option value="standalone">Standalone (single node)</option>
+                  <option value="ha">HA Pair (primary + secondary)</option>
+                  <option value="cluster">Cluster (primary = Cluster IP / CLIP)</option>
+              </select>
+              <p class="text-xs text-slate-400 mt-2" id="modeHint"></p>
+          </div>
+
+          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+              <h3 class="text-lg font-semibold text-blue-400 mb-4" id="priNodeTitle">Primary Node</h3>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div><label class="block text-xs text-slate-400 mb-1">IP Address</label><input type="text" id="setPriIp" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
                   <div><label class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setPriPort" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
@@ -105,7 +115,7 @@
               </div>
           </div>
           
-          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
+          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700" id="secNodeBlock">
               <h3 class="text-lg font-semibold text-indigo-400 mb-4">Secondary Node</h3>
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div><label class="block text-xs text-slate-400 mb-1">IP Address</label><input type="text" id="setSecIp" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
@@ -120,6 +130,16 @@
             <h3 class="text-lg font-semibold text-green-400 mb-2">Dashboard Administration</h3>
             <p class="text-xs text-slate-400 mb-4">Manage the local dashboard administrator account password directly.</p>
             <a href="/change-password" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm inline-block border border-slate-600 transition-colors">Change Admin Password</a>
+        </div>
+
+          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
+            <h3 class="text-lg font-semibold text-amber-400 mb-2">TLS Certificate</h3>
+            <p class="text-xs text-slate-400 mb-4">The dashboard serves HTTPS on 443 with a self-signed certificate by default. Paste your own PEM certificate and private key to replace it, then restart the dashboard to apply.</p>
+            <div class="grid grid-cols-1 gap-3">
+              <div><label class="block text-xs text-slate-400 mb-1">Certificate (PEM)</label><textarea id="setTlsCert" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs font-mono" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+              <div><label class="block text-xs text-slate-400 mb-1">Private Key (PEM)</label><textarea id="setTlsKey" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs font-mono" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></div>
+              <div><button onclick="saveTlsCert()" id="saveTlsBtn" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm border border-amber-500 transition-colors">Upload Certificate</button> <span id="tlsMsg" class="text-xs ml-2"></span></div>
+            </div>
         </div>
       </div>
       
@@ -221,7 +241,7 @@
       </div>
 
       <div class="glass-panel rounded-2xl p-6">
-        <h3 class="text-lg font-semibold text-white mb-4">High Availability</h3>
+        <h3 class="text-lg font-semibold text-white mb-4" id="haPanelTitle">High Availability</h3>
         <div id="haStatus" class="table-container text-sm">Loading...</div>
       </div>
     </div>
@@ -440,9 +460,23 @@ async function getJSON(url, opts) {
 }
 
 // --- SETTINGS LOGIC ---
+function onModeChange() {
+    const mode = $('setMode').value;
+    const hints = {
+        standalone: 'A single NetScaler with no HA. Only the primary node is used.',
+        ha: 'Two appliances in an HA pair. Configure both primary and secondary.',
+        cluster: 'Point the primary at the Cluster IP (CLIP). Members are read automatically from the cluster.'
+    };
+    $('modeHint').textContent = hints[mode] || '';
+    $('secNodeBlock').style.display = (mode === 'ha') ? '' : 'none';
+    $('priNodeTitle').textContent = (mode === 'cluster') ? 'Cluster IP (CLIP)' : 'Primary Node';
+}
+
 async function openSettings() {
     const r = await getJSON('/api/settings');
     if(r.ok) {
+        $('setMode').value = r.data.mode || 'ha';
+        onModeChange();
         if(r.data.primary) {
             $('setPriIp').value = r.data.primary.ip || '';
             $('setPriPort').value = r.data.primary.port || 80;
@@ -465,22 +499,38 @@ function closeSettings() {
     $('settingsModal').classList.add('hidden');
 }
 
+async function saveTlsCert() {
+    const btn = $('saveTlsBtn'), msg = $('tlsMsg');
+    const cert = $('setTlsCert').value.trim(), key = $('setTlsKey').value.trim();
+    if (!cert || !key) { msg.innerHTML = '<span class="text-red-400">Certificate and key are required</span>'; return; }
+    btn.disabled = true; btn.textContent = 'Uploading...';
+    const r = await getJSON('/api/tls-cert', { method: 'POST', body: JSON.stringify({ cert, key }) });
+    btn.disabled = false; btn.textContent = 'Upload Certificate';
+    if (r.ok && r.data.success) {
+        msg.innerHTML = `<span class="text-green-400">✔ ${escapeHtml(r.data.message)}</span>`;
+        $('setTlsCert').value = ''; $('setTlsKey').value = '';
+    } else {
+        msg.innerHTML = `<span class="text-red-400">✖ ${escapeHtml(r.data.error || 'Failed')}</span>`;
+    }
+}
+
 async function saveSettings() {
     const btn = $('saveSettingsBtn');
     btn.textContent = 'Saving...';
     btn.disabled = true;
     
     const payload = {
+        mode: $('setMode').value,
         primary: {
             ip: $('setPriIp').value,
-            port: parseInt($('setPriPort').value) || 80,
+            port: parseInt($('setPriPort').value) || 443,
             protocol: $('setPriProto').value,
             username: $('setPriUser').value,
             password: $('setPriPass').value
         },
         secondary: {
             ip: $('setSecIp').value,
-            port: parseInt($('setSecPort').value) || 80,
+            port: parseInt($('setSecPort').value) || 443,
             protocol: $('setSecProto').value,
             username: $('setSecUser').value,
             password: $('setSecPass').value
@@ -579,7 +629,10 @@ async function fetchCaps() {
     const r = await getJSON('/api/caps');
     if (r.ok) {
         state.apiModes = r.data.api_mode || {};
-        
+        state.mode = r.data.mode || 'ha';
+        const haTitle = $('haPanelTitle');
+        if (haTitle) haTitle.textContent = (state.mode === 'cluster') ? 'Cluster Nodes' : 'High Availability';
+
         const nodeSelect = $('nodeSelect');
         const unlockNode = $('unlockNode');
         const currentValue = nodeSelect.value;
@@ -601,9 +654,9 @@ async function fetchCaps() {
             }
         }
 
-        const p = (state.apiModes.primary || 'nitro').toUpperCase();
-        const s = (state.apiModes.secondary || 'nitro').toUpperCase();
-        $('capsLine').innerHTML = `Capabilities: <span class="text-blue-400 font-bold mx-1">PRI: ${p}</span> | <span class="text-blue-400 font-bold mx-1">SEC: ${s}</span>`;
+        const parts = Object.entries(r.data.nodes || {}).map(([key, nd]) =>
+            `<span class="text-blue-400 font-bold mx-1">${escapeHtml((nd.name || key))}: ${(state.apiModes[key] || 'nitro').toUpperCase()}</span>`);
+        $('capsLine').innerHTML = `Mode: <span class="text-white font-bold uppercase mr-2">${escapeHtml(state.mode)}</span> | Capabilities: ${parts.join(' | ') || '—'}`;
         updateAppsTabAvailability();
     }
 }

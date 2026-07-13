@@ -1,11 +1,15 @@
-version: '3.8'
+# Pinned project name so the image/network drop the old "-test" suffix
+name: netscaler-dashboard
 
 services:
   netscaler-dashboard:
     build: .
     container_name: netscaler-dashboard
     ports:
-      - "5000:5000"
+      - "443:443"
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./:/app
     restart: unless-stopped
