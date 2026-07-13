@@ -102,6 +102,12 @@
                   <option value="cluster">Cluster (primary = Cluster IP / CLIP)</option>
               </select>
               <p class="text-xs text-slate-400 mt-2" id="modeHint"></p>
+
+              <label class="block text-sm font-semibold text-white mt-4 mb-2">Session Timeout</label>
+              <div class="flex items-center gap-2">
+                  <input type="number" id="setSessionTimeout" min="1" max="1440" class="w-28 bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm">
+                  <span class="text-sm text-slate-400">minutes of inactivity before automatic logout</span>
+              </div>
           </div>
 
           <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
@@ -461,8 +467,11 @@ function exportToPDF(tableId, filename) {
 
 // --- API WRAPPER ---
 async function getJSON(url, opts) {
+    opts = opts || {};
     try {
-        const res = await fetch(url, { headers: { 'Accept': 'application/json' }, ...(opts || {}) });
+        const res = await fetch(url, { ...opts, headers: { 'Accept': 'application/json', ...(opts.headers || {}) } });
+        // Session expired / not authenticated → back to login.
+        if (res.status === 401) { window.location.href = '/login'; return { ok: false, status: 401, data: {} }; }
         const text = await res.text();
         return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : {} };
     } catch (e) {
@@ -487,6 +496,7 @@ async function openSettings() {
     const r = await getJSON('/api/settings');
     if(r.ok) {
         $('setMode').value = r.data.mode || 'ha';
+        $('setSessionTimeout').value = r.data.session_timeout_minutes || 15;
         onModeChange();
         if(r.data.primary) {
             $('setPriIp').value = r.data.primary.ip || '';
@@ -546,6 +556,7 @@ async function saveSettings() {
     
     const payload = {
         mode: $('setMode').value,
+        session_timeout_minutes: parseInt($('setSessionTimeout').value) || 15,
         primary: {
             ip: $('setPriIp').value,
             port: parseInt($('setPriPort').value) || 443,
@@ -698,9 +709,14 @@ function updateAppsTabAvailability() {
     }
 }
 
-async function loadOverview() {
-    const r = await getJSON(`/api/system-stats?node=${state.node}`);
-    const ha = await getJSON(`/api/ha-status`);
+async function loadOverview(background) {
+    // Background auto-refresh polls carry a header so they don't reset the
+    // idle-timeout clock. Both calls run in parallel to cut first-paint latency.
+    const opts = background ? { headers: { 'X-Idle-Refresh': '1' } } : undefined;
+    const [r, ha] = await Promise.all([
+        getJSON(`/api/system-stats?node=${state.node}`, opts),
+        getJSON(`/api/ha-status`, opts)
+    ]);
 
     if (r.ok) {
         const d = r.data.ns_stats?.ns || r.data.ns_stats || {};
@@ -974,7 +990,7 @@ function startAutoRefresh() {
     if (state.interval) clearInterval(state.interval);
     state.interval = setInterval(() => {
         const active = document.querySelector('.tab-btn.active').dataset.tab;
-        if (active === 'overview') loadOverview();
+        if (active === 'overview') loadOverview(true); // background poll
     }, state.refreshMs);
 }
 

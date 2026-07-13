@@ -6,6 +6,16 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.1.0
+- **Session inactivity timeout** — logs users out after N minutes of inactivity
+  (default **15**), configurable in Settings → Session Timeout. Enforced
+  server-side (sliding); background auto-refresh polls don't reset the clock, and
+  an expired session redirects to the login page.
+- **Faster first load** — the overview now fetches system-stats and HA status in
+  parallel, and NITRO calls use a short connect timeout
+  (`NITRO_CONNECT_TIMEOUT_SECS`, default 3s) so an unreachable node fails fast
+  instead of hanging for the full read timeout.
+
 ## 1.0.1
 - Security hardening: escape the unlock-result message before inserting it into
   the DOM (removes a self-XSS / defense-in-depth gap flagged in security review).

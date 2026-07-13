@@ -14,7 +14,8 @@ import re
 import hashlib
 import logging
 import secrets
-from datetime import datetime
+import time
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 
@@ -94,13 +95,45 @@ def _load_or_create_secret() -> str:
     except Exception:
         return secrets.token_hex(32)
 
+DEFAULT_SESSION_TIMEOUT_MIN = 15
+
 app = Flask(__name__)
 app.secret_key = _load_or_create_secret()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
     SESSION_COOKIE_SECURE=os.getenv('APP_SSL', '1').lower() in ('1', 'true', 'yes'),
+    PERMANENT_SESSION_LIFETIME=timedelta(minutes=DEFAULT_SESSION_TIMEOUT_MIN),
 )
+
+def get_session_timeout_min() -> int:
+    """Inactivity timeout in minutes (from settings, default 15)."""
+    try:
+        v = int(NETSCALER_CONFIG.get('session_timeout_minutes', DEFAULT_SESSION_TIMEOUT_MIN))
+        return v if v > 0 else DEFAULT_SESSION_TIMEOUT_MIN
+    except Exception:
+        return DEFAULT_SESSION_TIMEOUT_MIN
+
+def apply_session_timeout():
+    """Sync Flask's cookie lifetime with the configured timeout."""
+    app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=get_session_timeout_min())
+
+@app.before_request
+def _enforce_idle_timeout():
+    if not session.get('logged_in'):
+        return
+    now = time.time()
+    last = session.get('last_active', now)
+    if now - last > get_session_timeout_min() * 60:
+        session.clear()
+        if request.path.startswith('/api/') or request.is_json:
+            return jsonify({'error': 'Session expired', 'code': 'session_expired'}), 401
+        return redirect(url_for('login'))
+    # Background auto-refresh polls must NOT count as user activity, otherwise an
+    # open dashboard tab would never time out.
+    if request.headers.get('X-Idle-Refresh') != '1':
+        session['last_active'] = now
+        session.permanent = True
 
 # Honor X-Forwarded-* when running behind a reverse proxy (set TRUST_PROXY=1).
 if os.getenv('TRUST_PROXY', '0').lower() in ('1', 'true', 'yes'):
@@ -263,16 +296,23 @@ class NetScalerAPI:
         self.session.verify = os.getenv("NITRO_VERIFY_SSL", "1").lower() in ("1", "true", "yes")
         try: self.timeout = int(os.getenv("NITRO_TIMEOUT_SECS", "15"))
         except Exception: self.timeout = 15
+        # Cap connect time separately so an unreachable/filtered node fails fast
+        # instead of hanging for the full read timeout.
+        try: self.connect_timeout = int(os.getenv("NITRO_CONNECT_TIMEOUT_SECS", "3"))
+        except Exception: self.connect_timeout = 3
+
+    def _to(self, read_timeout):
+        return (min(self.connect_timeout, read_timeout), read_timeout)
 
     def _get(self, path, custom_timeout=None):
         t = custom_timeout if custom_timeout else self.timeout
-        r = self.session.get(f"{self.base_url}{path}", timeout=t)
+        r = self.session.get(f"{self.base_url}{path}", timeout=self._to(t))
         r.raise_for_status()
         return r.json()
 
     def _post(self, path, payload, custom_timeout=None):
         t = custom_timeout if custom_timeout else self.timeout
-        r = self.session.post(f"{self.base_url}{path}", json=payload, timeout=t)
+        r = self.session.post(f"{self.base_url}{path}", json=payload, timeout=self._to(t))
         r.raise_for_status()
         if r.text.strip():
             try: return r.json()
@@ -580,6 +620,8 @@ def login():
             session['logged_in'] = True
             session['user'] = username
             session['auth_backend'] = backend
+            session.permanent = True
+            session['last_active'] = time.time()
             if backend == 'local':
                 auth_config['last_login'] = datetime.now(IL_TZ).isoformat()
                 auth_config['login_attempts'] = 0
@@ -642,6 +684,13 @@ def api_settings():
             return jsonify({"success": False, "error": "Invalid payload"}), 400
         mode = str(new_config.get('mode', NETSCALER_CONFIG.get('mode', 'ha'))).lower()
         new_config['mode'] = mode if mode in VALID_MODES else 'ha'
+        # Session inactivity timeout (minutes), clamped to a sane range.
+        try:
+            st = int(new_config.get('session_timeout_minutes',
+                                    NETSCALER_CONFIG.get('session_timeout_minutes', DEFAULT_SESSION_TIMEOUT_MIN)))
+        except Exception:
+            st = DEFAULT_SESSION_TIMEOUT_MIN
+        new_config['session_timeout_minutes'] = min(max(st, 1), 1440)
         for k in ('primary', 'secondary'):
             # Coerce missing/non-dict node entries so .get() below can't crash.
             if not isinstance(new_config.get(k), dict):
@@ -650,6 +699,7 @@ def api_settings():
             if not new_config[k].get('password'):
                 new_config[k]['password'] = NETSCALER_CONFIG.get(k, {}).get('password', '')
         save_nodes_config(new_config)
+        apply_session_timeout()
         for node_key, cfg in node_items(): detect_api_mode_for_node(node_key, cfg)
         return jsonify({"success": True, "message": "Settings updated"})
 
@@ -657,6 +707,7 @@ def api_settings():
     for k, _ in node_items():
         safe_config[k]['password'] = ''
     safe_config['mode'] = get_mode()
+    safe_config['session_timeout_minutes'] = get_session_timeout_min()
     return jsonify(safe_config)
 
 @app.route('/api/tls-cert', methods=['POST'])
@@ -994,6 +1045,7 @@ def _500(err): return jsonify({'error': 'Internal Server Error'}) if request.pat
 # Application Startup (Runs on Gunicorn / Flask Dev)
 # ======================================================================================
 validate_env()
+apply_session_timeout()
 for node_key, cfg in node_items(): detect_api_mode_for_node(node_key, cfg)
 
 logger.info(f"API modes at startup: {API_MODE}")

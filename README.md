@@ -67,6 +67,11 @@ Copy `.env.example` → `.env`. Notable keys: `APP_PORT` (default `443`), `APP_S
 
 - Default local admin is `admin` / `admin`; you are forced to change it on first login.
 - Reset it by deleting `auth_config.json` and restarting.
+- **LDAP/AD is configured via environment variables** (the `LDAP_*` block + `AUTH_BACKENDS=local,ldap`) in `.env` — see `.env.example`. It is read at startup; there is no in-UI LDAP form.
+
+### Session timeout
+
+Idle users are logged out automatically. Default **15 minutes**; change it in **Settings → Session Timeout** (1–1440 min). It's a sliding, server-enforced inactivity timeout — background auto-refresh polls don't keep the session alive, and an expired session returns to the login page.
 
 ---
 
