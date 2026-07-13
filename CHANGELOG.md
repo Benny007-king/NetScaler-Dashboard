@@ -6,6 +6,10 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.0.1
+- Security hardening: escape the unlock-result message before inserting it into
+  the DOM (removes a self-XSS / defense-in-depth gap flagged in security review).
+
 ## 1.0.0
 Initial versioned release.
 
