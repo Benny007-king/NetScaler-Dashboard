@@ -27,14 +27,22 @@ from flask import (
 )
 
 # ======================================================================================
-# LDAP Configuration
+# LDAP Configuration — env vars are defaults; a gitignored ldap_config.json
+# (editable from the Settings UI) overrides them at runtime.
 # ======================================================================================
 AUTH_BACKENDS = {x.strip().lower() for x in os.getenv("AUTH_BACKENDS", "local").split(",") if x.strip()}
-LDAP_ENABLED = os.getenv("LDAP_ENABLED", "0").lower() in ("1", "true", "yes")
-LDAP_CFG = {
+LDAP_CONFIG_FILE = os.getenv("LDAP_CONFIG_FILE", "ldap_config.json")
+
+def _as_bool(v, default=False):
+    if isinstance(v, bool): return v
+    if v is None: return default
+    return str(v).strip().lower() in ("1", "true", "yes", "on")
+
+_LDAP_ENV_DEFAULTS = {
+    "enabled": _as_bool(os.getenv("LDAP_ENABLED", "0")) or ("ldap" in AUTH_BACKENDS),
     "server": os.getenv("LDAP_SERVER", ""),
     "port": int(os.getenv("LDAP_PORT", "389") or 389),
-    "use_ssl": os.getenv("LDAP_USE_SSL", "0").lower() in ("1","true","yes"),
+    "use_ssl": _as_bool(os.getenv("LDAP_USE_SSL", "0")),
     "base_dn": os.getenv("LDAP_BASE_DN", ""),
     "bind_dn": os.getenv("LDAP_BIND_DN", ""),
     "bind_pw": os.getenv("LDAP_BIND_PASSWORD", ""),
@@ -42,13 +50,46 @@ LDAP_CFG = {
     "allowed_group_dn": os.getenv("LDAP_ALLOWED_GROUP_DN", ""),
     "timeout": int(os.getenv("LDAP_TIMEOUT_SECS", "10") or 10),
 }
-try:
-    if LDAP_ENABLED and ("ldap" in AUTH_BACKENDS):
-        from ldap3 import Server, Connection, ALL, SUBTREE
-        from ldap3.utils.conv import escape_filter_chars
-        from ldap3.utils.dn import escape_dn_chars
-except Exception:
-    LDAP_ENABLED = False
+
+def load_ldap_config() -> dict:
+    cfg = dict(_LDAP_ENV_DEFAULTS)
+    try:
+        if os.path.exists(LDAP_CONFIG_FILE):
+            with open(LDAP_CONFIG_FILE, "r", encoding="utf-8") as f:
+                stored = json.load(f)
+            if isinstance(stored, dict):
+                cfg.update({k: v for k, v in stored.items() if k in cfg})
+    except Exception:
+        pass
+    cfg["enabled"] = _as_bool(cfg.get("enabled"))
+    cfg["use_ssl"] = _as_bool(cfg.get("use_ssl"))
+    try: cfg["port"] = int(cfg.get("port") or 389)
+    except Exception: cfg["port"] = 389
+    try: cfg["timeout"] = int(cfg.get("timeout") or 10)
+    except Exception: cfg["timeout"] = 10
+    return cfg
+
+LDAP_CFG = load_ldap_config()
+
+def get_ldap_config() -> dict:
+    return LDAP_CFG
+
+def save_ldap_config(new: dict) -> dict:
+    global LDAP_CFG
+    merged = dict(LDAP_CFG)
+    for k in _LDAP_ENV_DEFAULTS:
+        if k in new:
+            merged[k] = new[k]
+    if not new.get("bind_pw"):                     # blank = keep the stored password
+        merged["bind_pw"] = LDAP_CFG.get("bind_pw", "")
+    with open(LDAP_CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(merged, f, indent=2)
+    LDAP_CFG = load_ldap_config()
+    return LDAP_CFG
+
+def ldap_enabled() -> bool:
+    c = get_ldap_config()
+    return bool(c.get("enabled")) and bool(c.get("server"))
 
 # ======================================================================================
 # Environment Setup
@@ -235,26 +276,27 @@ def login_required(fn):
 
 def ldap_authenticate(username: str, password: str) -> bool:
     """Verify credentials against LDAP/AD by rebinding as the resolved user DN."""
-    if not (LDAP_ENABLED and 'ldap' in AUTH_BACKENDS): return False
+    if not ldap_enabled(): return False
     if not username or not password: return False
+    cfg = get_ldap_config()
     try:
         from ldap3 import Server, Connection, ALL, SUBTREE
         from ldap3.utils.conv import escape_filter_chars
-        server = Server(LDAP_CFG['server'], port=LDAP_CFG['port'],
-                        use_ssl=LDAP_CFG['use_ssl'], get_info=ALL,
-                        connect_timeout=LDAP_CFG['timeout'])
+        server = Server(cfg['server'], port=cfg['port'],
+                        use_ssl=cfg['use_ssl'], get_info=ALL,
+                        connect_timeout=cfg['timeout'])
         # Bind with the service account (or anonymously) to resolve the user's DN.
         # `with` guarantees the socket is unbound even if search() raises.
-        with Connection(server, user=LDAP_CFG['bind_dn'] or None,
-                        password=LDAP_CFG['bind_pw'] or None,
-                        auto_bind=True, receive_timeout=LDAP_CFG['timeout']) as finder:
-            flt = f"({LDAP_CFG['user_attr']}={escape_filter_chars(username)})"
-            finder.search(LDAP_CFG['base_dn'], flt, search_scope=SUBTREE, attributes=['memberOf'])
+        with Connection(server, user=cfg['bind_dn'] or None,
+                        password=cfg['bind_pw'] or None,
+                        auto_bind=True, receive_timeout=cfg['timeout']) as finder:
+            flt = f"({cfg['user_attr']}={escape_filter_chars(username)})"
+            finder.search(cfg['base_dn'], flt, search_scope=SUBTREE, attributes=['memberOf'])
             if not finder.entries:
                 return False
             entry = finder.entries[0]
             user_dn = entry.entry_dn
-            allowed_group = LDAP_CFG['allowed_group_dn']
+            allowed_group = cfg['allowed_group_dn']
             if allowed_group:
                 try: groups = [str(g) for g in entry.memberOf.values]
                 except Exception: groups = []
@@ -268,11 +310,36 @@ def ldap_authenticate(username: str, password: str) -> bool:
             return False
         # Rebind as the user to actually verify their password.
         with Connection(server, user=user_dn, password=password,
-                        receive_timeout=LDAP_CFG['timeout']) as user_conn:
+                        receive_timeout=cfg['timeout']) as user_conn:
             return bool(user_conn.bind())
     except Exception as e:
         logger.warning(f"LDAP auth error for '{username}': {e}")
         return False
+
+def ldap_test_connection(cfg: dict) -> tuple[bool, str]:
+    """Validate LDAP server/port/bind by binding with the service account and
+    running a base search. Returns (ok, message)."""
+    if not cfg.get('server'):
+        return False, "LDAP server is required"
+    try:
+        from ldap3 import Server, Connection, ALL, SUBTREE
+    except Exception:
+        return False, "ldap3 library not available"
+    try:
+        server = Server(cfg['server'], port=int(cfg.get('port') or 389),
+                        use_ssl=_as_bool(cfg.get('use_ssl')), get_info=ALL,
+                        connect_timeout=int(cfg.get('timeout') or 10))
+        with Connection(server, user=cfg.get('bind_dn') or None,
+                        password=cfg.get('bind_pw') or None,
+                        auto_bind=True, receive_timeout=int(cfg.get('timeout') or 10)) as conn:
+            base = cfg.get('base_dn') or ''
+            if base:
+                conn.search(base, '(objectClass=*)', search_scope='BASE', attributes=['objectClass'])
+                if not conn.entries:
+                    return True, "Connected and bound, but base DN returned no entry (check base_dn)"
+            return True, "Connection and bind succeeded"
+    except Exception as e:
+        return False, f"{type(e).__name__}: {str(e)[:160]}"
 
 # ======================================================================================
 # NITRO Client
@@ -606,9 +673,9 @@ def login():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
 
-        # Local admin account first, then LDAP if enabled.
-        local_ok = ('local' in AUTH_BACKENDS
-                    and username == auth_config.get('username')
+        # Local admin account first (always available to avoid lockout),
+        # then LDAP if enabled.
+        local_ok = (username == auth_config.get('username')
                     and hash_password(password) == auth_config.get('password_hash'))
         backend = None
         if local_ok:
@@ -631,7 +698,7 @@ def login():
         auth_config['login_attempts'] = int(auth_config.get('login_attempts', 0)) + 1
         save_auth_config(auth_config)
         flash('Invalid credentials', 'error')
-    return render_template('login.html', auth_backends=AUTH_BACKENDS)
+    return render_template('login.html', ldap_on=ldap_enabled())
 
 @app.route('/logout', methods=['POST', 'GET'])
 @login_required
@@ -671,6 +738,58 @@ def change_password():
 @login_required
 def dashboard():
     return render_template('dashboard.html')
+
+# ======================================================================================
+# LDAP settings API
+# ======================================================================================
+_LDAP_PUBLIC_FIELDS = ('enabled', 'server', 'port', 'use_ssl', 'base_dn',
+                       'bind_dn', 'user_attr', 'allowed_group_dn', 'timeout')
+
+def _ldap_public_view(cfg: dict) -> dict:
+    view = {k: cfg.get(k) for k in _LDAP_PUBLIC_FIELDS}
+    view['bind_pw_set'] = bool(cfg.get('bind_pw'))   # never expose the password
+    return view
+
+def _ldap_from_body(body: dict) -> dict:
+    out = {}
+    if 'enabled' in body: out['enabled'] = _as_bool(body.get('enabled'))
+    if 'use_ssl' in body: out['use_ssl'] = _as_bool(body.get('use_ssl'))
+    for k in ('server', 'base_dn', 'bind_dn', 'user_attr', 'allowed_group_dn'):
+        if k in body: out[k] = str(body.get(k) or '').strip()
+    for k in ('port', 'timeout'):
+        if k in body:
+            try: out[k] = int(body.get(k))
+            except Exception: pass
+    if 'bind_pw' in body and isinstance(body.get('bind_pw'), str):
+        out['bind_pw'] = body['bind_pw']            # blank keeps stored (handled in save)
+    return out
+
+@app.route('/api/ldap-settings', methods=['GET', 'POST'])
+@login_required
+def api_ldap_settings():
+    if request.method == 'POST':
+        body = request.get_json(force=True, silent=True)
+        if not isinstance(body, dict):
+            return jsonify({"success": False, "error": "Invalid payload"}), 400
+        try:
+            save_ldap_config(_ldap_from_body(body))
+        except Exception as e:
+            logger.error(f"LDAP settings save failed: {e}")
+            return jsonify({"success": False, "error": "Could not save LDAP settings"}), 500
+        return jsonify({"success": True, "message": "LDAP settings updated"})
+    return jsonify(_ldap_public_view(get_ldap_config()))
+
+@app.route('/api/ldap-test', methods=['POST'])
+@login_required
+def api_ldap_test():
+    body = request.get_json(force=True, silent=True) or {}
+    # Test against the submitted values, filling blanks from the stored config.
+    cfg = dict(get_ldap_config())
+    cfg.update(_ldap_from_body(body))
+    if not body.get('bind_pw'):
+        cfg['bind_pw'] = get_ldap_config().get('bind_pw', '')
+    ok, msg = ldap_test_connection(cfg)
+    return jsonify({"success": ok, "message": msg})
 
 # ======================================================================================
 # JSON API Endpoints (System & Apps)

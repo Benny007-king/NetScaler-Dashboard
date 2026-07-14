@@ -5,6 +5,7 @@
 # Runtime config & state (contain credentials / live data — never commit)
 nodes_config.json
 auth_config.json
+ldap_config.json
 ha_last_state.json
 failover_history.json
 

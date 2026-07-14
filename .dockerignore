@@ -22,6 +22,7 @@ env/
 # they will be loaded dynamically via docker volume)
 auth_config.json
 nodes_config.json
+ldap_config.json
 failover_history.json
 ha_last_state.json
 .app_secret

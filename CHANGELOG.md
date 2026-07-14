@@ -6,6 +6,14 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.2.0
+- **LDAP/AD configuration in the UI** — new Settings → LDAP / Active Directory
+  section to enable LDAP and set server, port/SSL, base DN, bind account, user
+  attribute, timeout and optional allowed-group DN, with a **Test Connection**
+  button. Persists to `ldap_config.json` (gitignored); `LDAP_*` env vars are now
+  just defaults. The bind password is never sent back to the browser, and leaving
+  it blank keeps the stored one. The local admin account always works.
+
 ## 1.1.1
 - Fix "Failed to save settings" caused by the idle timeout: real user interaction
   (typing, clicking, mouse movement) now keeps the session alive via a throttled

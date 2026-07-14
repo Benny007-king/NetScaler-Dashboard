@@ -67,7 +67,7 @@ Copy `.env.example` → `.env`. Notable keys: `APP_PORT` (default `443`), `APP_S
 
 - Default local admin is `admin` / `admin`; you are forced to change it on first login.
 - Reset it by deleting `auth_config.json` and restarting.
-- **LDAP/AD is configured via environment variables** (the `LDAP_*` block + `AUTH_BACKENDS=local,ldap`) in `.env` — see `.env.example`. It is read at startup; there is no in-UI LDAP form.
+- **LDAP/AD is configured in the UI** — open **Settings → LDAP / Active Directory**, enable it, fill in server / base DN / bind account / user attribute (and optional allowed-group DN), and use **Test Connection** before saving. Settings persist to `ldap_config.json` (gitignored). The `LDAP_*` env vars in `.env` act as initial defaults. The local admin account always works regardless.
 
 ### Session timeout
 
