@@ -51,14 +51,57 @@
         }
         
         .btn-primary {
-            background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+            background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);
             transition: all 0.3s ease;
         }
-        
+
         .btn-primary:hover {
-            background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
+            background: linear-gradient(135deg, #4f46e5 0%, #6d28d9 100%);
             transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(59, 130, 246, 0.3);
+            box-shadow: 0 10px 22px rgba(99, 102, 241, 0.35);
+        }
+
+        /* Segmented auth-source selector */
+        .seg {
+            display: flex;
+            gap: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            border-radius: 14px;
+            padding: 6px;
+        }
+        .seg-btn {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 11px 12px;
+            border-radius: 10px;
+            color: #cbd5e1;
+            font-weight: 600;
+            font-size: 0.9rem;
+            letter-spacing: 0.02em;
+            background: transparent;
+            border: 0;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .seg-btn:hover { color: #fff; }
+        .seg-btn.active {
+            background: linear-gradient(135deg, #6366f1 0%, #7c3aed 100%);
+            color: #fff;
+            box-shadow: 0 6px 18px -6px rgba(99, 102, 241, 0.7);
+        }
+        .seg-btn svg { width: 18px; height: 18px; }
+        .field-label {
+            display: block;
+            font-size: 0.72rem;
+            font-weight: 600;
+            letter-spacing: 0.09em;
+            text-transform: uppercase;
+            color: #93a5c4;
+            margin-bottom: 8px;
         }
         
         .alert {
@@ -162,6 +205,24 @@
             {% endwith %}
 
             <form method="POST" class="space-y-6">
+                <input type="hidden" name="auth_source" id="authSource" value="local">
+
+                {% if ldap_on %}
+                <div>
+                    <label class="field-label">Authentication Source</label>
+                    <div class="seg" id="authSeg">
+                        <button type="button" class="seg-btn active" data-src="local" onclick="setAuthSource('local')">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z"></path></svg>
+                            LOCAL
+                        </button>
+                        <button type="button" class="seg-btn" data-src="ldap" onclick="setAuthSource('ldap')">
+                            <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5" stroke-width="2"></rect><rect x="3" y="15" width="18" height="5" rx="1.5" stroke-width="2"></rect><path stroke-linecap="round" stroke-width="2" d="M7 6.5h.01M7 17.5h.01"></path></svg>
+                            LDAP / AD
+                        </button>
+                    </div>
+                </div>
+                {% endif %}
+
                 <div>
                     <label for="username" class="block text-sm font-medium text-blue-200 mb-2">Username</label>
                     <div class="relative">
@@ -178,7 +239,7 @@
                             placeholder="Enter your username"
                             required
                             autocomplete="username"
-                            value="{% if not ldap_on %}admin{% endif %}"
+                            value="admin"
                         >
                     </div>
                 </div>
@@ -252,7 +313,7 @@
             <div class="flex items-center justify-center space-x-4 text-blue-200 text-sm">
                 <div class="flex items-center space-x-2">
                     <div class="w-2 h-2 bg-green-400 rounded-full pulse-animation"></div>
-                    <span>NetScaler Dashboard v1.2.0</span>
+                    <span>NetScaler Dashboard v1.3.0</span>
                 </div>
                 <span>•</span>
                 <span>Secure Access</span>
@@ -280,6 +341,22 @@
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"></path>
                 `;
             }
+        }
+
+        // Auth-source segmented selector (only present when LDAP is enabled)
+        function setAuthSource(src) {
+            document.getElementById('authSource').value = src;
+            document.querySelectorAll('#authSeg .seg-btn').forEach(b =>
+                b.classList.toggle('active', b.dataset.src === src));
+            const u = document.getElementById('username');
+            if (src === 'ldap') {
+                if (u.value === 'admin') u.value = '';
+                u.placeholder = 'Enter your directory username';
+            } else {
+                if (!u.value) u.value = 'admin';
+                u.placeholder = 'Enter your username';
+            }
+            u.focus();
         }
 
         // Show the session-expired notice when redirected with ?expired=1

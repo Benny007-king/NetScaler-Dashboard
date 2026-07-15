@@ -6,6 +6,12 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.3.0
+- **Login auth-source selector** — once LDAP is enabled, the login page shows a
+  segmented **LOCAL / LDAP · AD** toggle so users pick which backend to
+  authenticate against; the choice is honored server-side. The local admin
+  account is always reachable via LOCAL to avoid lockout. Purple-accented styling.
+
 ## 1.2.0
 - **LDAP/AD configuration in the UI** — new Settings → LDAP / Active Directory
   section to enable LDAP and set server, port/SSL, base DN, bind account, user

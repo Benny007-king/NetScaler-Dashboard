@@ -672,16 +672,18 @@ def login():
     if request.method == 'POST':
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
+        source = (request.form.get('auth_source') or 'local').strip().lower()
 
-        # Local admin account first (always available to avoid lockout),
-        # then LDAP if enabled.
-        local_ok = (username == auth_config.get('username')
-                    and hash_password(password) == auth_config.get('password_hash'))
+        # Honor the chosen authentication source. LDAP only when enabled; local
+        # is always available (avoids lockout even if the form says otherwise).
         backend = None
-        if local_ok:
-            backend = 'local'
-        elif ldap_authenticate(username, password):
-            backend = 'ldap'
+        if source == 'ldap' and ldap_enabled():
+            if ldap_authenticate(username, password):
+                backend = 'ldap'
+        else:
+            if (username == auth_config.get('username')
+                    and hash_password(password) == auth_config.get('password_hash')):
+                backend = 'local'
 
         if backend:
             session['logged_in'] = True
