@@ -205,10 +205,17 @@ def _security_headers(resp):
     return resp
 
 LOG_FILE = os.getenv("APP_LOG_FILE", "netscaler_complete.log")
+# Rotating log so it can't grow without bound (default 5 MB × 3 backups = ~20 MB cap).
+from logging.handlers import RotatingFileHandler
+_log_max_bytes = int(os.getenv("APP_LOG_MAX_BYTES", str(5 * 1024 * 1024)))
+_log_backups = int(os.getenv("APP_LOG_BACKUPS", "3"))
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[logging.FileHandler(LOG_FILE, encoding='utf-8'), logging.StreamHandler()],
+    handlers=[
+        RotatingFileHandler(LOG_FILE, maxBytes=_log_max_bytes, backupCount=_log_backups, encoding='utf-8'),
+        logging.StreamHandler(),
+    ],
 )
 logger = logging.getLogger(__name__)
 
@@ -223,6 +230,18 @@ DEFAULT_PASSWORD = os.getenv('UI_DEFAULT_PASSWORD', 'admin')
 IL_TZ = pytz.timezone("Asia/Jerusalem")
 FAILOVER_HISTORY_FILE = 'failover_history.json'
 HA_STATE_FILE = 'ha_last_state.json'
+
+# Bounded retention for failover history: when it reaches 80% of the cap, prune
+# back to 50% (keeping the most recent events) so the file never fills up.
+FAILOVER_MAX_EVENTS = int(os.getenv("FAILOVER_MAX_EVENTS", "5000"))
+
+def _prune_failover_history(history):
+    high = int(FAILOVER_MAX_EVENTS * 0.8)
+    low = int(FAILOVER_MAX_EVENTS * 0.5)
+    if len(history) >= high:
+        # Keep the newest `low` events, preserving chronological (ascending) order.
+        history = sorted(history, key=lambda e: e.get('timestamp', ''))[-low:]
+    return history
 
 def hash_password(password: str) -> str:
     return hashlib.sha256(password.encode('utf-8')).hexdigest()
@@ -257,6 +276,7 @@ def load_failover_history():
 
 def save_failover_history(history):
     try:
+        history = _prune_failover_history(history)
         with open(FAILOVER_HISTORY_FILE, 'w', encoding='utf-8') as f: json.dump(history, f, indent=2)
     except Exception: pass
 

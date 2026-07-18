@@ -6,6 +6,18 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.3.1
+- **Fix: password change / login not sticking.** Gunicorn ran multiple worker
+  processes, each caching its own copy of the auth/config state, so a password
+  change saved on one worker wasn't seen by the others and a later login could
+  hit a stale worker. Now runs a single threaded worker so in-memory state
+  (auth, nodes, LDAP config) is always consistent.
+- **Bounded local storage** (no database — data lives in JSON files + stateless
+  session cookies). Failover history now self-prunes: at 80% of a 5000-event cap
+  it trims back to 50%, keeping the newest events, so `failover_history.json`
+  can't grow without bound. The log file (`netscaler_complete.log`) now rotates
+  at 5 MB × 3 backups. Both limits are env-configurable.
+
 ## 1.3.0
 - **Login auth-source selector** — once LDAP is enabled, the login page shows a
   segmented **LOCAL / LDAP · AD** toggle so users pick which backend to
