@@ -25,6 +25,9 @@ nodes_config.json
 ldap_config.json
 failover_history.json
 ha_last_state.json
+dashboard.db
+dashboard.db-wal
+dashboard.db-shm
 .app_secret
 certs/
 

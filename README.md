@@ -73,6 +73,20 @@ Copy `.env.example` → `.env`. Notable keys: `APP_PORT` (default `443`), `APP_S
 
 Idle users are logged out automatically. Default **15 minutes**; change it in **Settings → Session Timeout** (1–1440 min). It's a sliding, server-enforced inactivity timeout — background auto-refresh polls don't keep the session alive, and an expired session returns to the login page.
 
+### Local history database & retention
+
+`dashboard.db` (SQLite — no external service) stores **failover events** and **session history**, so the Failover and Sessions tabs show real history rather than only what's live on the appliance.
+
+A **retention pass runs at startup and hourly**, deleting anything older than **`RETENTION_DAYS` (default 7)** — you always keep at least a week, and the file can't grow unbounded. Sessions are de-duplicated per (node, user, type, IP, start time) and marked `Active` while still being seen, `Terminated` afterwards.
+
+Inspect it any time:
+
+```bash
+curl -k https://<host>/api/history-stats     # size, row counts, oldest data, retention window
+```
+
+Tune with `RETENTION_DAYS`, `RETENTION_INTERVAL_SECS`, `DASHBOARD_DB_FILE` (see `.env.example`). The DB is gitignored.
+
 ---
 
 ## Install & Run

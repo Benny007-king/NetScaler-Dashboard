@@ -22,6 +22,8 @@ from pathlib import Path
 
 import pytz
 import requests
+
+import db
 from flask import (
     Flask, render_template, jsonify, request, redirect, url_for,
     session, flash
@@ -630,7 +632,8 @@ def track_ha_state_changes(nodes):
         
     history = load_failover_history()
     changed = False
-    
+    new_events = []
+
     for n in nodes:
         if not isinstance(n, dict): continue
         ip = n.get('ipaddress') or n.get('ip') or n.get('nsip') or ''
@@ -638,17 +641,22 @@ def track_ha_state_changes(nodes):
         if ip and role:
             prev = last_states.get(ip)
             if prev and prev != role and 'UNKNOWN' not in role:
-                history.append({
+                evt = {
                     'timestamp': datetime.now(IL_TZ).isoformat(),
                     'type': 'Role Change',
                     'reason': f"Node HA State Shift",
                     'role_change': f"{prev} -> {role}",
                     'ip': ip
-                })
+                }
+                history.append(evt)
+                new_events.append(evt)
                 changed = True
             last_states[ip] = role
-            
-    if changed: save_failover_history(history)
+
+    if changed:
+        save_failover_history(history)
+        try: db.add_failover_events(new_events)
+        except Exception as e: logger.warning(f"Could not persist failover events: {e}")
     try:
         with open(HA_STATE_FILE, 'w', encoding='utf-8') as f: json.dump(last_states, f)
     except Exception: pass
@@ -1105,6 +1113,15 @@ def api_certificates():
         'crls': _fetch('/config/sslcrl', 'sslcrl'),
     })
 
+@app.route('/api/history-stats')
+@login_required
+def api_history_stats():
+    """Local history DB size, row counts, oldest data and retention window."""
+    try:
+        return jsonify(db.stats())
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 # ======================================================================================
 # Advanced Sessions, Failover History & User Actions
 # ======================================================================================
@@ -1193,13 +1210,23 @@ def api_user_sessions():
         except Exception:
             continue
 
-    return jsonify({'sessions': all_sessions})
+    # Persist what we just observed, then return the stored history (which
+    # includes these live sessions plus anything seen within the retention window).
+    try:
+        db.upsert_sessions(node_req, all_sessions)
+        return jsonify({'sessions': db.get_sessions(days=db.RETENTION_DAYS),
+                        'source': 'history', 'retention_days': db.RETENTION_DAYS})
+    except Exception as e:
+        logger.warning(f"Session history unavailable, returning live only: {e}")
+
+    return jsonify({'sessions': all_sessions, 'source': 'live'})
 
 @app.route('/api/failover-history')
 @login_required
 def api_failover_history():
     history = load_failover_history()
     changed = False
+    new_events = []
 
     ha_data = _get_ha_data_fast()
     nodes = ha_data.get('hanode', []) if isinstance(ha_data, dict) else []
@@ -1208,7 +1235,7 @@ def api_failover_history():
         last_transition = n.get('transtime', '')
         state = n.get('hacurstate') or n.get('state') or 'Unknown'
         ip = n.get('ipaddress', 'Unknown')
-        
+
         if last_transition:
             exists = any(ev.get('timestamp') == last_transition and ev.get('ip') == ip for ev in history)
             if not exists:
@@ -1220,9 +1247,23 @@ def api_failover_history():
                     'ip': ip
                 }
                 history.append(new_event)
+                new_events.append(new_event)
                 changed = True
                 
-    if changed: save_failover_history(history)
+    if changed:
+        save_failover_history(history)
+        try: db.add_failover_events(new_events)
+        except Exception as e: logger.warning(f"Could not persist failover events: {e}")
+
+    # The history DB is authoritative (retention-bounded). Only fall back to the
+    # legacy JSON if the DB is genuinely unavailable — an empty DB is a valid
+    # answer, otherwise purged-but-stale JSON rows would reappear.
+    try:
+        events = db.get_failover_events(days=db.RETENTION_DAYS)
+        return jsonify({'events': events, 'retention_days': db.RETENTION_DAYS})
+    except Exception as e:
+        logger.warning(f"Failover history DB unavailable, falling back to JSON: {e}")
+
     history.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return jsonify({'events': history})
 
@@ -1266,6 +1307,15 @@ def _500(err): return jsonify({'error': 'Internal Server Error'}) if request.pat
 # ======================================================================================
 validate_env()
 apply_session_timeout()
+
+# Local history DB (sessions + failover) with time-based retention.
+try:
+    db.init_db()
+    db.migrate_json_failover(FAILOVER_HISTORY_FILE)
+    db.start_retention_thread()
+except Exception as e:
+    logger.error(f"History DB init failed: {e}")
+
 for node_key, cfg in node_items(): detect_api_mode_for_node(node_key, cfg)
 
 logger.info(f"API modes at startup: {API_MODE}")

@@ -9,6 +9,11 @@ ldap_config.json
 ha_last_state.json
 failover_history.json
 
+# Local history database (sessions + failover), with WAL sidecars
+dashboard.db
+dashboard.db-wal
+dashboard.db-shm
+
 # Flask session secret
 .app_secret
 

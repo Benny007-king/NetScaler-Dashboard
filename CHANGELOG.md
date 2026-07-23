@@ -6,6 +6,22 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.5.0
+- **Local history database.** New `dashboard.db` (SQLite, stdlib — no external
+  service) stores **failover events** and **session history**, so those tabs show
+  real history instead of only what's currently live on the appliance. Sessions
+  are de-duplicated per (node, user, type, IP, start) and flip from `Active` to
+  `Terminated` once they stop being seen.
+- **Time-based retention.** A background pass runs at startup and hourly,
+  deleting anything older than `RETENTION_DAYS` (**default 7**) — at least a
+  week of history, and the file can't grow unbounded. Legacy
+  `failover_history.json` is imported once on first start. New
+  `GET /api/history-stats` reports size, row counts, oldest data and the window.
+- **Login: the LDAP option is now always visible.** Previously the
+  LOCAL/LDAP switch was hidden entirely until LDAP was configured, so it looked
+  missing. It now always renders, with the LDAP button disabled plus a hint
+  pointing to Settings → LDAP until it's set up.
+
 ## 1.4.1
 - **Version-tagged Docker images.** The image is now built as
   `netscaler-dashboard:<version>` (was compose's auto-generated

@@ -89,6 +89,8 @@
         }
         .seg-btn.active:hover { background: #4f3fe8; }
         .seg-btn svg { width: 18px; height: 18px; }
+        .seg-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .seg-btn:disabled:hover { background: rgba(255, 255, 255, 0.06); color: #dbe4f0; }
         .field-label {
             display: block;
             font-size: 0.72rem;
@@ -202,11 +204,11 @@
             <form method="POST" class="space-y-6">
                 <input type="hidden" name="auth_source" id="authSource" value="local">
 
-                {% if ldap_on %}
                 <div>
                     <label class="field-label">Authentication Source</label>
                     <div class="seg" id="authSeg">
-                        <button type="button" class="seg-btn" data-src="ldap" onclick="setAuthSource('ldap')">
+                        <button type="button" class="seg-btn" data-src="ldap" onclick="setAuthSource('ldap')"
+                                {% if not ldap_on %}disabled title="LDAP is not configured yet — enable it in Settings → LDAP / Active Directory"{% endif %}>
                             <svg fill="none" stroke="currentColor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.5" stroke-width="2"></rect><rect x="3" y="15" width="18" height="5" rx="1.5" stroke-width="2"></rect><path stroke-linecap="round" stroke-width="2" d="M7 6.5h.01M7 17.5h.01"></path></svg>
                             LDAP Login
                         </button>
@@ -215,8 +217,10 @@
                             Local Admin
                         </button>
                     </div>
+                    {% if not ldap_on %}
+                    <p class="text-xs text-blue-300 opacity-70 mt-2">LDAP isn't configured yet — sign in as <strong>Local Admin</strong>, then set it up in <strong>Settings → LDAP / Active Directory</strong>.</p>
+                    {% endif %}
                 </div>
-                {% endif %}
 
                 <div>
                     <label for="username" class="block text-sm font-medium text-blue-200 mb-2">Username</label>
@@ -308,7 +312,7 @@
             <div class="flex items-center justify-center space-x-4 text-blue-200 text-sm">
                 <div class="flex items-center space-x-2">
                     <div class="w-2 h-2 bg-green-400 rounded-full pulse-animation"></div>
-                    <span>NetScaler Dashboard v1.4.1</span>
+                    <span>NetScaler Dashboard v1.5.0</span>
                 </div>
                 <span>•</span>
                 <span>Secure Access</span>
@@ -340,6 +344,8 @@
 
         // Auth-source segmented selector (only present when LDAP is enabled)
         function setAuthSource(src) {
+            const btn = document.querySelector(`#authSeg .seg-btn[data-src="${src}"]`);
+            if (btn && btn.disabled) return;   // LDAP not configured yet
             document.getElementById('authSource').value = src;
             document.querySelectorAll('#authSeg .seg-btn').forEach(b =>
                 b.classList.toggle('active', b.dataset.src === src));
