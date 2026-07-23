@@ -6,6 +6,14 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.5.1
+- **LDAP settings UX.** Filling in the LDAP fields and saving without ticking the
+  small "Enable" checkbox left `enabled=false`, so the login page kept the LDAP
+  button greyed out and it looked like nothing had saved. The Enable control is
+  now a prominent labelled row with an **Enabled/Disabled status badge**, and
+  saving a configured-but-disabled setup returns an explicit warning telling you
+  to tick Enable.
+
 ## 1.5.0
 - **Local history database.** New `dashboard.db` (SQLite, stdlib — no external
   service) stores **failover events** and **session history**, so those tabs show

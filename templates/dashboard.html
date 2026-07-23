@@ -141,11 +141,14 @@
           <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
             <div class="flex items-center justify-between mb-2">
               <h3 class="text-lg font-semibold text-cyan-400">LDAP / Active Directory</h3>
-              <label class="flex items-center gap-2 text-sm text-slate-300 cursor-pointer">
-                <input type="checkbox" id="setLdapEnabled" onchange="onLdapToggle()" class="w-4 h-4 accent-cyan-500"> Enable
-              </label>
+              <span id="ldapStatusBadge" class="badge badge-warning">Disabled</span>
             </div>
-            <p class="text-xs text-slate-400 mb-4">Let directory users sign in. The local admin account always works regardless.</p>
+            <p class="text-xs text-slate-400 mb-3">Let directory users sign in. The local admin account always works regardless.</p>
+            <label for="setLdapEnabled" class="flex items-center gap-3 mb-4 p-3 rounded-lg bg-slate-900/60 border border-slate-700 hover:border-cyan-500/50 cursor-pointer transition-colors">
+              <input type="checkbox" id="setLdapEnabled" onchange="onLdapToggle()" class="w-5 h-5 accent-cyan-500 shrink-0">
+              <span class="text-sm text-white font-semibold">Enable LDAP authentication</span>
+              <span class="text-xs text-slate-400 ml-auto text-right">Required — the LDAP button stays greyed out on the login page until this is ticked <em>and</em> saved.</span>
+            </label>
             <div id="ldapFields" class="grid grid-cols-1 md:grid-cols-2 gap-4">
               <div><label class="block text-xs text-slate-400 mb-1">Server (host or IP)</label><input type="text" id="setLdapServer" placeholder="ldap.example.com" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
               <div class="grid grid-cols-2 gap-2">
@@ -598,7 +601,13 @@ function closeSettings() {
 
 // --- LDAP SETTINGS ---
 function onLdapToggle() {
-    $('ldapFields').style.opacity = $('setLdapEnabled').checked ? '1' : '0.5';
+    const on = $('setLdapEnabled').checked;
+    $('ldapFields').style.opacity = on ? '1' : '0.5';
+    const b = $('ldapStatusBadge');
+    if (b) {
+        b.textContent = on ? 'Enabled' : 'Disabled';
+        b.className = 'badge ' + (on ? 'badge-success' : 'badge-warning');
+    }
 }
 
 async function loadLdapSettings() {
@@ -641,10 +650,19 @@ async function saveLdap() {
     const r = await getJSON('/api/ldap-settings', { method: 'POST', body: JSON.stringify(ldapPayload()) });
     btn.disabled = false; btn.textContent = 'Save LDAP Settings';
     if (r.expired) return;
-    msg.innerHTML = (r.ok && r.data.success)
-        ? '<span class="text-green-400">✔ Saved</span>'
-        : `<span class="text-red-400">✖ ${escapeHtml((r.data && r.data.error) || 'Failed')}</span>`;
-    if (r.ok && r.data.success) $('setLdapBindPw').value = '';
+    if (r.ok && r.data.success) {
+        $('setLdapBindPw').value = '';
+        // Saving details without ticking Enable is the #1 gotcha — call it out.
+        if (!$('setLdapEnabled').checked && $('setLdapServer').value.trim()) {
+            msg.innerHTML = '<span class="text-amber-400">✔ Saved — but LDAP is <strong>disabled</strong>, so it won\'t appear on the login page. Tick “Enable LDAP authentication” and save again.</span>';
+        } else if ($('setLdapEnabled').checked) {
+            msg.innerHTML = '<span class="text-green-400">✔ Saved and enabled — the LDAP button is now active on the login page.</span>';
+        } else {
+            msg.innerHTML = '<span class="text-green-400">✔ Saved</span>';
+        }
+    } else {
+        msg.innerHTML = `<span class="text-red-400">✖ ${escapeHtml((r.data && r.data.error) || 'Failed')}</span>`;
+    }
 }
 
 async function testLdap() {
