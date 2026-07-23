@@ -115,7 +115,7 @@
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div><label class="block text-xs text-slate-400 mb-1">IP Address</label><input type="text" id="setPriIp" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
                   <div><label class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setPriPort" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-                  <div><label class="block text-xs text-slate-400 mb-1">Protocol</label><select id="setPriProto" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"><option value="http">HTTP</option><option value="https">HTTPS</option></select></div>
+                  <div><label class="block text-xs text-slate-400 mb-1">Protocol</label><select id="setPriProto" onchange="syncPort('Pri')" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"><option value="http">HTTP</option><option value="https">HTTPS</option></select></div>
                   <div><label class="block text-xs text-slate-400 mb-1">Username</label><input type="text" id="setPriUser" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
                   <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Password (Leave blank to keep current)</label><input type="password" id="setPriPass" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
               </div>
@@ -126,7 +126,7 @@
               <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div><label class="block text-xs text-slate-400 mb-1">IP Address</label><input type="text" id="setSecIp" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
                   <div><label class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setSecPort" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-                  <div><label class="block text-xs text-slate-400 mb-1">Protocol</label><select id="setSecProto" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"><option value="http">HTTP</option><option value="https">HTTPS</option></select></div>
+                  <div><label class="block text-xs text-slate-400 mb-1">Protocol</label><select id="setSecProto" onchange="syncPort('Sec')" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"><option value="http">HTTP</option><option value="https">HTTPS</option></select></div>
                   <div><label class="block text-xs text-slate-400 mb-1">Username</label><input type="text" id="setSecUser" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
                   <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Password (Leave blank to keep current)</label><input type="password" id="setSecPass" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
               </div>
@@ -243,6 +243,7 @@
     <button onclick="setActiveTab('applications')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="applications">Applications</button>
     <button onclick="setActiveTab('failover')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="failover">Failover</button>
     <button onclick="setActiveTab('sessions')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="sessions">Sessions</button>
+    <button onclick="setActiveTab('certificates')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="certificates">Certificates</button>
     <button onclick="setActiveTab('unlock')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="unlock">Unlock User</button>
   </div>
 
@@ -403,6 +404,43 @@
     </div>
   </section>
 
+  <section class="panel hidden fade-in" id="panel-certificates">
+    <!-- Summary -->
+    <div id="certSummary" class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6"></div>
+
+    <!-- Certificates -->
+    <div class="glass-panel rounded-2xl p-0 overflow-hidden mb-8">
+      <div class="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
+        <h3 class="font-semibold text-white">Installed Certificates</h3>
+        <button onclick="loadCertificates()" class="text-xs px-3 py-1.5 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 border border-slate-600">Refresh</button>
+      </div>
+      <div class="table-container p-2">
+        <table>
+          <thead><tr><th class="w-12">#</th><th>Name</th><th>Subject (CN)</th><th>Issuer (CN)</th><th>Key</th><th>Expires</th><th>Status</th></tr></thead>
+          <tbody id="certTable" class="text-slate-300"><tr><td colspan="7" class="text-center py-8 text-slate-500">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Chains -->
+    <div class="glass-panel rounded-2xl p-6 mb-8">
+      <h3 class="font-semibold text-white mb-1">Certificate Chains</h3>
+      <p class="text-xs text-slate-400 mb-4">Linked certificate → intermediate → root, as configured on the appliance.</p>
+      <div id="certChains" class="space-y-3 text-sm text-slate-400">Loading...</div>
+    </div>
+
+    <!-- CRLs -->
+    <div class="glass-panel rounded-2xl p-0 overflow-hidden">
+      <div class="p-4 border-b border-white/5 bg-white/5"><h3 class="font-semibold text-white">Certificate Revocation Lists (CRL)</h3></div>
+      <div class="table-container p-2">
+        <table>
+          <thead><tr><th class="w-12">#</th><th>Name</th><th>CA Certificate</th><th>Method / Source</th><th>Last Update</th><th>Refresh</th><th>Status</th></tr></thead>
+          <tbody id="crlTable" class="text-slate-300"><tr><td colspan="7" class="text-center py-8 text-slate-500">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
   <section class="panel hidden fade-in" id="panel-unlock">
     <div class="max-w-xl mx-auto glass-panel rounded-2xl p-8 border-t-4 border-blue-500">
       <h3 class="text-2xl font-bold text-white text-center mb-6">Unlock User Account</h3>
@@ -511,6 +549,12 @@ async function getJSON(url, opts) {
 }
 
 // --- SETTINGS LOGIC ---
+// Switching protocol fills the matching default port (still editable by hand).
+function syncPort(which) {
+    const proto = $('set' + which + 'Proto').value;
+    $('set' + which + 'Port').value = (proto === 'https') ? 443 : 80;
+}
+
 function onModeChange() {
     const mode = $('setMode').value;
     const hints = {
@@ -703,6 +747,7 @@ function setActiveTab(name) {
     if (name === 'applications') { loadApplications(); loadServices(); }
     if (name === 'failover') loadFailover();
     if (name === 'sessions') loadSessions();
+    if (name === 'certificates') loadCertificates();
     
     startAutoRefresh();
 }
@@ -950,6 +995,121 @@ async function loadSessions() {
 
     const rows = filteredArr.length ? filteredArr.map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.user)}</td><td>${escapeHtml(s.type)}</td><td>${escapeHtml(s.status)}</td><td>${escapeHtml(s.duration)}</td><td><span class="font-mono text-blue-300 text-xs">${escapeHtml(s.ip)}</span></td><td>${escapeHtml(s.gateway)}</td><td>${escapeHtml(formatILTime(s.start))}</td><td><span class="text-slate-400">${escapeHtml(s.end)}</span></td></tr>`).join('') : '<tr><td colspan="9" class="text-center py-8 text-slate-500">No sessions found in this time range.</td></tr>';
     $('sessTable').innerHTML = rows;
+}
+
+// --- CERTIFICATES ---
+function cnOf(dn) {
+    const m = /CN=([^,\/]+)/i.exec(String(dn || ''));
+    return m ? m[1].trim() : (String(dn || '').trim() || '—');
+}
+function firstOf(obj, keys) {
+    for (const k of keys) {
+        const v = obj[k];
+        if (v !== undefined && v !== null && String(v).trim() !== '') return String(v);
+    }
+    return '';
+}
+function expiryCell(days) {
+    const d = parseInt(days);
+    if (isNaN(d)) return '<span class="text-slate-500">—</span>';
+    if (d < 0) return `<span class="badge badge-danger">Expired</span>`;
+    if (d <= 30) return `<span class="badge badge-warning">${d} days</span>`;
+    if (d > 3650) return `<span class="badge badge-success">${Math.floor(d / 365)} yrs</span>`;
+    return `<span class="badge badge-success">${d} days</span>`;
+}
+function statusBadge(v) {
+    const s = String(v || '').toLowerCase();
+    if (!s) return '<span class="badge badge-warning">Unknown</span>';
+    const ok = /valid|ok|success|enabled|up|loaded/.test(s);
+    const bad = /fail|expired|invalid|error|down|revoked/.test(s);
+    return `<span class="badge ${ok ? 'badge-success' : (bad ? 'badge-danger' : 'badge-warning')}">${escapeHtml(v)}</span>`;
+}
+
+async function loadCertificates() {
+    $('certTable').innerHTML = '<tr><td colspan="7" class="text-center py-6 text-slate-500">Loading...</td></tr>';
+    $('certChains').innerHTML = 'Loading...';
+    $('crlTable').innerHTML = '<tr><td colspan="7" class="text-center py-6 text-slate-500">Loading...</td></tr>';
+
+    const r = await getJSON(`/api/certificates?node=${state.node}`);
+    if (r.expired) return;
+    if (!r.ok) {
+        $('certTable').innerHTML = '<tr><td colspan="7" class="text-center py-6 text-red-400">Failed to load certificates</td></tr>';
+        $('certChains').innerHTML = '<span class="text-red-400">Failed to load</span>';
+        $('crlTable').innerHTML = '<tr><td colspan="7" class="text-center py-6 text-red-400">Failed to load</td></tr>';
+        return;
+    }
+    const certs = r.data.certificates || [], links = r.data.links || [], crls = r.data.crls || [];
+
+    // --- summary tiles ---
+    const nums = certs.map(c => parseInt(c.daystoexpiration)).filter(n => !isNaN(n));
+    const expired = nums.filter(n => n < 0).length;
+    const soon = nums.filter(n => n >= 0 && n <= 30).length;
+    const tile = (label, val, cls) =>
+        `<div class="glass-panel rounded-xl p-4 text-center"><div class="text-2xl font-bold ${cls}">${val}</div><div class="text-xs text-slate-400 uppercase tracking-wider mt-1">${label}</div></div>`;
+    $('certSummary').innerHTML =
+        tile('Certificates', certs.length, 'text-white') +
+        tile('Chain Links', links.length, 'text-blue-400') +
+        tile('Expiring ≤30d', soon, soon ? 'text-amber-400' : 'text-slate-300') +
+        tile('Expired', expired, expired ? 'text-red-400' : 'text-green-400');
+
+    // --- certificate table ---
+    $('certTable').innerHTML = certs.length ? certs.map((c, i) => {
+        const type = Array.isArray(c.certificatetype) ? c.certificatetype.join(', ') : (c.certificatetype || '');
+        return `<tr class="border-b border-slate-800/50 hover:bg-white/5">
+            <td class="text-slate-500 font-mono">${i + 1}</td>
+            <td class="text-white font-medium">${escapeHtml(c.certkey || '')}
+                <div class="text-[11px] text-slate-500">${escapeHtml(type)}</div></td>
+            <td class="text-slate-300">${escapeHtml(cnOf(c.subject))}</td>
+            <td class="text-slate-400">${escapeHtml(cnOf(c.issuer))}</td>
+            <td class="text-xs text-slate-400 font-mono">${escapeHtml(c.publickey || '')} ${escapeHtml(String(c.publickeysize || ''))}</td>
+            <td class="text-xs">${expiryCell(c.daystoexpiration)}
+                <div class="text-[11px] text-slate-500 mt-1">${escapeHtml(c.clientcertnotafter || '')}</div></td>
+            <td>${statusBadge(c.status)}</td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="text-center py-8 text-slate-500">No certificates found</td></tr>';
+
+    // --- chains (leaf → intermediate → root) ---
+    const parentOf = {};
+    links.forEach(l => { if (l.certkeyname) parentOf[l.certkeyname] = l.linkcertkeyname; });
+    const isParent = new Set(links.map(l => l.linkcertkeyname).filter(Boolean));
+    const leaves = Object.keys(parentOf).filter(c => !isParent.has(c));
+    const chainOf = (name) => {
+        const out = [name];
+        let cur = name, guard = 0;
+        while (parentOf[cur] && guard++ < 10) { cur = parentOf[cur]; out.push(cur); }
+        return out;
+    };
+    const roleLabel = (idx, len) => idx === 0 ? 'Leaf' : (idx === len - 1 ? 'Root' : 'Intermediate');
+    const chainColors = ['border-blue-500/50 bg-blue-500/10', 'border-purple-500/50 bg-purple-500/10', 'border-emerald-500/50 bg-emerald-500/10'];
+    $('certChains').innerHTML = leaves.length ? leaves.map(leaf => {
+        const chain = chainOf(leaf);
+        const boxes = chain.map((n, i) => `
+            <div class="flex items-center">
+              <div class="px-3 py-2 rounded-lg border ${chainColors[Math.min(i, 2)]} min-w-[130px]">
+                <div class="text-[10px] uppercase tracking-wider text-slate-400">${roleLabel(i, chain.length)}</div>
+                <div class="text-white font-medium text-sm">${escapeHtml(n)}</div>
+              </div>
+              ${i < chain.length - 1 ? '<span class="mx-2 text-slate-500">→</span>' : ''}
+            </div>`).join('');
+        return `<div class="flex flex-wrap items-center gap-y-2 p-3 rounded-xl bg-slate-900/40 border border-slate-700/50">${boxes}</div>`;
+    }).join('') : '<span class="text-slate-500">No certificate links configured on this node.</span>';
+
+    // --- CRLs ---
+    $('crlTable').innerHTML = crls.length ? crls.map((c, i) => {
+        const name = firstOf(c, ['crlname', 'name']);
+        const ca = firstOf(c, ['cacert', 'cacertfile', 'cakey']);
+        const src = firstOf(c, ['method', 'url', 'crlpath', 'server']);
+        const last = firstOf(c, ['lastupdate', 'lastupdatetime', 'day', 'time']);
+        const refresh = firstOf(c, ['refresh', 'interval']);
+        const status = firstOf(c, ['status', 'state', 'crlstatus']) || (last ? 'Loaded' : '');
+        return `<tr class="border-b border-slate-800/50 hover:bg-white/5">
+            <td class="text-slate-500 font-mono">${i + 1}</td>
+            <td class="text-white font-medium">${escapeHtml(name)}</td>
+            <td class="text-slate-300">${escapeHtml(ca) || '—'}</td>
+            <td class="text-xs text-slate-400 font-mono">${escapeHtml(src) || '—'}</td>
+            <td class="text-xs text-slate-400">${escapeHtml(last) || '—'}</td>
+            <td class="text-xs text-slate-400">${escapeHtml(refresh) || '—'}</td>
+            <td>${statusBadge(status)}</td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="text-center py-8 text-slate-500">No CRLs configured on this node.</td></tr>';
 }
 
 async function doUnlock() {

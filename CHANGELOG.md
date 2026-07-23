@@ -6,6 +6,22 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.4.0
+- **Fix: HTTPS/443 to the NetScaler returned no data.** Appliance management
+  interfaces negotiate legacy ciphers (TLSv1.2 + `AES256-SHA`) that OpenSSL 3
+  rejects at its default security level, so the connection was reset while
+  HTTP/80 worked. NITRO HTTPS calls now use an adapter with `SECLEVEL=1`, and
+  `NITRO_VERIFY_SSL` defaults to `0` (appliances use self-signed certs).
+- **New Certificates tab** (between Sessions and Unlock User): installed
+  certificates with subject/issuer CN, key type/size, expiry countdown and
+  status; a visual **certificate chain** view (leaf → intermediate → root) built
+  from the appliance's cert links; and a **CRL** table with success/failed
+  status. Backed by `GET /api/certificates`.
+- **Settings:** choosing HTTPS auto-fills port 443 and HTTP auto-fills 80 — still
+  editable by hand.
+- **Login:** the auth-source selector is now a two-button switch
+  (**LDAP Login** / **Local Admin**) matching the requested design.
+
 ## 1.3.1
 - **Fix: password change / login not sticking.** Gunicorn ran multiple worker
   processes, each caching its own copy of the auth/config state, so a password

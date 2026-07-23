@@ -14,6 +14,7 @@ import re
 import hashlib
 import logging
 import secrets
+import ssl
 import time
 from datetime import datetime, timedelta
 from functools import wraps
@@ -364,6 +365,44 @@ def ldap_test_connection(cfg: dict) -> tuple[bool, str]:
 # ======================================================================================
 # NITRO Client
 # ======================================================================================
+# Verification is intentionally off for self-signed appliance certs — don't spam logs.
+try:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except Exception:
+    pass
+
+
+class _LegacyTLSAdapter(requests.adapters.HTTPAdapter):
+    """NetScaler management interfaces often negotiate only legacy ciphers (e.g.
+    TLSv1.2 + AES256-SHA). OpenSSL 3's default security level rejects those, which
+    shows up as a connection reset. Lower the security level for these calls so
+    HTTPS/443 works the same as HTTP/80."""
+
+    def __init__(self, verify_ssl=False, *args, **kwargs):
+        self._verify_ssl = verify_ssl
+        super().__init__(*args, **kwargs)
+
+    def _ctx(self):
+        ctx = ssl.create_default_context()
+        try:
+            ctx.set_ciphers('DEFAULT@SECLEVEL=1')
+        except ssl.SSLError:
+            pass
+        if not self._verify_ssl:
+            ctx.check_hostname = False
+            ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    def init_poolmanager(self, *args, **kwargs):
+        kwargs['ssl_context'] = self._ctx()
+        return super().init_poolmanager(*args, **kwargs)
+
+    def proxy_manager_for(self, *args, **kwargs):
+        kwargs['ssl_context'] = self._ctx()
+        return super().proxy_manager_for(*args, **kwargs)
+
+
 class NetScalerAPI:
     def __init__(self, ip, username, password, port=80, protocol='http'):
         self.ip = ip
@@ -380,7 +419,11 @@ class NetScalerAPI:
             'X-NITRO-PASS': password,
             'User-Agent': 'NetScaler-Dashboard-NITRO/1.0'
         })
-        self.session.verify = os.getenv("NITRO_VERIFY_SSL", "1").lower() in ("1", "true", "yes")
+        # Appliances ship self-signed management certs, so verification is off by
+        # default; set NITRO_VERIFY_SSL=1 if you've installed a trusted cert.
+        self.session.verify = os.getenv("NITRO_VERIFY_SSL", "0").lower() in ("1", "true", "yes")
+        if str(protocol).lower() == 'https':
+            self.session.mount('https://', _LegacyTLSAdapter(verify_ssl=self.session.verify))
         try: self.timeout = int(os.getenv("NITRO_TIMEOUT_SECS", "15"))
         except Exception: self.timeout = 15
         # Cap connect time separately so an unreachable/filtered node fails fast
@@ -1032,6 +1075,35 @@ def api_services():
                         'service': svc.get('service', []) if isinstance(svc, dict) else [],
                         'servicegroup': sgrp.get('servicegroup', []) if isinstance(sgrp, dict) else []})
     except Exception: return jsonify({'service': [], 'servicegroup': []})
+
+# ======================================================================================
+# SSL Certificates, chain links & CRLs
+# ======================================================================================
+@app.route('/api/certificates')
+@login_required
+def api_certificates():
+    node = request.args.get('node') or 'primary'
+    try:
+        nitro = get_nitro(node)
+    except KeyError:
+        return jsonify({'error': f"Unknown node '{node}'"}), 400
+
+    def _fetch(path, key):
+        try:
+            data = nitro._get(path, custom_timeout=8) or {}
+            val = data.get(key, [])
+            if isinstance(val, list): return val
+            return [val] if val else []
+        except Exception as e:
+            logger.warning(f"certificates: {path} failed on {node}: {e}")
+            return []
+
+    return jsonify({
+        'node': node,
+        'certificates': _fetch('/config/sslcertkey', 'sslcertkey'),
+        'links': _fetch('/config/sslcertlink', 'sslcertlink'),
+        'crls': _fetch('/config/sslcrl', 'sslcrl'),
+    })
 
 # ======================================================================================
 # Advanced Sessions, Failover History & User Actions
