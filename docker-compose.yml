@@ -3,7 +3,13 @@ name: netscaler-dashboard
 
 services:
   netscaler-dashboard:
-    build: .
+    build:
+      context: .
+      args:
+        APP_VERSION: "${APP_VERSION:-latest}"
+    # Explicit, version-tagged image name (falls back to :latest).
+    # Build a release with:  APP_VERSION=1.4.0 docker compose ... up -d --build
+    image: "netscaler-dashboard:${APP_VERSION:-latest}"
     container_name: netscaler-dashboard
     ports:
       - "443:443"

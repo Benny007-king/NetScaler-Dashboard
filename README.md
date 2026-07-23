@@ -85,6 +85,20 @@ docker compose up -d --build
 
 Then open **https://<host>/** (self-signed cert — accept the browser warning, or upload your own from Settings). The compose project is named `netscaler-dashboard`.
 
+#### Version-tagged images
+
+Pass `APP_VERSION` to tag the built image with the release (it's also stamped into
+the image as an OCI `org.opencontainers.image.version` label). Without it the
+image is tagged `:latest`.
+
+```bash
+APP_VERSION=$(cat VERSION) docker compose -f docker-compose.yml -f deploy/docker-compose.proxy.yml up -d --build
+```
+
+That produces `netscaler-dashboard:<version>` — verify with
+`docker images netscaler-dashboard` or
+`docker inspect netscaler-dashboard --format '{{index .Config.Labels "org.opencontainers.image.version"}}'`.
+
 ### Python (dev)
 
 ```bash

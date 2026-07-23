@@ -6,6 +6,13 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.4.1
+- **Version-tagged Docker images.** The image is now built as
+  `netscaler-dashboard:<version>` (was compose's auto-generated
+  `netscaler-dashboard-netscaler-dashboard:latest`) and the version is stamped in
+  as an OCI `org.opencontainers.image.version` label plus an `APP_VERSION` env.
+  Build with `APP_VERSION=$(cat VERSION) docker compose ... up -d --build`.
+
 ## 1.4.0
 - **Fix: HTTPS/443 to the NetScaler returned no data.** Appliance management
   interfaces negotiate legacy ciphers (TLSv1.2 + `AES256-SHA`) that OpenSSL 3
