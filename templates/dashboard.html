@@ -400,8 +400,8 @@
       </div>
       <div class="table-container">
         <table>
-          <thead><tr><th class="w-12">#</th><th>User</th><th>Type</th><th>Status</th><th>Duration</th><th>IP</th><th>Gateway URL</th><th>Start Time</th><th>End Time</th></tr></thead>
-          <tbody id="sessTable" class="text-slate-300"><tr><td colspan="9" class="text-center py-8 text-slate-500">Set filters and click Search...</td></tr></tbody>
+          <thead><tr><th class="w-8"></th><th class="w-12">#</th><th>User</th><th>Connection Type</th><th>Status</th><th>Duration</th><th>Source IP</th><th>Gateway</th><th>Start Time</th><th>End Time</th></tr></thead>
+          <tbody id="sessTable" class="text-slate-300"><tr><td colspan="10" class="text-center py-8 text-slate-500">Set filters and click Search...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -1011,8 +1011,72 @@ async function loadSessions() {
         return inTime && inUser && inType && inStatus;
     });
 
-    const rows = filteredArr.length ? filteredArr.map((s, i) => `<tr><td>${i + 1}</td><td>${escapeHtml(s.user)}</td><td>${escapeHtml(s.type)}</td><td>${escapeHtml(s.status)}</td><td>${escapeHtml(s.duration)}</td><td><span class="font-mono text-blue-300 text-xs">${escapeHtml(s.ip)}</span></td><td>${escapeHtml(s.gateway)}</td><td>${escapeHtml(formatILTime(s.start))}</td><td><span class="text-slate-400">${escapeHtml(s.end)}</span></td></tr>`).join('') : '<tr><td colspan="9" class="text-center py-8 text-slate-500">No sessions found in this time range.</td></tr>';
+    window._sessData = filteredArr;   // keep for row expansion
+    const statusBadgeCls = st => /active/i.test(st) ? 'badge-success' : 'badge-warning';
+    const typeBadgeCls = t => /vpn/i.test(t) ? 'badge-success' : 'badge-warning';
+    const rows = filteredArr.length ? filteredArr.map((s, i) => {
+        const caret = `<svg class="w-4 h-4 transition-transform text-slate-400" data-caret="${i}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>`;
+        return `<tr class="cursor-pointer hover:bg-white/5" onclick="toggleSession(${i})">
+            <td>${caret}</td>
+            <td class="text-slate-500">${i + 1}</td>
+            <td class="text-white font-medium">${escapeHtml(s.user)}</td>
+            <td><span class="badge ${typeBadgeCls(s.type)}">${escapeHtml(s.type)}</span></td>
+            <td><span class="badge ${statusBadgeCls(s.status)}">${escapeHtml(s.status)}</span></td>
+            <td>${escapeHtml(s.duration)}</td>
+            <td><span class="font-mono text-blue-300 text-xs">${escapeHtml(s.ip)}</span></td>
+            <td class="text-xs text-slate-300">${escapeHtml(s.gateway)}</td>
+            <td class="text-xs">${escapeHtml(formatILTime(s.start))}</td>
+            <td><span class="text-slate-400 text-xs">${escapeHtml(s.end)}</span></td></tr>
+            <tr id="sessDetail${i}" class="hidden"><td colspan="10" class="bg-slate-900/60 p-0"><div id="sessDetailBody${i}" class="p-4"></div></td></tr>`;
+    }).join('') : '<tr><td colspan="10" class="text-center py-8 text-slate-500">No sessions found in this time range.</td></tr>';
     $('sessTable').innerHTML = rows;
+}
+
+async function toggleSession(i) {
+    const row = $('sessDetail' + i);
+    const caret = document.querySelector(`[data-caret="${i}"]`);
+    if (!row) return;
+    const opening = row.classList.contains('hidden');
+    row.classList.toggle('hidden');
+    if (caret) caret.style.transform = opening ? 'rotate(90deg)' : '';
+    if (!opening) return;
+
+    const s = (window._sessData || [])[i] || {};
+    const d = s.detail || {};
+    const cell = (label, val) => `<div><div class="text-[10px] uppercase tracking-wider text-slate-500">${label}</div><div class="text-sm text-slate-200">${escapeHtml(val || '—')}</div></div>`;
+    let html = `<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
+        ${cell('Gateway', d.gateway)}
+        ${cell('Connection Kind', d.kind)}
+        ${cell('Protocol', d.protocol)}
+        ${cell('End Resource', d.resource)}
+        ${cell('Source IP', d.source_ip || s.ip)}
+        ${cell('Intranet IP', d.intranet_ip)}
+        ${cell('Client OS', d.client_os)}
+        ${cell('Start', formatILTime(s.start))}
+    </div>
+    <div id="icaBox${i}" class="text-xs text-slate-400">Loading live connection detail…</div>`;
+    $('sessDetailBody' + i).innerHTML = html;
+
+    // Live ICA/RDP connections for this user (only exist while the session is active).
+    const r = await getJSON(`/api/session-ica?node=${state.node}&user=${encodeURIComponent(s.user || '')}`);
+    const box = $('icaBox' + i);
+    if (!box) return;
+    const conns = (r.ok && r.data.connections) || [];
+    if (!conns.length) {
+        box.innerHTML = s.status === 'Active'
+            ? '<span class="text-slate-500">No ICA/RDP connection detail reported for this user.</span>'
+            : '<span class="text-slate-500">Session is no longer active — live connection detail unavailable.</span>';
+        return;
+    }
+    box.innerHTML = `<div class="text-slate-400 mb-2 font-semibold">Live connections</div>
+        <table class="w-full text-xs"><thead><tr><th>Gateway</th><th>Protocol</th><th>Resource</th><th>Server</th><th>Client IP</th><th>Device</th></tr></thead>
+        <tbody>${conns.map(c => `<tr>
+            <td>${escapeHtml(c.gateway)}</td>
+            <td><span class="badge badge-success">${escapeHtml(c.protocol)}</span></td>
+            <td class="text-white">${escapeHtml(c.resource)}</td>
+            <td class="font-mono">${escapeHtml(c.server)}</td>
+            <td class="font-mono text-blue-300">${escapeHtml(c.client_ip)}</td>
+            <td>${escapeHtml(c.device)}</td></tr>`).join('')}</tbody></table>`;
 }
 
 // --- CERTIFICATES ---

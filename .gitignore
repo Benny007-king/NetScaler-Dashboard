@@ -2,6 +2,9 @@
 .env
 .env.local
 
+# Persistent runtime data (all config, DB, certs, secret live here)
+data/
+
 # Runtime config & state (contain credentials / live data — never commit)
 nodes_config.json
 auth_config.json

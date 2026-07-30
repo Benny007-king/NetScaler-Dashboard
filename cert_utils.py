@@ -14,10 +14,11 @@ import ipaddress
 import os
 from pathlib import Path
 
-CERT_FILE = os.getenv("TLS_CERT_FILE", "certs/server.crt")
-KEY_FILE = os.getenv("TLS_KEY_FILE", "certs/server.key")
-CA_CERT_FILE = os.getenv("TLS_CA_CERT_FILE", "certs/ca.crt")
-CA_KEY_FILE = os.getenv("TLS_CA_KEY_FILE", "certs/ca.key")
+_CERT_DIR = os.path.join(os.getenv("DATA_DIR", "data"), "certs")
+CERT_FILE = os.getenv("TLS_CERT_FILE") or os.path.join(_CERT_DIR, "server.crt")
+KEY_FILE = os.getenv("TLS_KEY_FILE") or os.path.join(_CERT_DIR, "server.key")
+CA_CERT_FILE = os.getenv("TLS_CA_CERT_FILE") or os.path.join(_CERT_DIR, "ca.crt")
+CA_KEY_FILE = os.getenv("TLS_CA_KEY_FILE") or os.path.join(_CERT_DIR, "ca.key")
 # CSR key is parked here until the signed cert is uploaded — the live server key
 # is never disturbed just by generating a CSR.
 PENDING_KEY_FILE = KEY_FILE + ".pending"

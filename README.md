@@ -73,6 +73,14 @@ Copy `.env.example` → `.env`. Notable keys: `APP_PORT` (default `443`), `APP_S
 
 Idle users are logged out automatically. Default **15 minutes**; change it in **Settings → Session Timeout** (1–1440 min). It's a sliding, server-enforced inactivity timeout — background auto-refresh polls don't keep the session alive, and an expired session returns to the login page.
 
+### Data persistence (survives updates)
+
+All runtime state — node config, LDAP config, the local database, TLS certs, and the session secret — lives under **`DATA_DIR`** (default `data/`), which the compose files back with a Docker **named volume** (`ns_data`). So `git pull` and image rebuilds **never touch your configuration** — you set it up once. On first start after upgrading, any legacy root-level files are migrated into the volume automatically, and loaders fall back to the old location so nothing is lost. Back up the volume with:
+
+```bash
+docker run --rm -v netscaler-dashboard_ns_data:/data -v "$PWD":/backup alpine tar czf /backup/ns_data_backup.tgz -C /data .
+```
+
 ### Local history database & retention
 
 `dashboard.db` (SQLite — no external service) stores **failover events** and **session history**, so the Failover and Sessions tabs show real history rather than only what's live on the appliance.

@@ -16,7 +16,7 @@ from datetime import datetime
 
 logger = logging.getLogger(__name__)
 
-DB_FILE = os.getenv("DASHBOARD_DB_FILE", "dashboard.db")
+DB_FILE = os.getenv("DASHBOARD_DB_FILE") or os.path.join(os.getenv("DATA_DIR", "data"), "dashboard.db")
 RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7") or 7)
 RETENTION_INTERVAL_SECS = int(os.getenv("RETENTION_INTERVAL_SECS", "3600") or 3600)
 # A session counts as "Active" if it was seen within this window.
@@ -61,12 +61,17 @@ def init_db() -> None:
             gateway    TEXT,
             start_time TEXT,
             duration   TEXT,
+            detail     TEXT,
             first_seen REAL NOT NULL,
             last_seen  REAL NOT NULL,
             UNIQUE(node, username, type, ip, start_time)
         );
         CREATE INDEX IF NOT EXISTS idx_sess_last ON sessions(last_seen);
         """)
+        # Add the detail column to pre-existing tables (migration for older DBs).
+        cols = [r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()]
+        if 'detail' not in cols:
+            c.execute("ALTER TABLE sessions ADD COLUMN detail TEXT")
 
 
 def _epoch(ts: str) -> float:
@@ -118,28 +123,31 @@ def upsert_sessions(node: str, sessions) -> int:
     """Record/refresh observed sessions. Returns number processed."""
     if not sessions:
         return 0
+    import json as _json
     now = time.time()
     rows = [(
         node, s.get("user"), s.get("type"), s.get("ip"), s.get("gateway"),
-        s.get("start"), s.get("duration"), now, now,
+        s.get("start"), s.get("duration"),
+        _json.dumps(s.get("detail") or {}), now, now,
     ) for s in sessions if isinstance(s, dict)]
     if not rows:
         return 0
     with _write_lock, _conn() as c:
         c.executemany("""
-            INSERT INTO sessions (node, username, type, ip, gateway, start_time, duration, first_seen, last_seen)
-            VALUES (?,?,?,?,?,?,?,?,?)
+            INSERT INTO sessions (node, username, type, ip, gateway, start_time, duration, detail, first_seen, last_seen)
+            VALUES (?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(node, username, type, ip, start_time)
             DO UPDATE SET last_seen=excluded.last_seen, duration=excluded.duration,
-                          gateway=excluded.gateway
+                          gateway=excluded.gateway, detail=excluded.detail
         """, rows)
     return len(rows)
 
 
 def get_sessions(days: int | None = None) -> list:
     """Stored sessions in the dashboard's own history, newest first."""
+    import json as _json
     sql = ("SELECT node, username, type, ip, gateway, start_time, duration,"
-           " first_seen, last_seen FROM sessions")
+           " detail, first_seen, last_seen FROM sessions")
     args = []
     if days:
         sql += " WHERE last_seen >= ?"
@@ -150,10 +158,12 @@ def get_sessions(days: int | None = None) -> list:
     with _conn() as c:
         for r in c.execute(sql, args).fetchall():
             active = (now - (r["last_seen"] or 0)) <= ACTIVE_WINDOW_SECS
+            try: detail = _json.loads(r["detail"]) if r["detail"] else {}
+            except Exception: detail = {}
             out.append({
                 "user": r["username"], "type": r["type"], "ip": r["ip"],
                 "gateway": r["gateway"], "start": r["start_time"],
-                "duration": r["duration"], "node": r["node"],
+                "duration": r["duration"], "node": r["node"], "detail": detail,
                 "status": "Active" if active else "Terminated",
                 "end": "Active" if active else datetime.fromtimestamp(r["last_seen"]).strftime("%d/%m/%Y %H:%M:%S"),
             })

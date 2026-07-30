@@ -6,6 +6,23 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.6.0
+- **Fix: LDAP group check for Domain Admins / primary groups.** The allowed-group
+  match only looked at `memberOf`, which never contains a user's *primary* group
+  (e.g. Domain Admins). It now uses AD **tokenGroups** (covers primary + nested
+  groups), looks the group up by CN so an `OU=`/`CN=` or path typo still matches,
+  and falls back to a lenient `memberOf` compare for non-AD directories.
+- **Persistent data directory / no more re-configuring on updates.** All runtime
+  state (config, LDAP, DB, certs, session secret) now lives under `DATA_DIR` on a
+  Docker **named volume** (`ns_data`), so `git pull` / image rebuilds never touch
+  it. Existing root-level files are migrated in automatically on first start, and
+  loaders fall back to the legacy location so nothing is ever lost.
+- **Richer Sessions tab.** Columns now show source IP, connection type
+  (VPN / Web-Workspace / AAA) and start/end. Clicking a session expands a sub-row
+  with the gateway, connection kind, protocol, end resource, intranet IP and
+  client OS, plus live ICA/RDP connection detail (`/api/session-ica`) when the
+  session is still active.
+
 ## 1.5.1
 - **LDAP settings UX.** Filling in the LDAP fields and saving without ticking the
   small "Enable" checkbox left `enabled=false`, so the login page kept the LDAP

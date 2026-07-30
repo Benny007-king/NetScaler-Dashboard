@@ -17,9 +17,10 @@ env/
 # Logs
 *.log
 
-# App Data & State files 
-# (We ignore them here so they aren't baked into the image, 
-# they will be loaded dynamically via docker volume)
+# App Data & State files
+# (We ignore them here so they aren't baked into the image,
+# they live in the DATA_DIR named volume)
+data/
 auth_config.json
 nodes_config.json
 ldap_config.json

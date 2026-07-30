@@ -30,11 +30,71 @@ from flask import (
 )
 
 # ======================================================================================
+# Persistent data directory — ALL runtime state lives here so code updates
+# (git pull / image rebuild) never touch it. Back it with a Docker named volume
+# or a host bind mount and you never have to reconfigure again.
+# ======================================================================================
+DATA_DIR = os.getenv("DATA_DIR", "data")
+try: os.makedirs(DATA_DIR, exist_ok=True)
+except Exception: pass
+
+def _data_path(name):
+    return os.path.join(DATA_DIR, name)
+
+def _read_path(data_file, legacy_name):
+    """Path to read from: the DATA_DIR file if present, else a legacy root file
+    (belt-and-suspenders in case a migration didn't run). Writes always target
+    the DATA_DIR file."""
+    if os.path.exists(data_file):
+        return data_file
+    if legacy_name and os.path.exists(legacy_name):
+        return legacy_name
+    return data_file
+
+def _migrate_legacy(pairs):
+    """Best-effort one-time move of runtime files from the repo root into DATA_DIR.
+    Runs before anything is loaded; never overwrites an existing target."""
+    import shutil
+    for legacy, target in pairs:
+        try:
+            if (legacy and target and os.path.exists(legacy) and not os.path.exists(target)
+                    and os.path.abspath(legacy) != os.path.abspath(target)):
+                os.makedirs(os.path.dirname(target) or '.', exist_ok=True)
+                shutil.move(legacy, target)   # cross-filesystem safe (copy+remove)
+        except Exception:
+            pass  # if it can't move, loaders still fall back to the legacy path
+
+AUTH_CONFIG_FILE = os.getenv('AUTH_CONFIG_FILE') or _data_path('auth_config.json')
+NODES_CONFIG_FILE = os.getenv('NODES_CONFIG_FILE') or _data_path('nodes_config.json')
+LDAP_CONFIG_FILE = os.getenv('LDAP_CONFIG_FILE') or _data_path('ldap_config.json')
+FAILOVER_HISTORY_FILE = os.getenv('FAILOVER_HISTORY_FILE') or _data_path('failover_history.json')
+HA_STATE_FILE = os.getenv('HA_STATE_FILE') or _data_path('ha_last_state.json')
+APP_SECRET_FILE = os.getenv('APP_SECRET_FILE') or _data_path('.app_secret')
+LOG_FILE = os.getenv('APP_LOG_FILE') or _data_path('netscaler_complete.log')
+
+# Move any legacy root-level files into DATA_DIR once (before anything is loaded).
+_migrate_legacy([
+    ('auth_config.json', AUTH_CONFIG_FILE),
+    ('nodes_config.json', NODES_CONFIG_FILE),
+    ('ldap_config.json', LDAP_CONFIG_FILE),
+    ('failover_history.json', FAILOVER_HISTORY_FILE),
+    ('ha_last_state.json', HA_STATE_FILE),
+    ('.app_secret', APP_SECRET_FILE),
+    ('dashboard.db', db.DB_FILE),
+    ('dashboard.db-wal', db.DB_FILE + '-wal'),
+    ('dashboard.db-shm', db.DB_FILE + '-shm'),
+])
+try:
+    import shutil as _sh
+    if os.path.isdir('certs') and not os.path.isdir(_data_path('certs')):
+        _sh.move('certs', _data_path('certs'))
+except Exception: pass
+
+# ======================================================================================
 # LDAP Configuration — env vars are defaults; a gitignored ldap_config.json
 # (editable from the Settings UI) overrides them at runtime.
 # ======================================================================================
 AUTH_BACKENDS = {x.strip().lower() for x in os.getenv("AUTH_BACKENDS", "local").split(",") if x.strip()}
-LDAP_CONFIG_FILE = os.getenv("LDAP_CONFIG_FILE", "ldap_config.json")
 
 def _as_bool(v, default=False):
     if isinstance(v, bool): return v
@@ -57,8 +117,9 @@ _LDAP_ENV_DEFAULTS = {
 def load_ldap_config() -> dict:
     cfg = dict(_LDAP_ENV_DEFAULTS)
     try:
-        if os.path.exists(LDAP_CONFIG_FILE):
-            with open(LDAP_CONFIG_FILE, "r", encoding="utf-8") as f:
+        src = _read_path(LDAP_CONFIG_FILE, 'ldap_config.json')
+        if os.path.exists(src):
+            with open(src, "r", encoding="utf-8") as f:
                 stored = json.load(f)
             if isinstance(stored, dict):
                 cfg.update({k: v for k, v in stored.items() if k in cfg})
@@ -120,10 +181,11 @@ def _load_or_create_secret() -> str:
     restarts without shipping a known default key."""
     env = os.getenv("APP_SECRET")
     if env: return env
-    path = os.getenv("APP_SECRET_FILE", ".app_secret")
+    path = APP_SECRET_FILE
     try:
-        if os.path.exists(path):
-            with open(path) as f:
+        read_from = _read_path(path, '.app_secret')
+        if os.path.exists(read_from):
+            with open(read_from) as f:
                 s = f.read().strip()
             if s: return s
         s = secrets.token_hex(32)
@@ -207,7 +269,6 @@ def _security_headers(resp):
         resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
     return resp
 
-LOG_FILE = os.getenv("APP_LOG_FILE", "netscaler_complete.log")
 # Rotating log so it can't grow without bound (default 5 MB × 3 backups = ~20 MB cap).
 from logging.handlers import RotatingFileHandler
 _log_max_bytes = int(os.getenv("APP_LOG_MAX_BYTES", str(5 * 1024 * 1024)))
@@ -225,14 +286,11 @@ logger = logging.getLogger(__name__)
 # ======================================================================================
 # Local Dashboard Auth & HA State Tracking Variables
 # ======================================================================================
-AUTH_CONFIG_FILE = os.getenv('AUTH_CONFIG_FILE', 'auth_config.json')
 DEFAULT_USERNAME = os.getenv('UI_DEFAULT_USERNAME', 'admin')
 DEFAULT_PASSWORD = os.getenv('UI_DEFAULT_PASSWORD', 'admin')
 
-# Timezone & Persistent Files
+# Timezone
 IL_TZ = pytz.timezone("Asia/Jerusalem")
-FAILOVER_HISTORY_FILE = 'failover_history.json'
-HA_STATE_FILE = 'ha_last_state.json'
 
 # Bounded retention for failover history: when it reaches 80% of the cap, prune
 # back to 50% (keeping the most recent events) so the file never fills up.
@@ -251,8 +309,9 @@ def hash_password(password: str) -> str:
 
 def load_auth_config() -> dict:
     try:
-        if os.path.exists(AUTH_CONFIG_FILE):
-            with open(AUTH_CONFIG_FILE, 'r', encoding='utf-8') as f: return json.load(f)
+        src = _read_path(AUTH_CONFIG_FILE, 'auth_config.json')
+        if os.path.exists(src):
+            with open(src, 'r', encoding='utf-8') as f: return json.load(f)
     except Exception: pass
     cfg = {
         'username': DEFAULT_USERNAME, 'password_hash': hash_password(DEFAULT_PASSWORD),
@@ -297,6 +356,57 @@ def login_required(fn):
         return fn(*args, **kwargs)
     return _wrapped
 
+def _dn_head(dn: str) -> str:
+    """Leftmost RDN value, e.g. 'domain admins' from 'CN=Domain Admins,CN=Users,...'.
+    Lets an allowed-group value match regardless of CN/OU prefix or path."""
+    m = re.match(r'\s*[^=,]+=([^,]+)', str(dn or ''))
+    return (m.group(1).strip().lower() if m else str(dn or '').strip().lower())
+
+def _ldap_user_in_group(finder, user_dn, entry, allowed_group, cfg) -> bool:
+    """True if the user belongs to allowed_group. Uses AD tokenGroups (which
+    includes the PRIMARY group like Domain Admins and nested groups) when
+    available, falling back to a lenient memberOf comparison for other LDAPs."""
+    allowed = str(allowed_group or '').strip()
+    if not allowed:
+        return True
+    from ldap3 import BASE, SUBTREE
+    from ldap3.utils.conv import escape_filter_chars
+    head = _dn_head(allowed)
+
+    # --- AD tokenGroups path (covers primary + nested group membership) ---
+    try:
+        # Find the group by CN (forgiving of an OU/CN or path typo in the stored DN).
+        finder.search(cfg['base_dn'],
+                      f"(&(objectClass=group)(cn={escape_filter_chars(head)}))",
+                      search_scope=SUBTREE, attributes=['objectSid'])
+        group_sid = None
+        if finder.entries:
+            try: group_sid = finder.entries[0].objectSid.raw_values[0]
+            except Exception: group_sid = None
+        if group_sid:
+            finder.search(user_dn, '(objectClass=*)', search_scope=BASE, attributes=['tokenGroups'])
+            if finder.entries:
+                try:
+                    token_sids = list(finder.entries[0].tokenGroups.raw_values)
+                    if group_sid in token_sids:
+                        return True
+                    logger.info(f"LDAP: user not in group '{head}' (tokenGroups)")
+                    return False
+                except Exception:
+                    pass  # tokenGroups not returned -> fall back
+    except Exception as e:
+        logger.info(f"LDAP tokenGroups check unavailable ({e}); using memberOf")
+
+    # --- memberOf fallback (exact DN or leftmost-RDN value match) ---
+    try: groups = [str(g) for g in entry.memberOf.values]
+    except Exception: groups = []
+    al = allowed.lower()
+    for g in groups:
+        if g.lower() == al or _dn_head(g) == head:
+            return True
+    logger.info(f"LDAP: user not in group '{head}' (memberOf: {len(groups)} group(s))")
+    return False
+
 def ldap_authenticate(username: str, password: str) -> bool:
     """Verify credentials against LDAP/AD by rebinding as the resolved user DN."""
     if not ldap_enabled(): return False
@@ -316,16 +426,12 @@ def ldap_authenticate(username: str, password: str) -> bool:
             flt = f"({cfg['user_attr']}={escape_filter_chars(username)})"
             finder.search(cfg['base_dn'], flt, search_scope=SUBTREE, attributes=['memberOf'])
             if not finder.entries:
+                logger.info(f"LDAP: user '{username}' not found with {cfg['user_attr']}")
                 return False
             entry = finder.entries[0]
             user_dn = entry.entry_dn
-            allowed_group = cfg['allowed_group_dn']
-            if allowed_group:
-                try: groups = [str(g) for g in entry.memberOf.values]
-                except Exception: groups = []
-                if not any(allowed_group.lower() == g.lower() for g in groups):
-                    logger.info(f"LDAP user '{username}' not in allowed group")
-                    return False
+            if not _ldap_user_in_group(finder, user_dn, entry, cfg['allowed_group_dn'], cfg):
+                return False
 
         # Empty DN + password would be an anonymous simple bind on many servers,
         # which returns success and would bypass authentication — reject it.
@@ -506,15 +612,15 @@ def _int(v, default):
     try: return int(v)
     except Exception: return default
 
-NODES_CONFIG_FILE = 'nodes_config.json'
-
+# NODES_CONFIG_FILE is defined at the top (under DATA_DIR).
 # Deployment topology: 'standalone' (primary only), 'ha' (primary+secondary pair),
 # or 'cluster' (primary = Cluster IP / CLIP; members read from /config/clusternode).
 VALID_MODES = ('standalone', 'ha', 'cluster')
 
 def load_nodes_config():
-    if os.path.exists(NODES_CONFIG_FILE):
-        with open(NODES_CONFIG_FILE, 'r', encoding='utf-8') as f: return json.load(f)
+    src = _read_path(NODES_CONFIG_FILE, 'nodes_config.json')
+    if os.path.exists(src):
+        with open(src, 'r', encoding='utf-8') as f: return json.load(f)
     return {
         'mode': 'ha',
         'primary': { 'ip': '', 'username': '', 'password': '', 'port': 443, 'protocol': 'https'},
@@ -1125,87 +1231,81 @@ def api_history_stats():
 # ======================================================================================
 # Advanced Sessions, Failover History & User Actions
 # ======================================================================================
+def _pick(s, keys):
+    for k in keys:
+        v = str(s.get(k, '')).strip()
+        if v and v not in ('None', '0.0.0.0', '::'):
+            return v
+    return ''
+
+def _normalize_session(raw, kind):
+    """Map a raw NITRO vpn/aaa session dict into the dashboard's shape, including
+    a `detail` block (gateway, connection protocol, resource) for the sub-row."""
+    s = {str(k).lower(): v for k, v in raw.items()}
+    duration_secs = int(s.get('duration', 0) or 0)
+    start_dt = datetime.now().timestamp() - duration_secs
+    start = datetime.fromtimestamp(start_dt, IL_TZ).strftime('%d/%m/%Y %H:%M:%S')
+
+    src_ip = _pick(s, ['publicip', 'clientip', 'srcip', 'client_ip', 'ipaddress', 'ip'])
+    intranet_ip = _pick(s, ['intranetip', 'iip', 'peip', 'mappedip'])
+    gateway = _pick(s, ['vservername', 'vserver', 'vsname', 'gateway', 'gatewayname'])
+
+    # Connection class for the main row.
+    if kind == 'aaa':
+        conn_type = 'Web (AAA)'
+    elif intranet_ip:
+        conn_type = 'VPN (Full Tunnel)'
+    else:
+        conn_type = 'Web / Workspace'
+
+    # Per-connection protocol (ICA / RDP / SSL-VPN) and end resource, best-effort
+    # across the field names NetScaler uses on different builds.
+    protocol = _pick(s, ['transportprotocol', 'transport', 'protocol', 'sesstype', 'smartaccess'])
+    resource = _pick(s, ['application', 'appname', 'publishedapp', 'resource', 'server', 'destip', 'homepage'])
+    detail = {
+        'gateway': gateway or '—',
+        'protocol': protocol or ('SSL-VPN' if intranet_ip else '—'),
+        'resource': resource or '—',
+        'source_ip': src_ip or '—',
+        'intranet_ip': intranet_ip or '—',
+        'client_os': _pick(s, ['clientos', 'deviceos', 'os', 'useragent']) or '—',
+        'kind': 'Gateway/VPN' if kind == 'vpn' else 'AAA/Web',
+    }
+    return {
+        'user': s.get('username', 'Unknown'),
+        'type': conn_type,
+        'status': 'Active',
+        'duration': f"{duration_secs // 60} min",
+        'ip': src_ip or 'Unknown',
+        'gateway': gateway or 'Unknown',
+        'start': start,
+        'end': 'Active',
+        'detail': detail,
+    }
+
 @app.route('/api/user-sessions')
 @login_required
 def api_user_sessions():
     node_req = request.args.get('node', 'primary')
     other_node = 'secondary' if node_req == 'primary' else 'primary'
     all_sessions = []
-    
+
     for nk in [node_req, other_node]:
         try:
             nitro = get_nitro(nk)
             vpn_resp = nitro._get('/config/vpnsession', custom_timeout=4)
             aaa_resp = nitro._get('/config/aaasession', custom_timeout=4)
-            
+
             vpn_sessions = vpn_resp.get('vpnsession', []) if isinstance(vpn_resp, dict) else []
             aaa_sessions = aaa_resp.get('aaasession', []) if isinstance(aaa_resp, dict) else []
 
-            # Process VPN sessions dynamically extracting any valid IP/Gateway and calculating Start time
             for raw_s in vpn_sessions:
-                s = {str(k).lower(): v for k, v in raw_s.items()}
-                
-                duration_secs = int(s.get('duration', 0) or 0)
-                start_dt = datetime.now().timestamp() - duration_secs
-                start_time_str = datetime.fromtimestamp(start_dt, IL_TZ).strftime('%d/%m/%Y %H:%M:%S')
-                
-                ip_addr = 'Unknown'
-                for ip_key in ['publicip', 'clientip', 'peip', 'client_ip', 'ipaddress', 'ip']:
-                    val = str(s.get(ip_key, '')).strip()
-                    if val and val not in ['None', '0.0.0.0']:
-                        ip_addr = val
-                        break
-                
-                gateway = 'Unknown'
-                for gw_key in ['vservername', 'vserver', 'vsname', 'destip', 'intranetip']:
-                    val = str(s.get(gw_key, '')).strip()
-                    if val and val not in ['None', '0.0.0.0']:
-                        gateway = val
-                        break
+                all_sessions.append(_normalize_session(raw_s, 'vpn'))
 
-                all_sessions.append({
-                    'user': s.get('username', 'Unknown'),
-                    'type': 'VPN',
-                    'status': 'Active',
-                    'duration': f"{duration_secs // 60} min",
-                    'ip': ip_addr,
-                    'gateway': gateway,
-                    'start': start_time_str,
-                    'end': 'Active'
-                })
-
-            # Process AAA sessions without duplicates
+            seen_users = {x['user'] for x in all_sessions}
             for raw_s in aaa_sessions:
-                s = {str(k).lower(): v for k, v in raw_s.items()}
-                if not any(x['user'] == s.get('username') for x in all_sessions):
-                    duration_secs = int(s.get('duration', 0) or 0)
-                    start_dt = datetime.now().timestamp() - duration_secs
-                    start_time_str = datetime.fromtimestamp(start_dt, IL_TZ).strftime('%d/%m/%Y %H:%M:%S')
-
-                    ip_addr = 'Unknown'
-                    for ip_key in ['publicip', 'clientip', 'peip', 'client_ip', 'ipaddress', 'ip']:
-                        val = str(s.get(ip_key, '')).strip()
-                        if val and val not in ['None', '0.0.0.0']:
-                            ip_addr = val
-                            break
-                    
-                    gateway = 'Unknown'
-                    for gw_key in ['vservername', 'vserver', 'vsname', 'destip', 'intranetip']:
-                        val = str(s.get(gw_key, '')).strip()
-                        if val and val not in ['None', '0.0.0.0']:
-                            gateway = val
-                            break
-                        
-                    all_sessions.append({
-                        'user': s.get('username', 'Unknown'),
-                        'type': 'AAA/Web',
-                        'status': 'Active',
-                        'duration': f"{duration_secs // 60} min",
-                        'ip': ip_addr,
-                        'gateway': gateway,
-                        'start': start_time_str,
-                        'end': 'Active'
-                    })
+                if str(raw_s.get('username')) not in seen_users:
+                    all_sessions.append(_normalize_session(raw_s, 'aaa'))
             break
         except Exception:
             continue
@@ -1220,6 +1320,49 @@ def api_user_sessions():
         logger.warning(f"Session history unavailable, returning live only: {e}")
 
     return jsonify({'sessions': all_sessions, 'source': 'live'})
+
+@app.route('/api/session-ica')
+@login_required
+def api_session_ica():
+    """Live ICA/RDP connection detail for a user (gateway, protocol, published
+    resource). NetScaler only reports this for currently-active sessions."""
+    user = (request.args.get('user') or '').strip()
+    node = request.args.get('node') or 'primary'
+    if not user:
+        return jsonify({'connections': []})
+    conns = []
+    for nk in [node, ('secondary' if node == 'primary' else 'primary')]:
+        try:
+            nitro = get_nitro(nk)
+        except Exception:
+            continue
+        # Try the ICA-connection object names used across builds.
+        raw_items = []
+        for path, key in (('/config/vpnicaconnection', 'vpnicaconnection'),
+                          ('/config/icaconnection', 'icaconnection'),
+                          ('/config/aaasession', 'aaasession')):
+            try:
+                d = nitro._get(path, custom_timeout=4) or {}
+                v = d.get(key)
+                if isinstance(v, list) and v:
+                    raw_items = v; break
+            except Exception:
+                continue
+        for raw in raw_items:
+            s = {str(k).lower(): v for k, v in raw.items()}
+            if user.lower() not in (str(s.get('username', '')).lower(), str(s.get('user', '')).lower()):
+                continue
+            conns.append({
+                'gateway': _pick(s, ['vservername', 'vserver', 'gateway', 'gatewayname']) or '—',
+                'protocol': _pick(s, ['protocol', 'transportprotocol', 'transport', 'sesstype']) or 'ICA',
+                'resource': _pick(s, ['application', 'appname', 'publishedapp', 'resource', 'server', 'destip']) or '—',
+                'server': _pick(s, ['server', 'destip', 'backendserver']) or '—',
+                'client_ip': _pick(s, ['clientip', 'publicip', 'srcip']) or '—',
+                'device': _pick(s, ['deviceos', 'clientos', 'devicename', 'useragent']) or '—',
+            })
+        if conns:
+            break
+    return jsonify({'user': user, 'connections': conns})
 
 @app.route('/api/failover-history')
 @login_required

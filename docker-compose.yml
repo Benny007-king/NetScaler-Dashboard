@@ -11,11 +11,19 @@ services:
     # Build a release with:  APP_VERSION=1.4.0 docker compose ... up -d --build
     image: "netscaler-dashboard:${APP_VERSION:-latest}"
     container_name: netscaler-dashboard
+    environment:
+      # All runtime state (config, LDAP, DB, certs, secret) lives here on a named
+      # volume, so code updates / rebuilds never wipe it — no reconfiguring.
+      DATA_DIR: /app/data
     ports:
       - "443:443"
     env_file:
       - path: .env
         required: false
     volumes:
-      - ./:/app
+      - ./:/app             # code (live)
+      - ns_data:/app/data   # persistent data — survives rebuilds & git pull
     restart: unless-stopped
+
+volumes:
+  ns_data:
