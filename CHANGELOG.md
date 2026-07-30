@@ -6,6 +6,21 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.6.1
+- **Fix: Sessions tab showed the same session on many rows.** History was keyed on
+  `(node, user, type, IP, start_time)`, but the start time is derived per poll
+  (`now − duration`) and the source IP differs between the VPN and AAA views of a
+  session — so a single session fragmented into a new row on every refresh. Rows
+  are now keyed on the **stable NITRO session id** (`sessionkey`/`sessionid`, with
+  a `user|kind` fallback), so each real session is **one line** that refreshes in
+  place. A later poll's blank/`Unknown` IP or gateway no longer overwrites a good
+  value already captured. Old-schema session tables migrate automatically on
+  startup (the 7-day history rebuilds itself on the next poll).
+- **Better gateway resolution.** The gateway/vserver lookup now checks more NITRO
+  field names (`authnvsname`, `agname`, `vpnvservername`, `tmvserver`, …), and
+  pure AAA/Web sessions — which have no gateway vserver — now read `N/A (AAA)`
+  instead of a misleading `Unknown`.
+
 ## 1.6.0
 - **Fix: LDAP group check for Domain Admins / primary groups.** The allowed-group
   match only looked at `memberOf`, which never contains a user's *primary* group

@@ -1248,7 +1248,14 @@ def _normalize_session(raw, kind):
 
     src_ip = _pick(s, ['publicip', 'clientip', 'srcip', 'client_ip', 'ipaddress', 'ip'])
     intranet_ip = _pick(s, ['intranetip', 'iip', 'peip', 'mappedip'])
-    gateway = _pick(s, ['vservername', 'vserver', 'vsname', 'gateway', 'gatewayname'])
+    gateway = _pick(s, ['vservername', 'vserver', 'vsname', 'gateway', 'gatewayname',
+                        'authnvsname', 'agname', 'vpnvservername', 'tmvserver',
+                        'vsvrname', 'polarisid', 'gatewayfqdn'])
+
+    # Stable identifier so repeated polls of the same session map to one row.
+    # NITRO exposes a per-session key; fall back to user+kind when it's absent.
+    session_id = _pick(s, ['sessionkey', 'sessionid', 'sid', 'sessguid',
+                           'sessionguid', 'pcbid']) or f"{s.get('username', '')}|{kind}"
 
     # Connection class for the main row.
     if kind == 'aaa':
@@ -1273,11 +1280,12 @@ def _normalize_session(raw, kind):
     }
     return {
         'user': s.get('username', 'Unknown'),
+        'session_id': session_id,
         'type': conn_type,
         'status': 'Active',
         'duration': f"{duration_secs // 60} min",
         'ip': src_ip or 'Unknown',
-        'gateway': gateway or 'Unknown',
+        'gateway': gateway or ('N/A (AAA)' if kind == 'aaa' else 'Unknown'),
         'start': start,
         'end': 'Active',
         'detail': detail,

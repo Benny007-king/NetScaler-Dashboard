@@ -85,7 +85,7 @@ docker run --rm -v netscaler-dashboard_ns_data:/data -v "$PWD":/backup alpine ta
 
 `dashboard.db` (SQLite — no external service) stores **failover events** and **session history**, so the Failover and Sessions tabs show real history rather than only what's live on the appliance.
 
-A **retention pass runs at startup and hourly**, deleting anything older than **`RETENTION_DAYS` (default 7)** — you always keep at least a week, and the file can't grow unbounded. Sessions are de-duplicated per (node, user, type, IP, start time) and marked `Active` while still being seen, `Terminated` afterwards.
+A **retention pass runs at startup and hourly**, deleting anything older than **`RETENTION_DAYS` (default 7)** — you always keep at least a week, and the file can't grow unbounded. Sessions are de-duplicated per **(node, stable session id)** — so repeated polls of the same session refresh **one row** instead of piling up — and marked `Active` while still being seen, `Terminated` afterwards.
 
 Inspect it any time:
 

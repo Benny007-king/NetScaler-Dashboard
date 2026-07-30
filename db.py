@@ -24,6 +24,28 @@ ACTIVE_WINDOW_SECS = int(os.getenv("SESSION_ACTIVE_WINDOW_SECS", "120") or 120)
 
 _write_lock = threading.Lock()
 
+# One row per real session: keyed on a stable NITRO session id so repeated polls
+# of the same session refresh a single row instead of piling up (which happened
+# when the key included the recomputed start_time and the per-poll source IP).
+_SESSIONS_DDL = """
+CREATE TABLE IF NOT EXISTS sessions (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    node       TEXT,
+    session_id TEXT,
+    username   TEXT,
+    type       TEXT,
+    ip         TEXT,
+    gateway    TEXT,
+    start_time TEXT,
+    duration   TEXT,
+    detail     TEXT,
+    first_seen REAL NOT NULL,
+    last_seen  REAL NOT NULL,
+    UNIQUE(node, session_id)
+);
+CREATE INDEX IF NOT EXISTS idx_sess_last ON sessions(last_seen);
+"""
+
 
 @contextmanager
 def _conn():
@@ -51,27 +73,14 @@ def init_db() -> None:
             UNIQUE(timestamp, ip, role_change)
         );
         CREATE INDEX IF NOT EXISTS idx_fo_ts ON failover_events(ts_epoch);
-
-        CREATE TABLE IF NOT EXISTS sessions (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            node       TEXT,
-            username   TEXT,
-            type       TEXT,
-            ip         TEXT,
-            gateway    TEXT,
-            start_time TEXT,
-            duration   TEXT,
-            detail     TEXT,
-            first_seen REAL NOT NULL,
-            last_seen  REAL NOT NULL,
-            UNIQUE(node, username, type, ip, start_time)
-        );
-        CREATE INDEX IF NOT EXISTS idx_sess_last ON sessions(last_seen);
-        """)
-        # Add the detail column to pre-existing tables (migration for older DBs).
+        """ + _SESSIONS_DDL)
+        # Migrate older session tables (keyed on ip+start_time) to the stable
+        # session_id key. The table is 7-day monitoring history full of the old
+        # duplicates, so a clean rebuild is simplest and self-heals on next poll.
         cols = [r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()]
-        if 'detail' not in cols:
-            c.execute("ALTER TABLE sessions ADD COLUMN detail TEXT")
+        if cols and 'session_id' not in cols:
+            c.execute("DROP TABLE sessions")
+            c.executescript(_SESSIONS_DDL)
 
 
 def _epoch(ts: str) -> float:
@@ -126,19 +135,23 @@ def upsert_sessions(node: str, sessions) -> int:
     import json as _json
     now = time.time()
     rows = [(
-        node, s.get("user"), s.get("type"), s.get("ip"), s.get("gateway"),
+        node, s.get("session_id") or f"{s.get('user')}|{s.get('type')}",
+        s.get("user"), s.get("type"), s.get("ip"), s.get("gateway"),
         s.get("start"), s.get("duration"),
         _json.dumps(s.get("detail") or {}), now, now,
     ) for s in sessions if isinstance(s, dict)]
     if not rows:
         return 0
     with _write_lock, _conn() as c:
+        # On refresh, keep the first-seen start_time and don't let a later poll's
+        # blank/"Unknown" IP or gateway overwrite a good value we already captured.
         c.executemany("""
-            INSERT INTO sessions (node, username, type, ip, gateway, start_time, duration, detail, first_seen, last_seen)
-            VALUES (?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(node, username, type, ip, start_time)
-            DO UPDATE SET last_seen=excluded.last_seen, duration=excluded.duration,
-                          gateway=excluded.gateway, detail=excluded.detail
+            INSERT INTO sessions (node, session_id, username, type, ip, gateway, start_time, duration, detail, first_seen, last_seen)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(node, session_id)
+            DO UPDATE SET last_seen=excluded.last_seen, duration=excluded.duration, detail=excluded.detail,
+                          ip=CASE WHEN excluded.ip NOT IN ('', 'Unknown', 'N/A', '—') THEN excluded.ip ELSE sessions.ip END,
+                          gateway=CASE WHEN excluded.gateway NOT IN ('', 'Unknown', 'N/A', '—') THEN excluded.gateway ELSE sessions.gateway END
         """, rows)
     return len(rows)
 
