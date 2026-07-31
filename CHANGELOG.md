@@ -6,6 +6,19 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.7.1
+- **One-command upgrade.** New `upgrade.sh` (Linux/macOS) and `upgrade.bat`
+  (Windows) do the whole update: re-attach to `main`, fast-forward to the latest
+  release, then rebuild the **version-tagged** image and print what's running.
+- **Fix: upgrades could build an old version tag.** The documented
+  `git pull && git checkout vX.Y.Z` flow left the repo in *detached HEAD*, where a
+  later `git pull` errors — so the working tree (and `VERSION`, which the image tag
+  is read from) could stay on the previous release and the rebuilt image came out
+  mislabelled. The upgrade scripts use `git checkout main && git pull --ff-only`,
+  which always lands on the newest release **and recovers a detached-HEAD
+  checkout**. `COMPOSE_FILE` is honored so reverse-proxy deployments upgrade the
+  same way.
+
 ## 1.7.0
 - **Multiple NetScaler instances.** The dashboard now manages many deployments at
   once — e.g. two HA pairs plus three standalones — instead of a single one. An

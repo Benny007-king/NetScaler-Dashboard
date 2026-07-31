@@ -93,6 +93,28 @@ All runtime state — node config, LDAP config, the local database, TLS certs, a
 docker run --rm -v netscaler-dashboard_ns_data:/data -v "$PWD":/backup alpine tar czf /backup/ns_data_backup.tgz -C /data .
 ```
 
+### Upgrading
+
+Run the one-command upgrade script from the repo folder — it pulls the latest
+release and rebuilds the version-tagged image:
+
+```bash
+./upgrade.sh          # Linux / macOS
+```
+```bat
+upgrade.bat           :: Windows (cmd, or  .\upgrade.bat  in PowerShell)
+```
+
+It runs `git checkout main && git pull --ff-only` (which also **recovers a
+detached-HEAD checkout**, e.g. after `git checkout vX.Y.Z`), reads `VERSION`, then
+`docker compose up -d --build` with that tag. Because the image tag comes from
+`VERSION`, this guarantees the rebuilt image matches the release. If you run behind
+the reverse proxy, set `COMPOSE_FILE` once so the script uses both files:
+
+```bash
+export COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.proxy.yml
+```
+
 ### Local history database & retention
 
 `dashboard.db` (SQLite — no external service) stores **failover events** and **session history**, so the Failover and Sessions tabs show real history rather than only what's live on the appliance.
