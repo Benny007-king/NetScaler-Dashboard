@@ -95,15 +95,7 @@
       
       <div class="space-y-6">
           <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-              <label class="block text-sm font-semibold text-white mb-2">Deployment Mode</label>
-              <select id="setMode" onchange="onModeChange()" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm">
-                  <option value="standalone">Standalone (single node)</option>
-                  <option value="ha">HA Pair (primary + secondary)</option>
-                  <option value="cluster">Cluster (primary = Cluster IP / CLIP)</option>
-              </select>
-              <p class="text-xs text-slate-400 mt-2" id="modeHint"></p>
-
-              <label class="block text-sm font-semibold text-white mt-4 mb-2">Session Timeout</label>
+              <label class="block text-sm font-semibold text-white mb-2">Session Timeout</label>
               <div class="flex items-center gap-2">
                   <input type="number" id="setSessionTimeout" min="1" max="1440" class="w-28 bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm">
                   <span class="text-sm text-slate-400">minutes of inactivity before automatic logout</span>
@@ -111,25 +103,12 @@
           </div>
 
           <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-              <h3 class="text-lg font-semibold text-blue-400 mb-4" id="priNodeTitle">Primary Node</h3>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><label class="block text-xs text-slate-400 mb-1">IP Address</label><input type="text" id="setPriIp" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-                  <div><label class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setPriPort" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-                  <div><label class="block text-xs text-slate-400 mb-1">Protocol</label><select id="setPriProto" onchange="syncPort('Pri')" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"><option value="http">HTTP</option><option value="https">HTTPS</option></select></div>
-                  <div><label class="block text-xs text-slate-400 mb-1">Username</label><input type="text" id="setPriUser" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-                  <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Password (Leave blank to keep current)</label><input type="password" id="setPriPass" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div class="flex items-center justify-between mb-1">
+                  <h3 class="text-lg font-semibold text-blue-400">NetScaler Instances</h3>
+                  <button type="button" onclick="addInstance()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium">+ Add instance</button>
               </div>
-          </div>
-          
-          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700" id="secNodeBlock">
-              <h3 class="text-lg font-semibold text-indigo-400 mb-4">Secondary Node</h3>
-              <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div><label class="block text-xs text-slate-400 mb-1">IP Address</label><input type="text" id="setSecIp" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-                  <div><label class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setSecPort" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-                  <div><label class="block text-xs text-slate-400 mb-1">Protocol</label><select id="setSecProto" onchange="syncPort('Sec')" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"><option value="http">HTTP</option><option value="https">HTTPS</option></select></div>
-                  <div><label class="block text-xs text-slate-400 mb-1">Username</label><input type="text" id="setSecUser" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-                  <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Password (Leave blank to keep current)</label><input type="password" id="setSecPass" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-              </div>
+              <p class="text-xs text-slate-400 mb-4">Add every deployment you manage — e.g. two HA pairs and three standalones. Each is picked from the <strong>Instance</strong> switcher at the top.</p>
+              <div id="instanceList" class="space-y-4"></div>
           </div>
 
           <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
@@ -217,7 +196,10 @@
   </div>
 
   <div class="flex items-center gap-3 bg-slate-900/50 p-1.5 rounded-xl border border-white/5">
-    <label class="text-sm text-slate-400 pl-2">Node:</label>
+    <label class="text-sm text-slate-400 pl-2">Instance:</label>
+    <select id="instanceSelect" onchange="changeInstance(this.value)" class="bg-slate-800 text-white text-sm border-none rounded-lg focus:ring-2 focus:ring-cyan-500 py-1.5 px-3 cursor-pointer hover:bg-slate-700 transition-colors max-w-[200px]"></select>
+    <span class="w-px h-6 bg-white/10 mx-1" aria-hidden="true"></span>
+    <label class="text-sm text-slate-400 pl-1">Node:</label>
     <select id="nodeSelect" onchange="changeNode(this.value)" class="bg-slate-800 text-white text-sm border-none rounded-lg focus:ring-2 focus:ring-blue-500 py-1.5 px-3 cursor-pointer hover:bg-slate-700 transition-colors">
       <option value="primary">Primary</option>
       <option value="secondary">Secondary</option>
@@ -492,7 +474,7 @@
 
 <script>
 // --- GLOBAL VARS ---
-const state = { node: 'primary', apiModes: {}, interval: null, refreshMs: 5000 };
+const state = { node: 'primary', instance: null, instances: [], apiModes: {}, interval: null, refreshMs: 5000 };
 let cpuChart, memChart, httpChart;
 const httpHistory = { labels: [], data: [] };
 
@@ -537,6 +519,10 @@ function exportToPDF(tableId, filename) {
 // --- API WRAPPER ---
 async function getJSON(url, opts) {
     opts = opts || {};
+    // Scope every API call to the selected instance (ignored by global endpoints).
+    if (state.instance && url.startsWith('/api/')) {
+        url += (url.includes('?') ? '&' : '?') + 'instance=' + encodeURIComponent(state.instance);
+    }
     try {
         const res = await fetch(url, { ...opts, headers: { 'Accept': 'application/json', ...(opts.headers || {}) } });
         // Session expired / not authenticated → back to login with a notice.
@@ -551,45 +537,103 @@ async function getJSON(url, opts) {
     }
 }
 
-// --- SETTINGS LOGIC ---
-// Switching protocol fills the matching default port (still editable by hand).
-function syncPort(which) {
-    const proto = $('set' + which + 'Proto').value;
-    $('set' + which + 'Port').value = (proto === 'https') ? 443 : 80;
+// --- SETTINGS LOGIC (multi-instance manager) ---
+function nodeFieldsHtml(kind, node) {
+    node = node || {};
+    const proto = node.protocol || 'https';
+    return `
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-3 inst-${kind}">
+      <div><label class="block text-xs text-slate-400 mb-1">IP Address</label><input type="text" class="nf-ip w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" value="${escapeHtml(node.ip || '')}"></div>
+      <div><label class="block text-xs text-slate-400 mb-1">Port</label><input type="number" class="nf-port w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" value="${escapeHtml(node.port || 443)}"></div>
+      <div><label class="block text-xs text-slate-400 mb-1">Protocol</label><select class="nf-proto w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" onchange="syncNodePort(this)"><option value="http"${proto === 'http' ? ' selected' : ''}>HTTP</option><option value="https"${proto === 'https' ? ' selected' : ''}>HTTPS</option></select></div>
+      <div><label class="block text-xs text-slate-400 mb-1">Username</label><input type="text" class="nf-user w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" value="${escapeHtml(node.username || '')}"></div>
+      <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Password (blank = keep current)</label><input type="password" class="nf-pass w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+    </div>`;
 }
 
-function onModeChange() {
-    const mode = $('setMode').value;
-    const hints = {
-        standalone: 'A single NetScaler with no HA. Only the primary node is used.',
-        ha: 'Two appliances in an HA pair. Configure both primary and secondary.',
-        cluster: 'Point the primary at the Cluster IP (CLIP). Members are read automatically from the cluster.'
+function instanceCardHtml(inst) {
+    inst = inst || {};
+    const mode = inst.mode || 'ha';
+    const priTitle = mode === 'cluster' ? 'Cluster IP (CLIP)' : 'Primary Node';
+    return `
+    <div class="instance-card bg-slate-900/40 border border-slate-700 rounded-xl p-4" data-id="${escapeHtml(inst.id || '')}">
+      <div class="flex flex-wrap items-center gap-2 mb-3">
+        <input type="text" class="inst-name flex-1 min-w-[140px] bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm font-semibold" placeholder="Instance name" value="${escapeHtml(inst.name || '')}">
+        <select class="inst-mode bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm" onchange="onCardModeChange(this)">
+          <option value="standalone"${mode === 'standalone' ? ' selected' : ''}>Standalone</option>
+          <option value="ha"${mode === 'ha' ? ' selected' : ''}>HA Pair</option>
+          <option value="cluster"${mode === 'cluster' ? ' selected' : ''}>Cluster (CLIP)</option>
+        </select>
+        <button type="button" onclick="removeInstanceCard(this)" class="px-2.5 py-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg text-sm" title="Remove instance">✕ Remove</button>
+      </div>
+      <h4 class="card-pri-title text-sm font-semibold text-blue-300 mb-2">${priTitle}</h4>
+      ${nodeFieldsHtml('pri', inst.primary)}
+      <div class="card-sec ${mode === 'ha' ? '' : 'hidden'} mt-3">
+        <h4 class="text-sm font-semibold text-indigo-300 mb-2">Secondary Node</h4>
+        ${nodeFieldsHtml('sec', inst.secondary)}
+      </div>
+    </div>`;
+}
+
+// Switching protocol fills the matching default port (still editable by hand).
+function syncNodePort(sel) {
+    const grid = sel.closest('[class*="inst-"]');
+    const portEl = grid && grid.querySelector('.nf-port');
+    if (portEl) portEl.value = (sel.value === 'https') ? 443 : 80;
+}
+
+function onCardModeChange(sel) {
+    const card = sel.closest('.instance-card');
+    const mode = sel.value;
+    card.querySelector('.card-sec').classList.toggle('hidden', mode !== 'ha');
+    card.querySelector('.card-pri-title').textContent = (mode === 'cluster') ? 'Cluster IP (CLIP)' : 'Primary Node';
+}
+
+function addInstance(inst) {
+    $('instanceList').insertAdjacentHTML('beforeend', instanceCardHtml(inst || { name: 'New Instance', mode: 'ha' }));
+}
+
+function removeInstanceCard(btn) {
+    if (document.querySelectorAll('#instanceList .instance-card').length <= 1) {
+        alert('Keep at least one instance.'); return;
+    }
+    btn.closest('.instance-card').remove();
+}
+
+function readNodeFields(container) {
+    if (!container) return { ip: '', port: 443, protocol: 'https', username: '', password: '' };
+    return {
+        ip: container.querySelector('.nf-ip').value.trim(),
+        port: parseInt(container.querySelector('.nf-port').value) || 443,
+        protocol: container.querySelector('.nf-proto').value,
+        username: container.querySelector('.nf-user').value.trim(),
+        password: container.querySelector('.nf-pass').value,
     };
-    $('modeHint').textContent = hints[mode] || '';
-    $('secNodeBlock').style.display = (mode === 'ha') ? '' : 'none';
-    $('priNodeTitle').textContent = (mode === 'cluster') ? 'Cluster IP (CLIP)' : 'Primary Node';
+}
+
+function readInstances() {
+    const out = [];
+    document.querySelectorAll('#instanceList .instance-card').forEach((card, i) => {
+        const mode = card.querySelector('.inst-mode').value;
+        const inst = {
+            id: card.dataset.id || '',
+            name: card.querySelector('.inst-name').value.trim() || ('Instance ' + (i + 1)),
+            mode,
+            primary: readNodeFields(card.querySelector('.inst-pri')),
+        };
+        if (mode === 'ha') inst.secondary = readNodeFields(card.querySelector('.inst-sec'));
+        out.push(inst);
+    });
+    return out;
 }
 
 async function openSettings() {
     const r = await getJSON('/api/settings');
-    if(r.ok) {
-        $('setMode').value = r.data.mode || 'ha';
+    $('instanceList').innerHTML = '';
+    if (r.ok) {
         $('setSessionTimeout').value = r.data.session_timeout_minutes || 15;
-        onModeChange();
-        if(r.data.primary) {
-            $('setPriIp').value = r.data.primary.ip || '';
-            $('setPriPort').value = r.data.primary.port || 80;
-            $('setPriProto').value = r.data.primary.protocol || 'http';
-            $('setPriUser').value = r.data.primary.username || '';
-            $('setPriPass').value = '';
-        }
-        if(r.data.secondary) {
-            $('setSecIp').value = r.data.secondary.ip || '';
-            $('setSecPort').value = r.data.secondary.port || 80;
-            $('setSecProto').value = r.data.secondary.protocol || 'http';
-            $('setSecUser').value = r.data.secondary.username || '';
-            $('setSecPass').value = '';
-        }
+        const insts = (r.data.instances && r.data.instances.length) ? r.data.instances : [{ name: 'Default', mode: 'ha' }];
+        insts.forEach(inst => addInstance(inst));
     }
     loadLdapSettings();
     $('settingsModal').classList.remove('hidden');
@@ -712,34 +756,21 @@ async function saveSettings() {
     btn.disabled = true;
     
     const payload = {
-        mode: $('setMode').value,
         session_timeout_minutes: parseInt($('setSessionTimeout').value) || 15,
-        primary: {
-            ip: $('setPriIp').value,
-            port: parseInt($('setPriPort').value) || 443,
-            protocol: $('setPriProto').value,
-            username: $('setPriUser').value,
-            password: $('setPriPass').value
-        },
-        secondary: {
-            ip: $('setSecIp').value,
-            port: parseInt($('setSecPort').value) || 443,
-            protocol: $('setSecProto').value,
-            username: $('setSecUser').value,
-            password: $('setSecPass').value
-        }
+        instances: readInstances()
     };
 
     const r = await getJSON('/api/settings', {
         method: 'POST',
         body: JSON.stringify(payload)
     });
-    
+
     btn.textContent = 'Save & Apply';
     btn.disabled = false;
-    
+
     if(r.ok && r.data.success) {
         closeSettings();
+        await loadInstances();   // refresh the switcher (names/ids may have changed)
         forceRefresh();
     } else if (!r.expired) {
         // Don't show a scary alert on session expiry — the redirect handles that.
@@ -775,6 +806,34 @@ function changeNode(val) {
     const currentTab = document.querySelector('.tab-btn.active').dataset.tab;
     updateAppsTabAvailability();
     setActiveTab(currentTab);
+}
+
+async function loadInstances() {
+    const r = await getJSON('/api/instances');
+    const sel = $('instanceSelect');
+    if (!r.ok || !Array.isArray(r.data.instances)) return;
+    state.instances = r.data.instances;
+    const prev = state.instance;
+    sel.innerHTML = '';
+    state.instances.forEach(inst => {
+        const o = document.createElement('option');
+        o.value = inst.id;
+        o.textContent = (inst.name || inst.id) + (inst.mode ? ` · ${inst.mode.toUpperCase()}` : '');
+        sel.appendChild(o);
+    });
+    // Preserve the current selection if it still exists, else pick the first.
+    state.instance = (prev && state.instances.some(i => i.id === prev))
+        ? prev : (state.instances[0] ? state.instances[0].id : null);
+    sel.value = state.instance || '';
+}
+
+function changeInstance(val) {
+    state.instance = val;
+    state.node = 'primary';           // secondary may not exist on the new instance
+    fetchCaps().then(() => {
+        const currentTab = document.querySelector('.tab-btn.active').dataset.tab;
+        setActiveTab(currentTab);
+    });
 }
 
 function forceRefresh() {
@@ -1198,7 +1257,7 @@ async function doUnlock() {
     const u = $('unlockUsername').value; if(!u) return;
     $('unlockBtn').textContent = 'Unlocking...';
     $('unlockBtn').disabled = true;
-    const r = await getJSON('/api/unlock-user', {method:'POST', body:JSON.stringify({node:$('unlockNode').value, username:u})});
+    const r = await getJSON('/api/unlock-user', {method:'POST', body:JSON.stringify({node:$('unlockNode').value, username:u, instance:state.instance})});
     $('unlockMsg').innerHTML = r.ok && r.data.success ? `<span class="text-green-400">✔ ${escapeHtml(r.data.message)}</span>` : `<span class="text-red-400">✖ ${escapeHtml(r.data.error||'Failed')}</span>`;
     $('unlockBtn').textContent = 'Unlock Account';
     $('unlockBtn').disabled = false;
@@ -1349,6 +1408,7 @@ function activityPing() {
 (async function init() {
     setInitialDateFields();
     initCharts();
+    await loadInstances();
     await fetchCaps();
     setActiveTab('overview');
 })();

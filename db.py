@@ -30,6 +30,7 @@ _write_lock = threading.Lock()
 _SESSIONS_DDL = """
 CREATE TABLE IF NOT EXISTS sessions (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    instance   TEXT,
     node       TEXT,
     session_id TEXT,
     username   TEXT,
@@ -41,7 +42,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     detail     TEXT,
     first_seen REAL NOT NULL,
     last_seen  REAL NOT NULL,
-    UNIQUE(node, session_id)
+    UNIQUE(instance, node, session_id)
 );
 CREATE INDEX IF NOT EXISTS idx_sess_last ON sessions(last_seen);
 """
@@ -74,13 +75,17 @@ def init_db() -> None:
         );
         CREATE INDEX IF NOT EXISTS idx_fo_ts ON failover_events(ts_epoch);
         """ + _SESSIONS_DDL)
-        # Migrate older session tables (keyed on ip+start_time) to the stable
-        # session_id key. The table is 7-day monitoring history full of the old
-        # duplicates, so a clean rebuild is simplest and self-heals on next poll.
+        # Migrate older session tables to the current key (stable session_id,
+        # scoped per instance). The table is 7-day monitoring history that
+        # rebuilds itself on the next poll, so a clean recreate is simplest.
         cols = [r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()]
-        if cols and 'session_id' not in cols:
+        if cols and ('session_id' not in cols or 'instance' not in cols):
             c.execute("DROP TABLE sessions")
             c.executescript(_SESSIONS_DDL)
+        # Failover events gain an 'instance' tag (kept — no rebuild needed).
+        fo_cols = [r[1] for r in c.execute("PRAGMA table_info(failover_events)").fetchall()]
+        if fo_cols and 'instance' not in fo_cols:
+            c.execute("ALTER TABLE failover_events ADD COLUMN instance TEXT")
 
 
 def _epoch(ts: str) -> float:
@@ -105,6 +110,7 @@ def add_failover_events(events) -> int:
     rows = [(
         _epoch(e.get("timestamp")), str(e.get("timestamp") or ""),
         e.get("type"), e.get("reason"), e.get("role_change"), e.get("ip"),
+        str(e.get("instance") or "default"),
     ) for e in events if isinstance(e, dict)]
     if not rows:
         return 0
@@ -112,30 +118,35 @@ def add_failover_events(events) -> int:
         before = c.total_changes
         c.executemany(
             "INSERT OR IGNORE INTO failover_events"
-            " (ts_epoch, timestamp, type, reason, role_change, ip) VALUES (?,?,?,?,?,?)", rows)
+            " (ts_epoch, timestamp, type, reason, role_change, ip, instance) VALUES (?,?,?,?,?,?,?)", rows)
         return c.total_changes - before
 
 
-def get_failover_events(days: int | None = None) -> list:
+def get_failover_events(days: int | None = None, instance: str | None = None) -> list:
     sql = "SELECT timestamp, type, reason, role_change, ip FROM failover_events"
-    args = []
+    conds, args = [], []
     if days:
-        sql += " WHERE ts_epoch >= ?"
+        conds.append("ts_epoch >= ?")
         args.append(time.time() - days * 86400)
+    if instance is not None:
+        conds.append("(instance = ? OR instance IS NULL)")
+        args.append(str(instance))
+    if conds:
+        sql += " WHERE " + " AND ".join(conds)
     sql += " ORDER BY ts_epoch DESC"
     with _conn() as c:
         return [dict(r) for r in c.execute(sql, args).fetchall()]
 
 
 # ------------------------------------------------------------------ sessions
-def upsert_sessions(node: str, sessions) -> int:
-    """Record/refresh observed sessions. Returns number processed."""
+def upsert_sessions(node: str, sessions, instance: str = "default") -> int:
+    """Record/refresh observed sessions for an instance. Returns number processed."""
     if not sessions:
         return 0
     import json as _json
     now = time.time()
     rows = [(
-        node, s.get("session_id") or f"{s.get('user')}|{s.get('type')}",
+        str(instance), node, s.get("session_id") or f"{s.get('user')}|{s.get('type')}",
         s.get("user"), s.get("type"), s.get("ip"), s.get("gateway"),
         s.get("start"), s.get("duration"),
         _json.dumps(s.get("detail") or {}), now, now,
@@ -146,9 +157,9 @@ def upsert_sessions(node: str, sessions) -> int:
         # On refresh, keep the first-seen start_time and don't let a later poll's
         # blank/"Unknown" IP or gateway overwrite a good value we already captured.
         c.executemany("""
-            INSERT INTO sessions (node, session_id, username, type, ip, gateway, start_time, duration, detail, first_seen, last_seen)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?)
-            ON CONFLICT(node, session_id)
+            INSERT INTO sessions (instance, node, session_id, username, type, ip, gateway, start_time, duration, detail, first_seen, last_seen)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            ON CONFLICT(instance, node, session_id)
             DO UPDATE SET last_seen=excluded.last_seen, duration=excluded.duration, detail=excluded.detail,
                           ip=CASE WHEN excluded.ip NOT IN ('', 'Unknown', 'N/A', '—') THEN excluded.ip ELSE sessions.ip END,
                           gateway=CASE WHEN excluded.gateway NOT IN ('', 'Unknown', 'N/A', '—') THEN excluded.gateway ELSE sessions.gateway END
@@ -156,15 +167,20 @@ def upsert_sessions(node: str, sessions) -> int:
     return len(rows)
 
 
-def get_sessions(days: int | None = None) -> list:
+def get_sessions(days: int | None = None, instance: str | None = None) -> list:
     """Stored sessions in the dashboard's own history, newest first."""
     import json as _json
     sql = ("SELECT node, username, type, ip, gateway, start_time, duration,"
            " detail, first_seen, last_seen FROM sessions")
-    args = []
+    conds, args = [], []
     if days:
-        sql += " WHERE last_seen >= ?"
+        conds.append("last_seen >= ?")
         args.append(time.time() - days * 86400)
+    if instance is not None:
+        conds.append("instance = ?")
+        args.append(str(instance))
+    if conds:
+        sql += " WHERE " + " AND ".join(conds)
     sql += " ORDER BY last_seen DESC"
     now = time.time()
     out = []

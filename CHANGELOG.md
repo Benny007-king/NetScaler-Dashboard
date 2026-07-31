@@ -6,6 +6,22 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.7.0
+- **Multiple NetScaler instances.** The dashboard now manages many deployments at
+  once — e.g. two HA pairs plus three standalones — instead of a single one. An
+  **Instance switcher** in the header scopes every tab (Overview, HA, Sessions,
+  Certificates, Unlock…) to the selected deployment, and **Settings → NetScaler
+  Instances** lets you add/rename/remove instances, each with its own mode
+  (standalone / HA / cluster) and node credentials. Config, session history and
+  failover history are all keyed per instance. Your existing setup is migrated
+  automatically into a single **"Default"** instance on first start — nothing to
+  reconfigure. (First half of the multi-instance work; an all-instances health
+  wall lands next.)
+- **Docs:** clarified HA resilience — with one node of an HA pair down, the
+  dashboard keeps polling the survivor (HA status fails over to whichever node
+  answers), marks the dead node offline, and still records the failover; a dead
+  node fails fast via the ~3s connect timeout rather than hanging.
+
 ## 1.6.1
 - **Fix: Sessions tab showed the same session on many rows.** History was keyed on
   `(node, user, type, IP, start_time)`, but the start time is derived per poll

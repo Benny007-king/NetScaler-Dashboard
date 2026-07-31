@@ -617,43 +617,98 @@ def _int(v, default):
 # or 'cluster' (primary = Cluster IP / CLIP; members read from /config/clusternode).
 VALID_MODES = ('standalone', 'ha', 'cluster')
 
+def _blank_node():
+    return {'ip': '', 'username': '', 'password': '', 'port': 443, 'protocol': 'https'}
+
+def _default_config():
+    return {
+        'instances': [{
+            'id': 'default', 'name': 'Default', 'mode': 'ha',
+            'primary': _blank_node(), 'secondary': _blank_node(),
+        }],
+        'session_timeout_minutes': DEFAULT_SESSION_TIMEOUT_MIN,
+    }
+
+def _migrate_config(cfg):
+    """Bring any stored config up to the multi-instance shape. Idempotent:
+    a config that already has an 'instances' list is returned untouched, while
+    the legacy single-deployment shape ({mode, primary, secondary}) is wrapped
+    into one 'Default' instance so existing setups keep working after an update."""
+    if not isinstance(cfg, dict):
+        return _default_config()
+    if isinstance(cfg.get('instances'), list) and cfg['instances']:
+        return cfg
+    inst = {'id': 'default', 'name': 'Default', 'mode': str(cfg.get('mode', 'ha')).lower()}
+    for k, v in cfg.items():
+        if isinstance(v, dict):   # primary / secondary node blocks
+            inst[k] = v
+    if 'primary' not in inst:
+        inst['primary'] = _blank_node()
+    return {
+        'instances': [inst],
+        'session_timeout_minutes': cfg.get('session_timeout_minutes', DEFAULT_SESSION_TIMEOUT_MIN),
+    }
+
 def load_nodes_config():
     src = _read_path(NODES_CONFIG_FILE, 'nodes_config.json')
     if os.path.exists(src):
-        with open(src, 'r', encoding='utf-8') as f: return json.load(f)
-    return {
-        'mode': 'ha',
-        'primary': { 'ip': '', 'username': '', 'password': '', 'port': 443, 'protocol': 'https'},
-        'secondary': { 'ip': '', 'username': '', 'password': '', 'port': 443, 'protocol': 'https'}
-    }
+        with open(src, 'r', encoding='utf-8') as f:
+            return _migrate_config(json.load(f))
+    return _default_config()
 
 NETSCALER_CONFIG = load_nodes_config()
 
 def save_nodes_config(config):
+    config = _migrate_config(config)
     with open(NODES_CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(config, f, indent=2)
     global NETSCALER_CONFIG
     NETSCALER_CONFIG = config
 
-def get_mode() -> str:
-    m = str(NETSCALER_CONFIG.get('mode', 'ha')).lower()
+def get_instances():
+    return NETSCALER_CONFIG.get('instances', [])
+
+def get_instance(instance_id=None):
+    """Resolve an instance dict by id; falls back to the first instance so any
+    call that omits an instance keeps targeting a valid deployment."""
+    insts = get_instances()
+    if not insts:
+        return {'id': 'default', 'name': 'Default', 'mode': 'ha', 'primary': _blank_node()}
+    if instance_id is not None:
+        for i in insts:
+            if str(i.get('id')) == str(instance_id):
+                return i
+    return insts[0]
+
+def get_mode(instance_id=None) -> str:
+    m = str(get_instance(instance_id).get('mode', 'ha')).lower()
     return m if m in VALID_MODES else 'ha'
 
-def node_items():
-    """(key, cfg) pairs for real node entries only (skips the 'mode' scalar)."""
-    return [(k, v) for k, v in NETSCALER_CONFIG.items() if isinstance(v, dict)]
+def node_items(instance_id=None):
+    """(key, cfg) pairs for real node entries in an instance (skips scalars)."""
+    return [(k, v) for k, v in get_instance(instance_id).items() if isinstance(v, dict)]
 
-def active_node_keys():
+def active_node_keys(instance_id=None):
     """Node keys the UI should surface, per deployment mode."""
-    if get_mode() in ('standalone', 'cluster'):
+    if get_mode(instance_id) in ('standalone', 'cluster'):
         return ['primary']
-    return [k for k, _ in node_items()]
+    return [k for k, _ in node_items(instance_id)]
 
-API_MODE = {k: 'nitro' for k, _ in node_items()}
+# Detected API capability per node, namespaced by instance: {instance_id: {node_key: 'nitro'|'nextgen'}}.
+API_MODE = {}
+
+def get_api_mode(instance_id, node_key):
+    return API_MODE.get(str(get_instance(instance_id).get('id')), {}).get(node_key, 'nitro')
+
+def set_api_mode(instance_id, node_key, mode):
+    API_MODE.setdefault(str(get_instance(instance_id).get('id')), {})[node_key] = mode
 
 def validate_env():
-    missing = [k for k, v in node_items() if k in active_node_keys() and not v.get('ip')]
-    if missing:
-        logger.warning(f"Nodes without an IP configured: {', '.join(missing)}")
+    for inst in get_instances():
+        iid = inst.get('id')
+        missing = [k for k in active_node_keys(iid)
+                   if not (inst.get(k) or {}).get('ip')]
+        if missing:
+            logger.warning(f"Instance '{inst.get('name', iid)}': nodes without an IP: {', '.join(missing)}")
 
 # ======================================================================================
 # API Detection & Client Helpers
@@ -666,9 +721,9 @@ def _parse_version_tuple(version_str: str):
 def _is_nextgen_supported(version_str: str) -> bool:
     return _parse_version_tuple(version_str) >= (14, 1)
 
-def detect_api_mode_for_node(node_key: str, cfg: dict):
+def detect_api_mode_for_node(node_key: str, cfg: dict, instance_id=None):
     if not cfg.get('ip') or not cfg.get('username') or not cfg.get('password'):
-        API_MODE[node_key] = 'nitro'
+        set_api_mode(instance_id, node_key, 'nitro')
         return
     try:
         nitro = NetScalerAPI(cfg['ip'], cfg['username'], cfg['password'], cfg['port'], cfg['protocol'])
@@ -679,28 +734,28 @@ def detect_api_mode_for_node(node_key: str, cfg: dict):
             ng = NextGenAPI(cfg['ip'], cfg['username'], cfg['password'], port=_int(os.getenv('NS_PORT_HTTPS', '443'), 443), protocol='https')
             ng.login()
             ng.logout()
-            API_MODE[node_key] = 'nextgen'
+            set_api_mode(instance_id, node_key, 'nextgen')
             return
     except Exception: pass
-    API_MODE[node_key] = 'nitro'
+    set_api_mode(instance_id, node_key, 'nitro')
 
-def get_nitro(node_key: str) -> NetScalerAPI:
-    cfg = NETSCALER_CONFIG.get(node_key or 'primary')
+def get_nitro(node_key: str, instance_id=None) -> NetScalerAPI:
+    cfg = get_instance(instance_id).get(node_key or 'primary')
     if not cfg: raise KeyError(f"Unknown node '{node_key}'")
     return NetScalerAPI(cfg['ip'], cfg['username'], cfg['password'], cfg['port'], cfg['protocol'])
 
-def get_nextgen(node_key: str) -> NextGenAPI:
-    cfg = NETSCALER_CONFIG.get(node_key or 'primary')
+def get_nextgen(node_key: str, instance_id=None) -> NextGenAPI:
+    cfg = get_instance(instance_id).get(node_key or 'primary')
     if not cfg: raise KeyError(f"Unknown node '{node_key}'")
     return NextGenAPI(cfg['ip'], cfg['username'], cfg['password'], port=_int(os.getenv('NS_PORT_HTTPS', '443'), 443), protocol='https')
 
 # ======================================================================================
 # System Overview & Fast HA Tracking Logic
 # ======================================================================================
-def _get_cluster_nodes_normalized():
+def _get_cluster_nodes_normalized(instance_id=None):
     """Read cluster members from the CLIP (primary) and map them to the hanode shape."""
     try:
-        r = get_nitro('primary')._get('/config/clusternode', custom_timeout=4)
+        r = get_nitro('primary', instance_id)._get('/config/clusternode', custom_timeout=4)
         nodes = r.get('clusternode', []) if isinstance(r, dict) else []
     except Exception:
         return {}
@@ -716,20 +771,20 @@ def _get_cluster_nodes_normalized():
         })
     return {'hanode': norm} if norm else {}
 
-def _get_ha_data_fast():
+def _get_ha_data_fast(instance_id=None):
     # Cluster members and HA nodes are normalized to the same {'hanode': [...]} shape
     # so every downstream caller works regardless of deployment mode.
-    if get_mode() == 'cluster':
-        return _get_cluster_nodes_normalized()
-    for nk in active_node_keys():
+    if get_mode(instance_id) == 'cluster':
+        return _get_cluster_nodes_normalized(instance_id)
+    for nk in active_node_keys(instance_id):
         try:
-            nit = get_nitro(nk)
+            nit = get_nitro(nk, instance_id)
             r = nit._get('/config/hanode', custom_timeout=3)
             if 'hanode' in r: return r
         except Exception: pass
     return {}
 
-def track_ha_state_changes(nodes):
+def track_ha_state_changes(nodes, instance_id=None):
     last_states = {}
     if os.path.exists(HA_STATE_FILE):
         try:
@@ -747,12 +802,15 @@ def track_ha_state_changes(nodes):
         if ip and role:
             prev = last_states.get(ip)
             if prev and prev != role and 'UNKNOWN' not in role:
+                _inst = get_instance(instance_id)
                 evt = {
                     'timestamp': datetime.now(IL_TZ).isoformat(),
                     'type': 'Role Change',
                     'reason': f"Node HA State Shift",
                     'role_change': f"{prev} -> {role}",
-                    'ip': ip
+                    'ip': ip,
+                    'instance': str(_inst.get('id')),
+                    'instance_name': _inst.get('name'),
                 }
                 history.append(evt)
                 new_events.append(evt)
@@ -767,23 +825,23 @@ def track_ha_state_changes(nodes):
         with open(HA_STATE_FILE, 'w', encoding='utf-8') as f: json.dump(last_states, f)
     except Exception: pass
 
-def _roles_from_ha() -> tuple[dict, dict]:
-    raw = _get_ha_data_fast()
+def _roles_from_ha(instance_id=None) -> tuple[dict, dict]:
+    raw = _get_ha_data_fast(instance_id)
     roles = {}
     nodes = raw.get('hanode', []) if isinstance(raw, dict) else []
-    track_ha_state_changes(nodes)
+    track_ha_state_changes(nodes, instance_id)
     for n in nodes:
         if isinstance(n, dict):
             ip = n.get('ipaddress') or n.get('ip') or n.get('nsip') or ''
             if ip: roles[ip] = str(n.get('state') or n.get('hacurstate') or 'Unknown')
     return roles, raw
 
-def _build_node_overview(node_key: str) -> dict:
-    cfg = NETSCALER_CONFIG.get(node_key, {})
+def _build_node_overview(node_key: str, instance_id=None) -> dict:
+    cfg = get_instance(instance_id).get(node_key, {})
     ip = cfg.get('ip')
-    
+
     try:
-        nitro = get_nitro(node_key)
+        nitro = get_nitro(node_key, instance_id)
         stats = nitro._get('/stat/ns', custom_timeout=3)
         connected = bool(isinstance(stats, dict) and stats.get('ns'))
     except Exception:
@@ -797,7 +855,7 @@ def _build_node_overview(node_key: str) -> dict:
     except Exception: pass
 
     role = 'Unknown'
-    ha_data = _get_ha_data_fast()
+    ha_data = _get_ha_data_fast(instance_id)
     for n in ha_data.get('hanode', []):
         if isinstance(n, dict) and (n.get('ipaddress') or n.get('ip') or n.get('nsip')) == ip:
             role = n.get('state') or n.get('hacurstate') or n.get('haStatus') or 'Unknown'
@@ -973,40 +1031,97 @@ def api_ldap_test():
 # ======================================================================================
 # JSON API Endpoints (System & Apps)
 # ======================================================================================
+def _new_instance_id():
+    return 'inst-' + os.urandom(4).hex()
+
+def _clean_instance(inst, idx, stored_by_id):
+    """Validate one incoming instance and preserve any blank passwords from the
+    stored copy (so editing an instance without re-typing passwords is safe)."""
+    iid = str(inst.get('id') or '').strip() or _new_instance_id()
+    mode = str(inst.get('mode', 'ha')).lower()
+    if mode not in VALID_MODES:
+        mode = 'ha'
+    name = str(inst.get('name') or '').strip() or f"Instance {idx + 1}"
+    node_keys = ('primary',) if mode in ('standalone', 'cluster') else ('primary', 'secondary')
+    prev = stored_by_id.get(iid, {})
+    out = {'id': iid, 'name': name, 'mode': mode}
+    for k in node_keys:
+        nv = inst.get(k) if isinstance(inst.get(k), dict) else {}
+        proto = str(nv.get('protocol', 'https')).lower()
+        out[k] = {
+            'ip': str(nv.get('ip', '')).strip(),
+            'username': str(nv.get('username', '')).strip(),
+            'port': _int(nv.get('port', 443), 443),
+            'protocol': proto if proto in ('http', 'https') else 'https',
+            # Blank password on save keeps the stored one for that node.
+            'password': nv.get('password') or (prev.get(k) or {}).get('password', ''),
+        }
+    return out
+
 @app.route('/api/settings', methods=['GET', 'POST'])
 @login_required
 def api_settings():
     if request.method == 'POST':
-        new_config = request.get_json(force=True, silent=True)
-        if not isinstance(new_config, dict):
+        body = request.get_json(force=True, silent=True)
+        if not isinstance(body, dict):
             return jsonify({"success": False, "error": "Invalid payload"}), 400
-        mode = str(new_config.get('mode', NETSCALER_CONFIG.get('mode', 'ha'))).lower()
-        new_config['mode'] = mode if mode in VALID_MODES else 'ha'
+
         # Session inactivity timeout (minutes), clamped to a sane range.
         try:
-            st = int(new_config.get('session_timeout_minutes',
-                                    NETSCALER_CONFIG.get('session_timeout_minutes', DEFAULT_SESSION_TIMEOUT_MIN)))
+            st = int(body.get('session_timeout_minutes', get_session_timeout_min()))
         except Exception:
             st = DEFAULT_SESSION_TIMEOUT_MIN
-        new_config['session_timeout_minutes'] = min(max(st, 1), 1440)
-        for k in ('primary', 'secondary'):
-            # Coerce missing/non-dict node entries so .get() below can't crash.
-            if not isinstance(new_config.get(k), dict):
-                new_config[k] = {}
-            # Keep the stored password when the field is left blank.
-            if not new_config[k].get('password'):
-                new_config[k]['password'] = NETSCALER_CONFIG.get(k, {}).get('password', '')
-        save_nodes_config(new_config)
-        apply_session_timeout()
-        for node_key, cfg in node_items(): detect_api_mode_for_node(node_key, cfg)
-        return jsonify({"success": True, "message": "Settings updated"})
+        st = min(max(st, 1), 1440)
 
-    safe_config = json.loads(json.dumps(NETSCALER_CONFIG))
-    for k, _ in node_items():
-        safe_config[k]['password'] = ''
-    safe_config['mode'] = get_mode()
-    safe_config['session_timeout_minutes'] = get_session_timeout_min()
-    return jsonify(safe_config)
+        # Accept the new instances array; fall back to migrating a legacy body.
+        incoming = body.get('instances')
+        if not isinstance(incoming, list):
+            incoming = _migrate_config(body).get('instances', [])
+
+        stored_by_id = {str(i.get('id')): i for i in get_instances()}
+        clean, used = [], set()
+        for idx, inst in enumerate(incoming):
+            if not isinstance(inst, dict):
+                continue
+            ci = _clean_instance(inst, idx, stored_by_id)
+            while ci['id'] in used:            # guarantee unique ids
+                ci['id'] = _new_instance_id()
+            used.add(ci['id'])
+            clean.append(ci)
+        if not clean:
+            clean = _default_config()['instances']
+
+        save_nodes_config({'instances': clean, 'session_timeout_minutes': st})
+        apply_session_timeout()
+        API_MODE.clear()
+        for inst in clean:
+            for k, cfg in ((kk, vv) for kk, vv in inst.items() if isinstance(vv, dict)):
+                detect_api_mode_for_node(k, cfg, inst['id'])
+        return jsonify({"success": True, "message": "Settings updated",
+                        "instances": [{'id': i['id'], 'name': i['name']} for i in clean]})
+
+    # GET: full config with passwords blanked.
+    safe = json.loads(json.dumps(NETSCALER_CONFIG))
+    for inst in safe.get('instances', []):
+        for k, v in inst.items():
+            if isinstance(v, dict):
+                v['password'] = ''
+    safe['session_timeout_minutes'] = get_session_timeout_min()
+    return jsonify(safe)
+
+@app.route('/api/instances')
+@login_required
+def api_instances():
+    """Lightweight instance list for the switcher and the aggregate wall."""
+    out = []
+    for i in get_instances():
+        out.append({
+            'id': i.get('id'), 'name': i.get('name'),
+            'mode': str(i.get('mode', 'ha')).lower(),
+            'nodes': [{'key': k, 'ip': v.get('ip', '')}
+                      for k, v in i.items() if isinstance(v, dict)],
+        })
+    return jsonify({'instances': out})
 
 @app.route('/api/tls-cert', methods=['POST'])
 @login_required
@@ -1076,31 +1191,35 @@ def api_ping():
 @app.route('/api/caps')
 @login_required
 def api_caps():
-    mode = get_mode()
+    inst = request.args.get('instance')
+    mode = get_mode(inst)
     default_name = {'primary': 'Cluster (CLIP)' if mode == 'cluster' else 'Primary', 'secondary': 'Secondary'}
     nodes_data = {}
-    for k in active_node_keys():
-        v = NETSCALER_CONFIG.get(k, {})
+    for k in active_node_keys(inst):
+        v = get_instance(inst).get(k, {})
         try:
             if v.get('ip'):
-                hn = get_nitro(k)._get('/config/nshostname', custom_timeout=3).get('nshostname', [{}])[0].get('hostname')
+                hn = get_nitro(k, inst)._get('/config/nshostname', custom_timeout=3).get('nshostname', [{}])[0].get('hostname')
                 if not hn: hn = default_name.get(k, k.title())
             else: hn = f"{default_name.get(k, k.title())} Node"
         except Exception: hn = default_name.get(k, k.title())
         nodes_data[k] = {'ip': v.get('ip', ''), 'protocol': v.get('protocol', 'https'), 'port': v.get('port', 443), 'name': hn }
-    return jsonify({'api_mode': API_MODE, 'nodes': nodes_data, 'mode': mode})
+    api_mode = {k: get_api_mode(inst, k) for k in active_node_keys(inst)}
+    return jsonify({'api_mode': api_mode, 'nodes': nodes_data, 'mode': mode,
+                    'instance': get_instance(inst).get('id')})
 
 @app.route('/api/system-stats')
 @login_required
 def api_system_stats():
+    inst = request.args.get('instance')
     node = request.args.get('node')
     if node:
-        try: return jsonify({'node': node, 'api_mode': API_MODE.get(node, 'nitro'), **_build_node_overview(node)})
+        try: return jsonify({'node': node, 'api_mode': get_api_mode(inst, node), **_build_node_overview(node, inst)})
         except Exception as e: return jsonify({'error': str(e)}), 500
     try:
         return jsonify({
-            'primary': _build_node_overview('primary'),
-            'secondary': _build_node_overview('secondary'),
+            'primary': _build_node_overview('primary', inst),
+            'secondary': _build_node_overview('secondary', inst),
         })
     except Exception:
         return jsonify({'primary': {'connected': False}, 'secondary': {'connected': False}}), 200
@@ -1108,13 +1227,14 @@ def api_system_stats():
 @app.route('/api/ha-status')
 @login_required
 def api_ha_status():
-    ha_data = _get_ha_data_fast()
+    inst = request.args.get('instance')
+    ha_data = _get_ha_data_fast(inst)
     nodes = ha_data.get('hanode', []) if isinstance(ha_data, dict) else []
-    track_ha_state_changes(nodes)
-    
+    track_ha_state_changes(nodes, inst)
+
     def get_config_changed(node_key):
         try:
-            cfg_resp = get_nitro(node_key)._get('/config/nsconfig', custom_timeout=2).get('nsconfig')
+            cfg_resp = get_nitro(node_key, inst)._get('/config/nsconfig', custom_timeout=2).get('nsconfig')
             if isinstance(cfg_resp, list) and len(cfg_resp) > 0:
                 return str(cfg_resp[0].get('configchanged', 'false')).lower() in ['true', '1', 'yes']
             elif isinstance(cfg_resp, dict):
@@ -1123,9 +1243,9 @@ def api_ha_status():
         except Exception: return False
 
     hostnames = {}
-    for nk in active_node_keys():
+    for nk in active_node_keys(inst):
         try:
-            nit = get_nitro(nk)
+            nit = get_nitro(nk, inst)
             hn = nit._get('/config/nshostname', custom_timeout=2).get('nshostname', [{}])[0].get('hostname')
             if hn: hostnames[nit.ip] = hn
         except Exception: pass
@@ -1138,20 +1258,21 @@ def api_ha_status():
             st = str(n.get('state', '')).upper()
             n['name'] = 'Primary' if 'PRIMARY' in st else ('Secondary' if 'SECONDARY' in st else (hostnames.get(ip) or 'node'))
 
-    result = {'mode': get_mode(), 'hanode': nodes}
-    for nk in active_node_keys():
+    result = {'mode': get_mode(inst), 'hanode': nodes}
+    for nk in active_node_keys(inst):
         result[nk] = {'config_changed': get_config_changed(nk)}
     return jsonify(result)
 
 @app.route('/api/lb-vservers')
 @login_required
 def api_lb_vservers():
+    inst = request.args.get('instance')
     node = request.args.get('node')
     if not node: return jsonify({'connected': False, 'data': {'lbvserver': []}})
 
-    if API_MODE.get(node, 'nitro') == 'nextgen':
+    if get_api_mode(inst, node) == 'nextgen':
         try:
-            ng = get_nextgen(node)
+            ng = get_nextgen(node, inst)
             ng.login()
             apps = ng.list_applications()
             items = apps.get('applications', []) if isinstance(apps, dict) else (apps if isinstance(apps, list) else [])
@@ -1159,9 +1280,9 @@ def api_lb_vservers():
             ng.logout()
             return jsonify({'node': node, 'api_mode': 'nextgen', 'lbvserver': lbv_like})
         except Exception: pass
-            
+
     try:
-        data = get_nitro(node)._get('/config/lbvserver', custom_timeout=5) or {}
+        data = get_nitro(node, inst)._get('/config/lbvserver', custom_timeout=5) or {}
         return jsonify({'node': node, 'api_mode': 'nitro',
                         **({'lbvserver': data.get('lbvserver', [])} if isinstance(data, dict) else {'lbvserver': []})})
     except Exception: return jsonify({'lbvserver': []})
@@ -1169,20 +1290,21 @@ def api_lb_vservers():
 @app.route('/api/services')
 @login_required
 def api_services():
+    inst = request.args.get('instance')
     node = request.args.get('node')
     if not node: return jsonify({'connected': False, 'data': {'service': [], 'servicegroup': []}})
-            
-    if API_MODE.get(node, 'nitro') == 'nextgen':
+
+    if get_api_mode(inst, node) == 'nextgen':
         try:
-            ng = get_nextgen(node)
+            ng = get_nextgen(node, inst)
             ng.login()
             apps = ng.list_applications()
             ng.logout()
             return jsonify({'node': node, 'api_mode': 'nextgen', 'service': [], 'servicegroup': [], 'applications': apps})
         except Exception: pass
-            
+
     try:
-        nitro = get_nitro(node)
+        nitro = get_nitro(node, inst)
         svc  = nitro._get('/config/service', custom_timeout=5) or {}
         sgrp = nitro._get('/config/servicegroup', custom_timeout=5) or {}
         return jsonify({'node': node, 'api_mode': 'nitro',
@@ -1196,9 +1318,10 @@ def api_services():
 @app.route('/api/certificates')
 @login_required
 def api_certificates():
+    inst = request.args.get('instance')
     node = request.args.get('node') or 'primary'
     try:
-        nitro = get_nitro(node)
+        nitro = get_nitro(node, inst)
     except KeyError:
         return jsonify({'error': f"Unknown node '{node}'"}), 400
 
@@ -1294,13 +1417,15 @@ def _normalize_session(raw, kind):
 @app.route('/api/user-sessions')
 @login_required
 def api_user_sessions():
+    inst = request.args.get('instance')
+    instance_id = str(get_instance(inst).get('id'))
     node_req = request.args.get('node', 'primary')
     other_node = 'secondary' if node_req == 'primary' else 'primary'
     all_sessions = []
 
     for nk in [node_req, other_node]:
         try:
-            nitro = get_nitro(nk)
+            nitro = get_nitro(nk, inst)
             vpn_resp = nitro._get('/config/vpnsession', custom_timeout=4)
             aaa_resp = nitro._get('/config/aaasession', custom_timeout=4)
 
@@ -1318,11 +1443,11 @@ def api_user_sessions():
         except Exception:
             continue
 
-    # Persist what we just observed, then return the stored history (which
-    # includes these live sessions plus anything seen within the retention window).
+    # Persist what we just observed, then return the stored history for THIS
+    # instance (live sessions plus anything seen within the retention window).
     try:
-        db.upsert_sessions(node_req, all_sessions)
-        return jsonify({'sessions': db.get_sessions(days=db.RETENTION_DAYS),
+        db.upsert_sessions(node_req, all_sessions, instance=instance_id)
+        return jsonify({'sessions': db.get_sessions(days=db.RETENTION_DAYS, instance=instance_id),
                         'source': 'history', 'retention_days': db.RETENTION_DAYS})
     except Exception as e:
         logger.warning(f"Session history unavailable, returning live only: {e}")
@@ -1334,6 +1459,7 @@ def api_user_sessions():
 def api_session_ica():
     """Live ICA/RDP connection detail for a user (gateway, protocol, published
     resource). NetScaler only reports this for currently-active sessions."""
+    inst = request.args.get('instance')
     user = (request.args.get('user') or '').strip()
     node = request.args.get('node') or 'primary'
     if not user:
@@ -1341,7 +1467,7 @@ def api_session_ica():
     conns = []
     for nk in [node, ('secondary' if node == 'primary' else 'primary')]:
         try:
-            nitro = get_nitro(nk)
+            nitro = get_nitro(nk, inst)
         except Exception:
             continue
         # Try the ICA-connection object names used across builds.
@@ -1375,11 +1501,14 @@ def api_session_ica():
 @app.route('/api/failover-history')
 @login_required
 def api_failover_history():
+    inst = request.args.get('instance')
+    instance_id = str(get_instance(inst).get('id'))
+    inst_name = get_instance(inst).get('name')
     history = load_failover_history()
     changed = False
     new_events = []
 
-    ha_data = _get_ha_data_fast()
+    ha_data = _get_ha_data_fast(inst)
     nodes = ha_data.get('hanode', []) if isinstance(ha_data, dict) else []
 
     for n in nodes:
@@ -1395,12 +1524,14 @@ def api_failover_history():
                     'type': 'State Change',
                     'reason': f"Node {ip} state is {state}",
                     'role_change': f"Current: {state}",
-                    'ip': ip
+                    'ip': ip,
+                    'instance': instance_id,
+                    'instance_name': inst_name,
                 }
                 history.append(new_event)
                 new_events.append(new_event)
                 changed = True
-                
+
     if changed:
         save_failover_history(history)
         try: db.add_failover_events(new_events)
@@ -1410,11 +1541,12 @@ def api_failover_history():
     # legacy JSON if the DB is genuinely unavailable — an empty DB is a valid
     # answer, otherwise purged-but-stale JSON rows would reappear.
     try:
-        events = db.get_failover_events(days=db.RETENTION_DAYS)
+        events = db.get_failover_events(days=db.RETENTION_DAYS, instance=instance_id)
         return jsonify({'events': events, 'retention_days': db.RETENTION_DAYS})
     except Exception as e:
         logger.warning(f"Failover history DB unavailable, falling back to JSON: {e}")
 
+    history = [e for e in history if str(e.get('instance', instance_id)) == instance_id]
     history.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
     return jsonify({'events': history})
 
@@ -1422,6 +1554,7 @@ def api_failover_history():
 @login_required
 def api_unlock_user():
     body = request.get_json(force=True, silent=True) or {}
+    inst = body.get('instance')
     node_val = body.get('node') or 'primary'
     username_val = body.get('username') or ''
     if not isinstance(node_val, str) or not isinstance(username_val, str):
@@ -1431,7 +1564,7 @@ def api_unlock_user():
 
     if not username: return jsonify({"success": False, "error": "Missing username"}), 400
 
-    try: nitro = get_nitro(node)
+    try: nitro = get_nitro(node, inst)
     except KeyError: return jsonify({"success": False, "error": f"Unknown node '{node}'"}), 400
 
     resp = nitro.unlock_user(username)
@@ -1467,7 +1600,9 @@ try:
 except Exception as e:
     logger.error(f"History DB init failed: {e}")
 
-for node_key, cfg in node_items(): detect_api_mode_for_node(node_key, cfg)
+for _inst in get_instances():
+    for _nk, _cfg in ((k, v) for k, v in _inst.items() if isinstance(v, dict)):
+        detect_api_mode_for_node(_nk, _cfg, _inst.get('id'))
 
 logger.info(f"API modes at startup: {API_MODE}")
 logger.info("========================================")

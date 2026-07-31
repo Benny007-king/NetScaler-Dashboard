@@ -2,7 +2,7 @@
 
 A modern Flask dashboard for NetScaler with **parallel support** for both the **NITRO API** and the **Next-Gen API** (14.1+). The app auto-detects which API a node supports and **falls back to NITRO** when Next-Gen is unavailable.
 
-Works for **standalone**, **HA-pair**, and **cluster (CLIP)** deployments. Serves **HTTPS on 443** with a self-signed certificate out of the box (replaceable from Settings), and supports **local** and **LDAP/AD** login.
+Manage **multiple NetScaler deployments** from one dashboard — any mix of **standalone**, **HA-pair**, and **cluster (CLIP)** instances (e.g. two HA pairs plus three standalones). An **Instance switcher** in the header scopes every tab to the selected deployment. Serves **HTTPS on 443** with a self-signed certificate out of the box (replaceable from Settings), and supports **local** and **LDAP/AD** login.
 
 Tabs: **Overview**, **Applications / Services**, **Failover History**, **User Sessions**, **Unlock Users**.
 
@@ -10,7 +10,9 @@ Tabs: **Overview**, **Applications / Services**, **Failover History**, **User Se
 
 ## Key Features
 
-- **Deployment modes**: `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode`). Selectable in **Settings**.
+- **Multiple instances**: manage many deployments at once. Add / rename / remove them in **Settings → NetScaler Instances** and pick the active one from the header **Instance** switcher; every tab, plus session and failover history, is scoped to it.
+- **Deployment modes** (per instance): `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode`). Selectable in **Settings**.
+- **HA resilience**: if one node of an HA pair is down, the dashboard keeps polling — HA status fails over to whichever node answers, the dead node is shown offline, the role change is logged as a failover, and the dead node fails fast (~3s connect timeout) instead of hanging.
 - **Dual-Stack** runtime: auto-detect Next-Gen per node, fall back to NITRO.
 - **HTTPS on 443** with a cert signed by a **local CA** generated on first boot. Install the CA for warning-free HTTPS, upload your own PEM cert/key, or generate a CSR for your corporate CA — all from **Settings → TLS Certificate**.
 - **Authentication**: local admin account and/or **LDAP/Active Directory** (`AUTH_BACKENDS=local,ldap`), with optional allowed-group enforcement.
@@ -46,18 +48,28 @@ Runtime files that are **gitignored** (contain secrets/state, created at runtime
 
 ### Nodes — `nodes_config.json`
 
-Copy `nodes_config.example.json` → `nodes_config.json` (or configure it live from **Settings**):
+Configure it live from **Settings → NetScaler Instances** (recommended), or edit `nodes_config.json` directly. It holds a list of **instances**, each with its own mode and nodes:
 
 ```json
 {
-  "mode": "ha",
-  "primary":   { "ip": "10.0.0.100", "port": 443, "protocol": "https", "username": "nsroot", "password": "" },
-  "secondary": { "ip": "10.0.0.200", "port": 443, "protocol": "https", "username": "nsroot", "password": "" }
+  "instances": [
+    {
+      "id": "default", "name": "DC1 HA pair", "mode": "ha",
+      "primary":   { "ip": "10.0.0.100", "port": 443, "protocol": "https", "username": "nsroot", "password": "" },
+      "secondary": { "ip": "10.0.0.200", "port": 443, "protocol": "https", "username": "nsroot", "password": "" }
+    },
+    {
+      "id": "lab", "name": "Lab standalone", "mode": "standalone",
+      "primary": { "ip": "10.0.0.50", "port": 443, "protocol": "https", "username": "nsroot", "password": "" }
+    }
+  ],
+  "session_timeout_minutes": 15
 }
 ```
 
-- `mode`: `standalone` | `ha` | `cluster`. In `cluster`, set `primary` to the **Cluster IP (CLIP)**; members are discovered automatically.
-- Passwords are stored in this gitignored file. Leaving the password blank in the Settings form keeps the currently stored value.
+- `mode` (per instance): `standalone` | `ha` | `cluster`. In `cluster`, set `primary` to the **Cluster IP (CLIP)**; members are discovered automatically.
+- Passwords are stored in this gitignored file. Leaving a password blank in the Settings form keeps the currently stored value for that node.
+- **Backward compatible:** a legacy single-deployment file (top-level `mode`/`primary`/`secondary`) is migrated automatically into one `"Default"` instance on first start.
 
 ### Environment — `.env`
 

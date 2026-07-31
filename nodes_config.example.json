@@ -1,17 +1,36 @@
 {
-  "mode": "ha",
-  "primary": {
-    "ip": "192.0.2.10",
-    "port": 443,
-    "protocol": "https",
-    "username": "nsroot",
-    "password": ""
-  },
-  "secondary": {
-    "ip": "192.0.2.11",
-    "port": 443,
-    "protocol": "https",
-    "username": "nsroot",
-    "password": ""
-  }
+  "instances": [
+    {
+      "id": "default",
+      "name": "DC1 HA pair",
+      "mode": "ha",
+      "primary": {
+        "ip": "192.0.2.10",
+        "port": 443,
+        "protocol": "https",
+        "username": "nsroot",
+        "password": ""
+      },
+      "secondary": {
+        "ip": "192.0.2.11",
+        "port": 443,
+        "protocol": "https",
+        "username": "nsroot",
+        "password": ""
+      }
+    },
+    {
+      "id": "lab",
+      "name": "Lab standalone",
+      "mode": "standalone",
+      "primary": {
+        "ip": "192.0.2.50",
+        "port": 443,
+        "protocol": "https",
+        "username": "nsroot",
+        "password": ""
+      }
+    }
+  ],
+  "session_timeout_minutes": 15
 }
