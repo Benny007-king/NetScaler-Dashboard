@@ -6,6 +6,21 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.8.0
+- **Sessions: failed attempts & locked accounts.** The Sessions tab now also lists
+  non-connection events — a **Failed** row (status `Failed`, the attempt time in
+  Start, End left blank) and, when an account is locked on the NetScaler, a
+  **Locked** row. Both are live appliance state (best-effort from `/config/aaauser`),
+  shown on top of the stored session history.
+- **Gateway name resolution.** The main session list is now enriched from live ICA
+  connections (`/config/vpnicaconnection`), which carry the gateway/vserver name —
+  so a session whose own object omitted it (including the AAA placeholder) shows
+  the real gateway when the user has an active gateway/ICA connection.
+- **New `/api/session-debug`** — a redacted, value-truncated dump of the raw
+  `vpnsession` / `aaasession` / `vpnicaconnection` / `aaauser` / `systemuser`
+  fields, so session field mapping (gateway, locked, failed) can be pinned to your
+  appliance's exact NITRO field names across builds.
+
 ## 1.7.1
 - **One-command upgrade.** New `upgrade.sh` (Linux/macOS) and `upgrade.bat`
   (Windows) do the whole update: re-attach to `main`, fast-forward to the latest

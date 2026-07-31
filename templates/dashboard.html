@@ -1071,7 +1071,12 @@ async function loadSessions() {
     });
 
     window._sessData = filteredArr;   // keep for row expansion
-    const statusBadgeCls = st => /active/i.test(st) ? 'badge-success' : 'badge-warning';
+    const statusBadgeCls = st => {
+        const s = String(st || '').toLowerCase();
+        if (/active/.test(s)) return 'badge-success';
+        if (/lock|fail/.test(s)) return 'badge-danger';
+        return 'badge-warning';   // Terminated, Unknown, …
+    };
     const typeBadgeCls = t => /vpn/i.test(t) ? 'badge-success' : 'badge-warning';
     const rows = filteredArr.length ? filteredArr.map((s, i) => {
         const caret = `<svg class="w-4 h-4 transition-transform text-slate-400" data-caret="${i}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>`;

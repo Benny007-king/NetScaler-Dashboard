@@ -17,7 +17,7 @@ Tabs: **Overview**, **Applications / Services**, **Failover History**, **User Se
 - **HTTPS on 443** with a cert signed by a **local CA** generated on first boot. Install the CA for warning-free HTTPS, upload your own PEM cert/key, or generate a CSR for your corporate CA — all from **Settings → TLS Certificate**.
 - **Authentication**: local admin account and/or **LDAP/Active Directory** (`AUTH_BACKENDS=local,ldap`), with optional allowed-group enforcement.
 - **Applications / Services**: Next-Gen mode shows Applications; NITRO mode shows LB vServers plus Services / Service Groups.
-- **Failover History & User Sessions**: date-range filters with a pop-up picker; **Excel/PDF** export (client-side).
+- **Failover History & User Sessions**: date-range filters with a pop-up picker; **Excel/PDF** export (client-side). Sessions also surface **failed login attempts** (status `Failed`, attempt time, no end) and **locked accounts** (status `Locked`), and resolve the **gateway name** from live ICA connections. `GET /api/session-debug` dumps the raw NITRO session/user fields (redacted) to help map fields across builds.
 - **Unlock Users**: unlock a locked AAA user (NITRO, with automatic `?action=unlock` fallback).
 
 ---

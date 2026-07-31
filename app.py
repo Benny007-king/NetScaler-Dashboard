@@ -1414,6 +1414,69 @@ def _normalize_session(raw, kind):
         'detail': detail,
     }
 
+def _synthetic_row(user, status, when='', conn_type='—', gateway='—', ip='—', extra=None):
+    """A non-connection row (Failed attempt / Locked account) shaped like a session
+    so it renders in the same table. Not persisted — reflects live appliance state."""
+    detail = {'gateway': gateway, 'protocol': '—', 'resource': '—',
+              'source_ip': ip, 'intranet_ip': '—', 'client_os': '—', 'kind': status}
+    if extra:
+        detail.update(extra)
+    return {
+        'user': user or 'Unknown', 'session_id': f"{user}|{status}",
+        'type': conn_type, 'status': status, 'duration': '—',
+        'ip': ip or '—', 'gateway': gateway or '—',
+        'start': when or '', 'end': '', 'detail': detail,
+    }
+
+def _ica_gateway_map(nitro):
+    """username(lower) -> gateway/vserver name, from live ICA connections. Used to
+    fill the gateway on the main session list (vpn/aaa sessions often omit it)."""
+    out = {}
+    for path, key in (('/config/vpnicaconnection', 'vpnicaconnection'),
+                      ('/config/icaconnection', 'icaconnection')):
+        try:
+            d = nitro._get(path, custom_timeout=4) or {}
+            items = d.get(key)
+            if isinstance(items, list) and items:
+                for raw in items:
+                    s = {str(k).lower(): v for k, v in raw.items()}
+                    u = str(s.get('username') or s.get('user') or '').lower()
+                    g = _pick(s, ['vservername', 'vserver', 'gateway', 'gatewayname', 'vsvrname', 'agname'])
+                    if u and g:
+                        out[u] = g
+                if out:
+                    break
+        except Exception:
+            continue
+    return out
+
+def _locked_and_failed_rows(nitro):
+    """Best-effort Locked/Failed rows from AAA users. NITRO field names vary by
+    build — see /api/session-debug to confirm what your appliance exposes."""
+    rows = []
+    try:
+        data = nitro._get('/config/aaauser', custom_timeout=4) or {}
+        for raw in (data.get('aaauser') or []):
+            if not isinstance(raw, dict):
+                continue
+            u = {str(k).lower(): v for k, v in raw.items()}
+            name = u.get('username') or u.get('name')
+            if not name:
+                continue
+            locked = str(_pick(u, ['locked', 'lockedstate', 'islocked', 'lockout',
+                                   'accountlocked', 'lockedaccount'])).lower()
+            if locked in ('true', '1', 'yes', 'locked', 'on'):
+                rows.append(_synthetic_row(name, 'Locked', conn_type='AAA account',
+                            when=_pick(u, ['lockedtime', 'locktime', 'lastlockouttime'])))
+            fails = _pick(u, ['failedlogins', 'failedloginattempts', 'invalidlogincount', 'failattempts'])
+            if fails and str(fails) not in ('0', '0.0'):
+                rows.append(_synthetic_row(name, 'Failed', conn_type=f'{fails} attempt(s)',
+                            ip=_pick(u, ['lastfailedip', 'clientip', 'srcip']),
+                            when=_pick(u, ['lastfailedlogin', 'lastfailuretime', 'lastinvalidlogin'])))
+    except Exception:
+        pass
+    return rows
+
 @app.route('/api/user-sessions')
 @login_required
 def api_user_sessions():
@@ -1422,6 +1485,7 @@ def api_user_sessions():
     node_req = request.args.get('node', 'primary')
     other_node = 'secondary' if node_req == 'primary' else 'primary'
     all_sessions = []
+    used_node = None
 
     for nk in [node_req, other_node]:
         try:
@@ -1439,20 +1503,82 @@ def api_user_sessions():
             for raw_s in aaa_sessions:
                 if str(raw_s.get('username')) not in seen_users:
                     all_sessions.append(_normalize_session(raw_s, 'aaa'))
+            used_node = nk
             break
         except Exception:
             continue
 
-    # Persist what we just observed, then return the stored history for THIS
-    # instance (live sessions plus anything seen within the retention window).
+    # Fill a missing gateway from live ICA connections (they carry the vserver name).
+    extra_rows = []
+    if used_node is not None:
+        try:
+            live = get_nitro(used_node, inst)
+            gw_map = _ica_gateway_map(live)
+            if gw_map:
+                for s in all_sessions:
+                    gwv = str(s.get('gateway') or '')
+                    # Fill anything we couldn't resolve, including the AAA placeholder,
+                    # when the user has a live gateway/ICA connection.
+                    if gwv in ('Unknown', '—', '') or gwv.startswith('N/A'):
+                        g = gw_map.get(str(s.get('user')).lower())
+                        if g:
+                            s['gateway'] = g
+                            s['detail']['gateway'] = g
+            extra_rows = _locked_and_failed_rows(live)
+        except Exception:
+            pass
+
+    # Persist real sessions, then return Failed/Locked (live, not persisted) on top
+    # of the stored history for THIS instance (live + retention window).
     try:
         db.upsert_sessions(node_req, all_sessions, instance=instance_id)
-        return jsonify({'sessions': db.get_sessions(days=db.RETENTION_DAYS, instance=instance_id),
+        stored = db.get_sessions(days=db.RETENTION_DAYS, instance=instance_id)
+        return jsonify({'sessions': extra_rows + stored,
                         'source': 'history', 'retention_days': db.RETENTION_DAYS})
     except Exception as e:
         logger.warning(f"Session history unavailable, returning live only: {e}")
 
-    return jsonify({'sessions': all_sessions, 'source': 'live'})
+    return jsonify({'sessions': extra_rows + all_sessions, 'source': 'live'})
+
+@app.route('/api/session-debug')
+@login_required
+def api_session_debug():
+    """Raw NITRO field-name dump (values truncated, secrets redacted) so session
+    field mapping — gateway, locked, failed — can be pinned to your build."""
+    inst = request.args.get('instance')
+    node = request.args.get('node') or 'primary'
+    try:
+        nitro = get_nitro(node, inst)
+    except KeyError:
+        return jsonify({'error': f"Unknown node '{node}'"}), 400
+
+    def sample(path, key, n=3):
+        try:
+            d = nitro._get(path, custom_timeout=6) or {}
+            v = d.get(key)
+            items = v if isinstance(v, list) else ([v] if v else [])
+            red = []
+            for it in items[:n]:
+                if isinstance(it, dict):
+                    row = {}
+                    for k, vv in it.items():
+                        if re.search(r'key|pass|secret|token|cookie', str(k), re.I):
+                            row[k] = '***redacted***'
+                        else:
+                            row[k] = str(vv)[:60]
+                    red.append(row)
+            return {'count': len(items), 'sample': red}
+        except Exception as e:
+            return {'error': str(e)}
+
+    return jsonify({
+        'instance': get_instance(inst).get('id'), 'node': node,
+        'vpnsession': sample('/config/vpnsession', 'vpnsession'),
+        'aaasession': sample('/config/aaasession', 'aaasession'),
+        'vpnicaconnection': sample('/config/vpnicaconnection', 'vpnicaconnection'),
+        'aaauser': sample('/config/aaauser', 'aaauser', n=8),
+        'systemuser': sample('/config/systemuser', 'systemuser', n=8),
+    })
 
 @app.route('/api/session-ica')
 @login_required
