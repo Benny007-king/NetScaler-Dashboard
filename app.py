@@ -695,6 +695,9 @@ def active_node_keys(instance_id=None):
 
 # Detected API capability per node, namespaced by instance: {instance_id: {node_key: 'nitro'|'nextgen'}}.
 API_MODE = {}
+# Last-known NITRO hostname per (instance_id, node_key), so a brief unreachable
+# blip doesn't blank a node's name in the UI (notably the secondary).
+_HOSTNAME_CACHE = {}
 
 def get_api_mode(instance_id, node_key):
     return API_MODE.get(str(get_instance(instance_id).get('id')), {}).get(node_key, 'nitro')
@@ -1192,17 +1195,26 @@ def api_ping():
 @login_required
 def api_caps():
     inst = request.args.get('instance')
+    iid = get_instance(inst).get('id')
     mode = get_mode(inst)
     default_name = {'primary': 'Cluster (CLIP)' if mode == 'cluster' else 'Primary', 'secondary': 'Secondary'}
     nodes_data = {}
     for k in active_node_keys(inst):
         v = get_instance(inst).get(k, {})
+        cache_key = (iid, k)
         try:
             if v.get('ip'):
                 hn = get_nitro(k, inst)._get('/config/nshostname', custom_timeout=3).get('nshostname', [{}])[0].get('hostname')
-                if not hn: hn = default_name.get(k, k.title())
-            else: hn = f"{default_name.get(k, k.title())} Node"
-        except Exception: hn = default_name.get(k, k.title())
+                if hn:
+                    _HOSTNAME_CACHE[cache_key] = hn      # remember the real hostname
+                else:
+                    hn = _HOSTNAME_CACHE.get(cache_key) or default_name.get(k, k.title())
+            else:
+                hn = f"{default_name.get(k, k.title())} Node"
+        except Exception:
+            # Node briefly unreachable — keep the last-known hostname if we have one
+            # so a network blip doesn't blank the name (e.g. the secondary).
+            hn = _HOSTNAME_CACHE.get(cache_key) or default_name.get(k, k.title())
         nodes_data[k] = {'ip': v.get('ip', ''), 'protocol': v.get('protocol', 'https'), 'port': v.get('port', 443), 'name': hn }
     api_mode = {k: get_api_mode(inst, k) for k in active_node_keys(inst)}
     return jsonify({'api_mode': api_mode, 'nodes': nodes_data, 'mode': mode,
@@ -1543,41 +1555,70 @@ def api_user_sessions():
 @app.route('/api/session-debug')
 @login_required
 def api_session_debug():
-    """Raw NITRO field-name dump (values truncated, secrets redacted) so session
-    field mapping — gateway, locked, failed — can be pinned to your build."""
+    """One-shot diagnostics (values truncated, secrets redacted): per-node
+    reachability + hostname (for the 'secondary hostname missing' case) and the
+    raw session/user field names (to pin gateway/locked/failed mapping per build)."""
     inst = request.args.get('instance')
-    node = request.args.get('node') or 'primary'
-    try:
-        nitro = get_nitro(node, inst)
-    except KeyError:
-        return jsonify({'error': f"Unknown node '{node}'"}), 400
 
-    def sample(path, key, n=3):
+    def redact_row(it):
+        row = {}
+        for k, vv in it.items():
+            if re.search(r'key|pass|secret|token|cookie', str(k), re.I):
+                row[k] = '***redacted***'
+            else:
+                row[k] = str(vv)[:60]
+        return row
+
+    def sample(nitro, path, key, n=3):
         try:
             d = nitro._get(path, custom_timeout=6) or {}
             v = d.get(key)
             items = v if isinstance(v, list) else ([v] if v else [])
-            red = []
-            for it in items[:n]:
-                if isinstance(it, dict):
-                    row = {}
-                    for k, vv in it.items():
-                        if re.search(r'key|pass|secret|token|cookie', str(k), re.I):
-                            row[k] = '***redacted***'
-                        else:
-                            row[k] = str(vv)[:60]
-                    red.append(row)
-            return {'count': len(items), 'sample': red}
+            return {'count': len(items),
+                    'sample': [redact_row(it) for it in items[:n] if isinstance(it, dict)]}
         except Exception as e:
             return {'error': str(e)}
 
+    # Per-node: is it reachable, and what hostname does NITRO report?
+    nodes_diag = {}
+    for nk in active_node_keys(inst):
+        cfg = get_instance(inst).get(nk, {})
+        entry = {'configured_ip': cfg.get('ip', ''), 'protocol': cfg.get('protocol'), 'port': cfg.get('port')}
+        if not cfg.get('ip'):
+            entry['status'] = 'no IP configured'
+            nodes_diag[nk] = entry
+            continue
+        try:
+            nit = get_nitro(nk, inst)
+            hn = (nit._get('/config/nshostname', custom_timeout=3).get('nshostname', [{}]) or [{}])[0].get('hostname')
+            entry['reachable'] = True
+            entry['nshostname'] = hn or '(empty)'
+        except Exception as e:
+            entry['reachable'] = False
+            entry['error'] = str(e)[:120]
+        nodes_diag[nk] = entry
+
+    # Session/user field names — from the first reachable node.
+    fields = {}
+    for nk in active_node_keys(inst):
+        if nodes_diag.get(nk, {}).get('reachable'):
+            nit = get_nitro(nk, inst)
+            fields = {
+                'from_node': nk,
+                'hanode': sample(nit, '/config/hanode', 'hanode'),
+                'vpnsession': sample(nit, '/config/vpnsession', 'vpnsession'),
+                'aaasession': sample(nit, '/config/aaasession', 'aaasession'),
+                'vpnicaconnection': sample(nit, '/config/vpnicaconnection', 'vpnicaconnection'),
+                'aaauser': sample(nit, '/config/aaauser', 'aaauser', n=8),
+                'systemuser': sample(nit, '/config/systemuser', 'systemuser', n=8),
+            }
+            break
+
     return jsonify({
-        'instance': get_instance(inst).get('id'), 'node': node,
-        'vpnsession': sample('/config/vpnsession', 'vpnsession'),
-        'aaasession': sample('/config/aaasession', 'aaasession'),
-        'vpnicaconnection': sample('/config/vpnicaconnection', 'vpnicaconnection'),
-        'aaauser': sample('/config/aaauser', 'aaauser', n=8),
-        'systemuser': sample('/config/systemuser', 'systemuser', n=8),
+        'instance': get_instance(inst).get('id'),
+        'mode': get_mode(inst),
+        'nodes': nodes_diag,
+        'fields': fields or {'note': 'no reachable node — check the reachability above'},
     })
 
 @app.route('/api/session-ica')

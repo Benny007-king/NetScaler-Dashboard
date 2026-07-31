@@ -6,6 +6,19 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.8.1
+- **Fix: a node's hostname could blank out on a brief blip.** The header/node
+  labels are fetched live from each node; when a node (typically the **secondary**)
+  was momentarily unreachable, its name fell back to the generic "Secondary". The
+  dashboard now caches the last-known hostname per node and keeps showing it
+  through a transient outage.
+- **`/api/session-debug` is now a one-shot diagnostic.** It reports, per node,
+  **reachability + the hostname NITRO returns** (so the "secondary hostname
+  missing" case is obvious), alongside the redacted raw field names for
+  `hanode` / `vpnsession` / `aaasession` / `vpnicaconnection` / `aaauser` /
+  `systemuser` — everything needed to pin gateway/locked/failed mapping to a
+  specific build, in a single page.
+
 ## 1.8.0
 - **Sessions: failed attempts & locked accounts.** The Sessions tab now also lists
   non-connection events — a **Failed** row (status `Failed`, the attempt time in
