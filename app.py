@@ -1462,6 +1462,70 @@ def _ica_gateway_map(nitro):
             continue
     return out
 
+def _system_session_rows(nitro):
+    """Active management-plane logins (GUI / CLI / API) from /config/systemsession.
+    On an LB-only appliance these are the 'sessions' that matter — there are no
+    Gateway/AAA sessions. Persisted like normal sessions (Active → Terminated)."""
+    rows = []
+    try:
+        d = nitro._get('/config/systemsession', custom_timeout=4) or {}
+        for raw in (d.get('systemsession') or []):
+            if not isinstance(raw, dict):
+                continue
+            s = {str(k).lower(): v for k, v in raw.items()}
+            user = s.get('username') or '—'
+            ip = _pick(s, ['clientip', 'ipaddress', 'ip', 'srcip'])
+            login = _pick(s, ['logintime', 'starttime', 'sessionstarttime'])
+            sid = _pick(s, ['sid', 'sessionid', 'id']) or f"{user}|{ip}"
+            iface = _pick(s, ['currentsession']) and 'This session' or _pick(s, ['type', 'interface'])
+            rows.append({
+                'user': user, 'session_id': f'sys|{sid}',
+                'type': 'Management', 'status': 'Active', 'duration': '—',
+                'ip': ip or '—', 'gateway': '—',
+                'start': login or '', 'end': 'Active',
+                'detail': {'gateway': '—', 'protocol': iface or 'Admin/API',
+                           'resource': 'Management plane', 'source_ip': ip or '—',
+                           'intranet_ip': '—', 'client_os': '—', 'kind': 'Management session'},
+            })
+    except Exception:
+        pass
+    return rows
+
+def _audit_failed_locked_rows(nitro):
+    """Failed logins / lockouts parsed from the appliance audit log — the real
+    source for management (system) accounts, which don't live in aaauser. Best
+    effort across log formats; /api/session-debug shows the raw lines to tune it."""
+    rows, seen = [], set()
+    try:
+        d = nitro._get('/config/auditmessages?args=loglevel:ALL,numofmesgs:100', custom_timeout=6) or {}
+        for it in (d.get('auditmessages') or []):
+            line = str(it.get('value', '')) if isinstance(it, dict) else str(it)
+            low = line.lower()
+            is_lock = 'lock' in low and 'user' in low
+            is_fail = (('login' in low or 'logon' in low or 'authentic' in low)
+                       and ('fail' in low or 'illegal' in low or 'denied' in low or 'invalid' in low))
+            if not (is_lock or is_fail):
+                continue
+            m = re.search(r'user[:\s]+"?([A-Za-z0-9._\\@-]+)', line, re.I)
+            user = m.group(1) if m else '—'
+            ipm = re.search(r'(?:remote_ip|client_ip|clientip|from|source)[:\s"]+([0-9.]+)', line, re.I)
+            ip = ipm.group(1) if ipm else '—'
+            tm = re.match(r'\s*([0-9/]{6,}:[0-9:]+)', line)
+            when = tm.group(1) if tm else ''
+            status = 'Locked' if is_lock else 'Failed'
+            key = (user, status, when)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(_synthetic_row(user, status, when=when, ip=ip,
+                        conn_type='Mgmt lockout' if is_lock else 'Mgmt login',
+                        extra={'resource': line[:200], 'protocol': 'Audit log'}))
+            if len(rows) >= 30:
+                break
+    except Exception:
+        pass
+    return rows
+
 def _locked_and_failed_rows(nitro):
     """Best-effort Locked/Failed rows from AAA users. NITRO field names vary by
     build — see /api/session-debug to confirm what your appliance exposes."""
@@ -1525,6 +1589,8 @@ def api_user_sessions():
     if used_node is not None:
         try:
             live = get_nitro(used_node, inst)
+            # Management-plane logins (the real sessions on an LB-only appliance).
+            all_sessions.extend(_system_session_rows(live))
             gw_map = _ica_gateway_map(live)
             if gw_map:
                 for s in all_sessions:
@@ -1536,7 +1602,8 @@ def api_user_sessions():
                         if g:
                             s['gateway'] = g
                             s['detail']['gateway'] = g
-            extra_rows = _locked_and_failed_rows(live)
+            # Failed/locked: audit log (management accounts) + AAA users (gateway).
+            extra_rows = _audit_failed_locked_rows(live) + _locked_and_failed_rows(live)
         except Exception:
             pass
 
@@ -1603,14 +1670,28 @@ def api_session_debug():
     for nk in active_node_keys(inst):
         if nodes_diag.get(nk, {}).get('reachable'):
             nit = get_nitro(nk, inst)
+            # Recent audit-log lines (the real source of failed logins / lockouts
+            # on an LB appliance). Values are log text, not secrets — show more.
+            def audit(nit):
+                try:
+                    d = nit._get('/config/auditmessages?args=loglevel:ALL,numofmesgs:60', custom_timeout=6) or {}
+                    items = d.get('auditmessages') or []
+                    lines = [str(it.get('value', it))[:240] for it in items if isinstance(it, dict)]
+                    # Surface anything login/lockout related first.
+                    hits = [ln for ln in lines if re.search(r'login|logon|lock|fail|denied|authenticat', ln, re.I)]
+                    return {'count': len(lines), 'login_related': hits[:15], 'first_lines': lines[:5]}
+                except Exception as e:
+                    return {'error': str(e)}
             fields = {
                 'from_node': nk,
                 'hanode': sample(nit, '/config/hanode', 'hanode'),
+                'systemsession': sample(nit, '/config/systemsession', 'systemsession', n=6),
                 'vpnsession': sample(nit, '/config/vpnsession', 'vpnsession'),
                 'aaasession': sample(nit, '/config/aaasession', 'aaasession'),
                 'vpnicaconnection': sample(nit, '/config/vpnicaconnection', 'vpnicaconnection'),
                 'aaauser': sample(nit, '/config/aaauser', 'aaauser', n=8),
                 'systemuser': sample(nit, '/config/systemuser', 'systemuser', n=8),
+                'auditmessages': audit(nit),
             }
             break
 

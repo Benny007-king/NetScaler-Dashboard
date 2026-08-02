@@ -6,6 +6,22 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.9.0
+- **Management (system) sessions & logins.** On an LB-only appliance there are no
+  Gateway/AAA sessions — the real logins are **management** ones. The Sessions tab
+  now lists active admin/API/CLI sessions from `/config/systemsession` (type
+  `Management`, shown Active while live, Terminated after logout), so you finally
+  see who's connected even without a Gateway configured.
+- **Failed logins & lockouts from the audit log.** `Failed` and `Locked` rows are
+  now parsed from the appliance **audit log** (`/config/auditmessages`) — the real
+  source for management accounts (which aren't in `aaauser`). A failed sign-in
+  shows status `Failed`, the attempt time and source IP, with the raw log line in
+  the expanded detail; a lockout shows `Locked`. AAA-user lock/fail detection is
+  still included for Gateway deployments.
+- **`/api/session-debug`** now also dumps `systemsession` and recent
+  login-related `auditmessages`, so the failed/locked parser can be tuned to a
+  specific build's log format.
+
 ## 1.8.1
 - **Fix: a node's hostname could blank out on a brief blip.** The header/node
   labels are fetched live from each node; when a node (typically the **secondary**)
