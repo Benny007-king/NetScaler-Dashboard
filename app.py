@@ -1426,15 +1426,15 @@ def _normalize_session(raw, kind):
         'detail': detail,
     }
 
-def _synthetic_row(user, status, when='', conn_type='—', gateway='—', ip='—', extra=None):
+def _synthetic_row(user, status, when='', conn_type='—', gateway='—', ip='—', extra=None, sid=None):
     """A non-connection row (Failed attempt / Locked account) shaped like a session
-    so it renders in the same table. Not persisted — reflects live appliance state."""
+    so it renders in the same table. Persisted with its explicit status."""
     detail = {'gateway': gateway, 'protocol': '—', 'resource': '—',
               'source_ip': ip, 'intranet_ip': '—', 'client_os': '—', 'kind': status}
     if extra:
         detail.update(extra)
     return {
-        'user': user or 'Unknown', 'session_id': f"{user}|{status}",
+        'user': user or 'Unknown', 'session_id': sid or f"{user}|{status}",
         'type': conn_type, 'status': status, 'duration': '—',
         'ip': ip or '—', 'gateway': gateway or '—',
         'start': when or '', 'end': '', 'detail': detail,
@@ -1462,35 +1462,6 @@ def _ica_gateway_map(nitro):
             continue
     return out
 
-def _system_session_rows(nitro):
-    """Active management-plane logins (GUI / CLI / API) from /config/systemsession.
-    On an LB-only appliance these are the 'sessions' that matter — there are no
-    Gateway/AAA sessions. Persisted like normal sessions (Active → Terminated)."""
-    rows = []
-    try:
-        d = nitro._get('/config/systemsession', custom_timeout=4) or {}
-        for raw in (d.get('systemsession') or []):
-            if not isinstance(raw, dict):
-                continue
-            s = {str(k).lower(): v for k, v in raw.items()}
-            user = s.get('username') or '—'
-            ip = _pick(s, ['clientip', 'ipaddress', 'ip', 'srcip'])
-            login = _pick(s, ['logintime', 'starttime', 'sessionstarttime'])
-            sid = _pick(s, ['sid', 'sessionid', 'id']) or f"{user}|{ip}"
-            iface = _pick(s, ['currentsession']) and 'This session' or _pick(s, ['type', 'interface'])
-            rows.append({
-                'user': user, 'session_id': f'sys|{sid}',
-                'type': 'Management', 'status': 'Active', 'duration': '—',
-                'ip': ip or '—', 'gateway': '—',
-                'start': login or '', 'end': 'Active',
-                'detail': {'gateway': '—', 'protocol': iface or 'Admin/API',
-                           'resource': 'Management plane', 'source_ip': ip or '—',
-                           'intranet_ip': '—', 'client_os': '—', 'kind': 'Management session'},
-            })
-    except Exception:
-        pass
-    return rows
-
 def _audit_failed_locked_rows(nitro):
     """Failed logins / lockouts parsed from the appliance audit log — the real
     source for management (system) accounts, which don't live in aaauser. Best
@@ -1517,7 +1488,10 @@ def _audit_failed_locked_rows(nitro):
             if key in seen:
                 continue
             seen.add(key)
-            rows.append(_synthetic_row(user, status, when=when, ip=ip,
+            # Unique per attempt (time-stamped) so each failed login persists as its
+            # own row; a lockout is one row per user (current state).
+            sid = f"{user}|Locked" if is_lock else f"{user}|Failed|{when or line[:40]}"
+            rows.append(_synthetic_row(user, status, when=when, ip=ip, sid=sid,
                         conn_type='Mgmt lockout' if is_lock else 'Mgmt login',
                         extra={'resource': line[:200], 'protocol': 'Audit log'}))
             if len(rows) >= 30:
@@ -1589,8 +1563,6 @@ def api_user_sessions():
     if used_node is not None:
         try:
             live = get_nitro(used_node, inst)
-            # Management-plane logins (the real sessions on an LB-only appliance).
-            all_sessions.extend(_system_session_rows(live))
             gw_map = _ica_gateway_map(live)
             if gw_map:
                 for s in all_sessions:
@@ -1603,21 +1575,22 @@ def api_user_sessions():
                             s['gateway'] = g
                             s['detail']['gateway'] = g
             # Failed/locked: audit log (management accounts) + AAA users (gateway).
-            extra_rows = _audit_failed_locked_rows(live) + _locked_and_failed_rows(live)
+            # Persisted alongside sessions so they don't vanish when the audit-log
+            # line scrolls out of the live window a moment later.
+            all_sessions += _audit_failed_locked_rows(live) + _locked_and_failed_rows(live)
         except Exception:
             pass
 
-    # Persist real sessions, then return Failed/Locked (live, not persisted) on top
-    # of the stored history for THIS instance (live + retention window).
+    # Persist everything, then return the stored history for THIS instance.
     try:
         db.upsert_sessions(node_req, all_sessions, instance=instance_id)
         stored = db.get_sessions(days=db.RETENTION_DAYS, instance=instance_id)
-        return jsonify({'sessions': extra_rows + stored,
+        return jsonify({'sessions': stored,
                         'source': 'history', 'retention_days': db.RETENTION_DAYS})
     except Exception as e:
         logger.warning(f"Session history unavailable, returning live only: {e}")
 
-    return jsonify({'sessions': extra_rows + all_sessions, 'source': 'live'})
+    return jsonify({'sessions': all_sessions, 'source': 'live'})
 
 @app.route('/api/session-debug')
 @login_required

@@ -6,6 +6,18 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.9.1
+- **Failed/Locked rows now persist** (they were vanishing a moment after appearing).
+  They were read live from the audit log, which only holds recent messages — once
+  a failed-login line scrolled out of that window it disappeared on the next poll.
+  They're now stored in the history DB with an explicit status, so each failed
+  attempt (time-stamped, per attempt) and each lockout sticks for the retention
+  window (default 7 days).
+- **Removed active management sessions from the list.** Listing every live admin
+  session (e.g. `nsroot`) was noise. The Sessions tab now shows only what was
+  asked for — **Failed** attempts and **Locked** accounts — plus any real
+  VPN/AAA sessions.
+
 ## 1.9.0
 - **Management (system) sessions & logins.** On an LB-only appliance there are no
   Gateway/AAA sessions — the real logins are **management** ones. The Sessions tab

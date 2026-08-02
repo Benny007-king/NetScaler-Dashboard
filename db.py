@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     start_time TEXT,
     duration   TEXT,
     detail     TEXT,
+    status     TEXT,
     first_seen REAL NOT NULL,
     last_seen  REAL NOT NULL,
     UNIQUE(instance, node, session_id)
@@ -79,7 +80,7 @@ def init_db() -> None:
         # scoped per instance). The table is 7-day monitoring history that
         # rebuilds itself on the next poll, so a clean recreate is simplest.
         cols = [r[1] for r in c.execute("PRAGMA table_info(sessions)").fetchall()]
-        if cols and ('session_id' not in cols or 'instance' not in cols):
+        if cols and ('session_id' not in cols or 'instance' not in cols or 'status' not in cols):
             c.execute("DROP TABLE sessions")
             c.executescript(_SESSIONS_DDL)
         # Failover events gain an 'instance' tag (kept — no rebuild needed).
@@ -149,7 +150,7 @@ def upsert_sessions(node: str, sessions, instance: str = "default") -> int:
         str(instance), node, s.get("session_id") or f"{s.get('user')}|{s.get('type')}",
         s.get("user"), s.get("type"), s.get("ip"), s.get("gateway"),
         s.get("start"), s.get("duration"),
-        _json.dumps(s.get("detail") or {}), now, now,
+        _json.dumps(s.get("detail") or {}), s.get("status") or "Active", now, now,
     ) for s in sessions if isinstance(s, dict)]
     if not rows:
         return 0
@@ -157,10 +158,10 @@ def upsert_sessions(node: str, sessions, instance: str = "default") -> int:
         # On refresh, keep the first-seen start_time and don't let a later poll's
         # blank/"Unknown" IP or gateway overwrite a good value we already captured.
         c.executemany("""
-            INSERT INTO sessions (instance, node, session_id, username, type, ip, gateway, start_time, duration, detail, first_seen, last_seen)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
+            INSERT INTO sessions (instance, node, session_id, username, type, ip, gateway, start_time, duration, detail, status, first_seen, last_seen)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
             ON CONFLICT(instance, node, session_id)
-            DO UPDATE SET last_seen=excluded.last_seen, duration=excluded.duration, detail=excluded.detail,
+            DO UPDATE SET last_seen=excluded.last_seen, duration=excluded.duration, detail=excluded.detail, status=excluded.status,
                           ip=CASE WHEN excluded.ip NOT IN ('', 'Unknown', 'N/A', '—') THEN excluded.ip ELSE sessions.ip END,
                           gateway=CASE WHEN excluded.gateway NOT IN ('', 'Unknown', 'N/A', '—') THEN excluded.gateway ELSE sessions.gateway END
         """, rows)
@@ -171,7 +172,7 @@ def get_sessions(days: int | None = None, instance: str | None = None) -> list:
     """Stored sessions in the dashboard's own history, newest first."""
     import json as _json
     sql = ("SELECT node, username, type, ip, gateway, start_time, duration,"
-           " detail, first_seen, last_seen FROM sessions")
+           " detail, status, first_seen, last_seen FROM sessions")
     conds, args = [], []
     if days:
         conds.append("last_seen >= ?")
@@ -186,15 +187,21 @@ def get_sessions(days: int | None = None, instance: str | None = None) -> list:
     out = []
     with _conn() as c:
         for r in c.execute(sql, args).fetchall():
-            active = (now - (r["last_seen"] or 0)) <= ACTIVE_WINDOW_SECS
             try: detail = _json.loads(r["detail"]) if r["detail"] else {}
             except Exception: detail = {}
+            stored_status = r["status"]
+            if stored_status in ("Failed", "Locked"):
+                # A discrete event, not a live connection — keep its status/time as-is.
+                status, end = stored_status, ""
+            else:
+                active = (now - (r["last_seen"] or 0)) <= ACTIVE_WINDOW_SECS
+                status = "Active" if active else "Terminated"
+                end = "Active" if active else datetime.fromtimestamp(r["last_seen"]).strftime("%d/%m/%Y %H:%M:%S")
             out.append({
                 "user": r["username"], "type": r["type"], "ip": r["ip"],
                 "gateway": r["gateway"], "start": r["start_time"],
                 "duration": r["duration"], "node": r["node"], "detail": detail,
-                "status": "Active" if active else "Terminated",
-                "end": "Active" if active else datetime.fromtimestamp(r["last_seen"]).strftime("%d/%m/%Y %H:%M:%S"),
+                "status": status, "end": end,
             })
     return out
 
