@@ -6,6 +6,20 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.9.2
+- **Fix: sessions (and failover events) vanished on days 1–12 of the month.** The
+  date-range filter parsed the dashboard's own `DD/MM/YYYY HH:MM:SS` timestamps
+  with JavaScript's `new Date()`, which reads them as **US M/D/Y** — so
+  `03/08/2026` (3 Aug) became **8 March**, fell outside the default "last 24
+  hours" window, and every row was filtered out. On days 13–31 the same string was
+  an *invalid* date, which the filter let through — which is why the tab appeared
+  to work for most of the month and then emptied. Timestamps are now parsed
+  explicitly as day-first, for both the Sessions and Failover filters and for
+  display.
+- **Fix: audit-log timestamps were in the wrong order.** NetScaler writes
+  `MM/DD/YYYY:HH:MM:SS`; Failed/Locked rows now convert it to the dashboard's
+  day-first format so they sort and filter correctly.
+
 ## 1.9.1
 - **Failed/Locked rows now persist** (they were vanishing a moment after appearing).
   They were read live from the audit log, which only holds recent messages — once

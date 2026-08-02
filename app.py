@@ -1481,8 +1481,10 @@ def _audit_failed_locked_rows(nitro):
             user = m.group(1) if m else '—'
             ipm = re.search(r'(?:remote_ip|client_ip|clientip|from|source)[:\s"]+([0-9.]+)', line, re.I)
             ip = ipm.group(1) if ipm else '—'
-            tm = re.match(r'\s*([0-9/]{6,}:[0-9:]+)', line)
-            when = tm.group(1) if tm else ''
+            # NetScaler audit stamps are MM/DD/YYYY:HH:MM:SS (US order) — convert to
+            # the dashboard's DD/MM/YYYY HH:MM:SS so it sorts/filters correctly.
+            tm = re.match(r'\s*(\d{2})/(\d{2})/(\d{4}):(\d{2}:\d{2}:\d{2})', line)
+            when = f"{tm.group(2)}/{tm.group(1)}/{tm.group(3)} {tm.group(4)}" if tm else ''
             status = 'Locked' if is_lock else 'Failed'
             key = (user, status, when)
             if key in seen:

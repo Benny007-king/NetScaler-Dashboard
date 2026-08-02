@@ -490,9 +490,26 @@ function escapeHtml(s) {
     return String(s||'').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;','\'':'&#39;'}[c]));
 }
 
+// Parse a timestamp without letting JS guess the format. The dashboard renders
+// times as DD/MM/YYYY HH:MM:SS, but new Date("03/08/2026") reads that as March 8
+// (US M/D/Y) — which silently filtered every session out on days 1-12 of a month
+// (on days 13-31 it was an invalid date, so the filter happened to let it pass).
+function parseDateFlexible(v) {
+    if (!v) return NaN;
+    const s = String(v).trim();
+    const m = /^(\d{1,2})\/(\d{1,2})\/(\d{4})[ T:]+(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(s);
+    if (m) return new Date(+m[3], +m[2] - 1, +m[1], +m[4], +m[5], +(m[6] || 0)).getTime();
+    const dOnly = /^(\d{1,2})\/(\d{1,2})\/(\d{4})$/.exec(s);
+    if (dOnly) return new Date(+dOnly[3], +dOnly[2] - 1, +dOnly[1]).getTime();
+    return new Date(s).getTime();   // ISO and other unambiguous formats
+}
+
 function formatILTime(isoStr) {
     if (!isoStr) return '';
     try {
+        // Already in the dashboard's display format — don't re-parse and risk
+        // flipping day/month.
+        if (/^\d{1,2}\/\d{1,2}\/\d{4}[ ]/.test(String(isoStr).trim())) return isoStr;
         const d = new Date(isoStr);
         if (isNaN(d.getTime())) return isoStr;
         return d.toLocaleString('en-GB', { timeZone: 'Asia/Jerusalem', hour12: false });
@@ -1040,7 +1057,7 @@ async function loadFailover() {
     const filterType = $('failType').value.toLowerCase();
     
     const filteredArr = arr.filter(e => {
-        const t = new Date(e.timestamp).getTime();
+        const t = parseDateFlexible(e.timestamp);
         const inTime = isNaN(t) ? true : (t >= fromTime && t <= toTime);
         const inType = filterType ? (e.type || '').toLowerCase().includes(filterType) : true;
         return inTime && inType;
@@ -1062,7 +1079,7 @@ async function loadSessions() {
     const fStatus = $('sessStatus').value.toLowerCase();
 
     const filteredArr = arr.filter(s => {
-        const t = new Date(s.start).getTime();
+        const t = parseDateFlexible(s.start);
         const inTime = isNaN(t) ? true : (t >= fromTime && t <= toTime);
         const inUser = fUser ? (s.user || '').toLowerCase().includes(fUser) : true;
         const inType = fType ? (s.type || '').toLowerCase().includes(fType) : true;
