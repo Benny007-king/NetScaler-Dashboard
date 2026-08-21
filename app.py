@@ -1501,8 +1501,26 @@ def api_caps():
         nodes_data[k] = {'ip': v.get('ip', ''), 'protocol': v.get('protocol', 'https'), 'port': v.get('port', 443), 'name': hn }
     api_mode = {k: get_api_mode(inst, k) for k in active_node_keys(inst)}
     detect = {k: get_detect_info(inst, k) for k in active_node_keys(inst)}
+    # Which node currently holds the PRIMARY role, so the UI can follow a failover
+    # instead of sticking to whichever node happens to be selected.
+    primary_node = 'primary'
+    if mode == 'ha':
+        try:
+            roles = {}
+            for n in (_get_ha_data_fast(inst).get('hanode') or []):
+                if isinstance(n, dict):
+                    ipv = n.get('ipaddress') or n.get('ip') or n.get('nsip')
+                    if ipv:
+                        roles[str(ipv)] = str(n.get('state') or n.get('hacurstate') or '').upper()
+            for k in active_node_keys(inst):
+                if 'PRIMARY' in roles.get(str((get_instance(inst).get(k) or {}).get('ip')), ''):
+                    primary_node = k
+                    break
+        except Exception:
+            pass
     return jsonify({'api_mode': api_mode, 'nodes': nodes_data, 'mode': mode,
-                    'api_detect': detect, 'instance': get_instance(inst).get('id')})
+                    'api_detect': detect, 'primary_node': primary_node,
+                    'instance': get_instance(inst).get('id')})
 
 @app.route('/api/system-stats')
 @login_required
@@ -1575,8 +1593,12 @@ def api_lb_vservers():
             items = apps.get('applications', []) if isinstance(apps, dict) else (apps if isinstance(apps, list) else [])
             lbv_like = [{'name': a.get('name'), 'ipv46': a.get('vip') or a.get('vipAddress'), 'port': a.get('port'), 'curstate': a.get('state') or 'UP'} for a in items]
             ng.logout()
-            return jsonify({'node': node, 'api_mode': 'nextgen', 'lbvserver': lbv_like})
-        except Exception: pass
+            # Only answer from Next-Gen when it actually has applications; an empty
+            # list usually means the config still lives in classic LB vServers.
+            if lbv_like:
+                return jsonify({'node': node, 'api_mode': 'nextgen', 'lbvserver': lbv_like})
+        except Exception as e:
+            logger.warning(f"Next-Gen applications unavailable on {node}, using NITRO: {str(e)[:120]}")
 
     try:
         data = get_nitro(node, inst)._get('/config/lbvserver', custom_timeout=5) or {}
@@ -1591,23 +1613,19 @@ def api_services():
     node = request.args.get('node')
     if not node: return jsonify({'connected': False, 'data': {'service': [], 'servicegroup': []}})
 
-    if get_api_mode(inst, node) == 'nextgen':
-        try:
-            ng = get_nextgen(node, inst)
-            ng.login()
-            apps = ng.list_applications()
-            ng.logout()
-            return jsonify({'node': node, 'api_mode': 'nextgen', 'service': [], 'servicegroup': [], 'applications': apps})
-        except Exception: pass
-
+    # Services and service groups are NITRO objects; a Next-Gen-capable appliance
+    # still serves them, so always read them over NITRO rather than returning
+    # empty lists (which made the table look broken on a 14.1 node).
     try:
         nitro = get_nitro(node, inst)
         svc  = nitro._get('/config/service', custom_timeout=5) or {}
         sgrp = nitro._get('/config/servicegroup', custom_timeout=5) or {}
-        return jsonify({'node': node, 'api_mode': 'nitro',
+        return jsonify({'node': node, 'api_mode': get_api_mode(inst, node),
                         'service': svc.get('service', []) if isinstance(svc, dict) else [],
                         'servicegroup': sgrp.get('servicegroup', []) if isinstance(sgrp, dict) else []})
-    except Exception: return jsonify({'service': [], 'servicegroup': []})
+    except Exception as e:
+        logger.warning(f"services fetch failed on {node}: {str(e)[:120]}")
+        return jsonify({'service': [], 'servicegroup': []})
 
 # ======================================================================================
 # SSL Certificates, chain links & CRLs

@@ -6,6 +6,30 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.13.0
+- **Fix: Applications failed to load on a Next-Gen node.** The page requested
+  `/api/applications` whenever a node was in Next-Gen mode — **a route that never
+  existed**, so the tab always showed "Failed to load". It now uses the one
+  endpoint that serves both stacks. And when Next-Gen reports **no** applications
+  (common: the appliance runs Next-Gen but its config is still classic LB
+  vServers), the dashboard **falls back to NITRO** instead of showing an empty
+  table, so those vServers finally appear.
+- **Fix: every service showed `UNKNOWN`.** Services report their runtime state in
+  NITRO's `svrstate` field, but the table read `curstate` (which only exists on
+  vServers), and it read `ip` where a service exposes `ipaddress`. Both now use
+  the correct fields with fallbacks, so services show their real UP / DOWN /
+  OUT OF SERVICE state and address.
+- **Service groups are shown.** The backend had always returned them and the
+  table silently ignored them; they now appear as `GRP` rows with their effective
+  state and bound-member count. Services and service groups are also read over
+  NITRO on Next-Gen nodes (they're NITRO objects), instead of returning empty.
+- **Tabs follow the live primary.** Applications, Failover, Sessions,
+  Certificates and Unlock User now open on the node that currently holds the
+  **PRIMARY** role — reported by the new `primary_node` field in `/api/caps` —
+  rather than whichever node happened to be selected. After a failover the tabs
+  follow the new primary automatically. Overview still honours the node picker so
+  you can inspect either node.
+
 ## 1.12.2
 - **API capability is re-checked automatically; the "Re-detect API" button is
   gone.** A node's capability was decided once at startup, so a node that was

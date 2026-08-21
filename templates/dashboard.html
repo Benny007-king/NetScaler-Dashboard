@@ -838,6 +838,16 @@ function setActiveTab(name) {
     const np = $('nodePicker');
     if (np) np.style.display = (name === 'wall') ? 'none' : '';
 
+    // These tabs are about the live/active appliance, so follow whichever node
+    // currently holds the PRIMARY role rather than whatever was last selected.
+    if (state.primaryNode && ['applications', 'failover', 'sessions', 'certificates', 'unlock'].includes(name)) {
+        state.node = state.primaryNode;
+        const nsel = $('nodeSelect');
+        if (nsel && nsel.value !== state.node) nsel.value = state.node;
+        const usel = $('unlockNode');
+        if (usel) usel.value = state.node;
+    }
+
     if (name === 'wall') loadWall();
     if (name === 'overview') loadOverview();
     if (name === 'applications') { loadApplications(); loadServices(); }
@@ -956,6 +966,7 @@ async function fetchCaps() {
         }
 
         state.apiDetect = r.data.api_detect || {};
+        state.primaryNode = r.data.primary_node || 'primary';
         const parts = Object.entries(r.data.nodes || {}).map(([key, nd]) => {
             const m = (state.apiModes[key] || 'nitro').toUpperCase();
             const why = (state.apiDetect[key] || {}).reason || '';
@@ -1171,12 +1182,13 @@ async function loadOverview(background) {
 async function loadApplications() {
     $('appsTable').innerHTML = '<tr><td colspan="5" class="text-center py-4 text-slate-500">Loading...</td></tr>';
     const mode = state.apiModes[state.node] || 'nitro';
-    const endpoint = mode === 'nextgen' ? '/api/applications' : '/api/lb-vservers';
-    const r = await getJSON(`${endpoint}?node=${state.node}`);
+    // One endpoint for both stacks: it serves Next-Gen applications when the node
+    // has them and falls back to LB vServers otherwise.
+    const r = await getJSON(`/api/lb-vservers?node=${state.node}`);
     
     if (!r.ok) { $('appsTable').innerHTML = '<tr><td colspan="5" class="text-center py-4 text-red-400">Failed to load</td></tr>'; return; }
     
-    const list = (mode === 'nextgen' ? (r.data.applications || []) : (r.data.lbvserver || []));
+    const list = r.data.lbvserver || r.data.applications || [];
     const rows = list.length ? list.map((item, i) => {
         const name = item.name || item.vservername || `app-${i}`;
         const vip = item.vip || item.ipv46 || item.ipaddress || '';
@@ -1190,13 +1202,34 @@ async function loadApplications() {
 async function loadServices() {
     $('svcTable').innerHTML = '<tr><td colspan="7" class="text-center py-4 text-slate-500">Loading...</td></tr>';
     const r = await getJSON(`/api/services?node=${state.node}`);
-    if (r.ok && r.data.service) {
-        const rows = r.data.service.map((s, i) => {
-            const st = (s.curstate || '').toUpperCase();
-            return `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500">${i + 1}</td><td class="text-xs">SVC</td><td class="text-white">${escapeHtml(s.name)}</td><td class="font-mono text-xs text-slate-400">${escapeHtml(s.ip)}</td><td class="text-xs text-slate-300">${s.port}</td><td><span class="badge ${svcStateBadge(st)}">${escapeHtml(st || 'UNKNOWN')}</span></td><td>-</td></tr>`;
-        }).join('');
-        $('svcTable').innerHTML = rows || '<tr><td colspan="7" class="text-center text-slate-500 py-4">No services</td></tr>';
-    }
+    if (!r.ok) { $('svcTable').innerHTML = '<tr><td colspan="7" class="text-center py-4 text-red-400">Failed to load</td></tr>'; return; }
+
+    // NITRO names these differently per object: a service reports its runtime
+    // state in `svrstate` (not `curstate`) and its address in `ipaddress`.
+    const row = (i, kind, name, ip, port, state, members) =>
+        `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500">${i}</td>`
+        + `<td class="text-xs">${kind}</td><td class="text-white">${escapeHtml(name || '-')}</td>`
+        + `<td class="font-mono text-xs text-slate-400">${escapeHtml(ip || '-')}</td>`
+        + `<td class="text-xs text-slate-300">${escapeHtml(port == null ? '-' : String(port))}</td>`
+        + `<td><span class="badge ${svcStateBadge(state)}">${escapeHtml((state || 'UNKNOWN').toUpperCase())}</span></td>`
+        + `<td class="text-xs text-slate-400">${escapeHtml(members)}</td></tr>`;
+
+    const rows = [];
+    let n = 0;
+    (r.data.service || []).forEach(s => {
+        rows.push(row(++n, 'SVC', s.name,
+            s.ipaddress || s.ip || s.servername,
+            s.port, s.svrstate || s.curstate || s.state, '-'));
+    });
+    (r.data.servicegroup || []).forEach(g => {
+        const members = g.numberofboundservices != null ? `${g.numberofboundservices} member(s)`
+                      : (g.servicegroupeffectivestate ? '' : '-');
+        rows.push(row(++n, 'GRP', g.servicegroupname || g.name,
+            g.ipaddress || '-', g.port,
+            g.servicegroupeffectivestate || g.state || g.svrstate, members || '-'));
+    });
+    $('svcTable').innerHTML = rows.join('')
+        || '<tr><td colspan="7" class="text-center text-slate-500 py-4">No services or service groups configured on this node</td></tr>';
 }
 
 // --- HISTORY & SESSIONS ---
