@@ -15,6 +15,7 @@ import hashlib
 import logging
 import secrets
 import ssl
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -1331,6 +1332,28 @@ def _instance_health(inst):
             'nodes_up': up, 'nodes_total': total, 'nodes': nodes,
             'warnings': warnings}
 
+def start_api_detect_thread():
+    """Re-check each node's API capability periodically, so the Next-Gen API being
+    enabled on an appliance — or a node that was simply unreachable at boot — is
+    picked up on its own, without a restart or any manual action."""
+    interval = _int(os.getenv('API_DETECT_INTERVAL_SECS', '600'), 600)
+    if interval <= 0:
+        return
+
+    def _loop():
+        while True:
+            time.sleep(interval)
+            try:
+                for inst in get_instances():
+                    iid = inst.get('id')
+                    for nk in active_node_keys(iid):
+                        detect_api_mode_for_node(nk, inst.get(nk) or {}, iid)
+            except Exception as e:
+                logger.warning(f"API capability re-detection failed: {e}")
+
+    threading.Thread(target=_loop, name='api-detect', daemon=True).start()
+    logger.info(f"API capability re-detection every {interval}s")
+
 @app.route('/api/detect-api', methods=['POST'])
 @login_required
 def api_detect_api():
@@ -2106,6 +2129,7 @@ try:
     db.purge_types(('Management', 'Mgmt login', 'Mgmt lockout'))
     db.migrate_json_failover(FAILOVER_HISTORY_FILE)
     db.start_retention_thread()
+    start_api_detect_thread()
 except Exception as e:
     logger.error(f"History DB init failed: {e}")
 

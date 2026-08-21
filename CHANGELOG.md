@@ -6,6 +6,19 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.12.2
+- **API capability is re-checked automatically; the "Re-detect API" button is
+  gone.** A node's capability was decided once at startup, so a node that was
+  briefly unreachable at boot stayed marked NITRO forever — even after the
+  Next-Gen API was enabled and working on it. Detection now re-runs in the
+  background every `API_DETECT_INTERVAL_SECS` (default **600s**, `0` disables),
+  so it corrects itself with no restart and no button to press.
+- **No real IP addresses in the repo or on the website.** The README example
+  config and the site's HA preview used actual lab addresses; both now use the
+  RFC 5737 documentation range (`192.0.2.x`), matching
+  `nodes_config.example.json`. Appliance addresses belong in your (gitignored)
+  config, never in committed files.
+
 ## 1.12.1
 - **Sessions are AAA/gateway only — management logins are gone.** The audit-log
   parser matched *any* login event, so admin-plane activity (`API/CLI/GUI

@@ -15,7 +15,7 @@ Tabs: **All Instances** (fleet health wall), **Overview**, **Applications / Serv
 - **Deployment modes** (per instance): `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode`). Selectable in **Settings**.
 - **HA status at a glance**: the HA panel shows each node's role *and* its NITRO `hastatus` — including the forced **STAYPRIMARY / STAYSECONDARY** modes (flagged amber, since they suppress failover), `Up`, and failure states like route-monitor/partial/complete failure.
 - **HA resilience**: if one node of an HA pair is down, the dashboard keeps polling — HA status fails over to whichever node answers, the dead node is shown offline, the role change is logged as a failover, and the dead node fails fast (~3s connect timeout) instead of hanging.
-- **Dual-Stack** runtime: auto-detect Next-Gen per node, fall back to NITRO. Detection is explainable — the capability line shows *why* a node is on NITRO, and **Re-detect API** re-runs it live (no restart) after you enable Next-Gen on the appliance. `GET /api/nextgen-debug` reports the version, which management paths answer and the real login error; `NEXTGEN_BASE_PATH` overrides the path.
+- **Dual-Stack** runtime: auto-detect Next-Gen per node, fall back to NITRO. Detection is explainable — the capability line shows *why* a node is on NITRO — and **re-runs automatically** every `API_DETECT_INTERVAL_SECS` (default 600s), so enabling Next-Gen on an appliance, or a node that was unreachable at boot, is picked up without a restart. `GET /api/nextgen-debug` reports the version, which management paths answer and the real login error; `NEXTGEN_BASE_PATH` overrides the path.
 - **Honest health colours**: service/application states render `UP` green, `DOWN` red, and `OUT OF SERVICE` / `PARTIAL-UP` / `DISABLED` / `UNKNOWN` amber.
 - **HTTPS on 443** with a cert signed by a **local CA** generated on first boot. Install the CA for warning-free HTTPS, upload your own PEM cert/key, or generate a CSR for your corporate CA — all from **Settings → TLS Certificate**.
 - **Authentication**: local admin account and/or **LDAP/Active Directory** (`AUTH_BACKENDS=local,ldap`), with optional allowed-group enforcement.
@@ -58,12 +58,12 @@ Configure it live from **Settings → NetScaler Instances** (recommended), or ed
   "instances": [
     {
       "id": "default", "name": "DC1 HA pair", "mode": "ha",
-      "primary":   { "ip": "10.0.0.100", "port": 443, "protocol": "https", "username": "nsroot", "password": "" },
-      "secondary": { "ip": "10.0.0.200", "port": 443, "protocol": "https", "username": "nsroot", "password": "" }
+      "primary":   { "ip": "192.0.2.10", "port": 443, "protocol": "https", "username": "nsroot", "password": "" },
+      "secondary": { "ip": "192.0.2.11", "port": 443, "protocol": "https", "username": "nsroot", "password": "" }
     },
     {
       "id": "lab", "name": "Lab standalone", "mode": "standalone",
-      "primary": { "ip": "10.0.0.50", "port": 443, "protocol": "https", "username": "nsroot", "password": "" }
+      "primary": { "ip": "192.0.2.50", "port": 443, "protocol": "https", "username": "nsroot", "password": "" }
     }
   ],
   "session_timeout_minutes": 15
