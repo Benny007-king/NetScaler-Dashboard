@@ -233,6 +233,7 @@
     <svg class="w-4 h-4 text-slate-500 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
     Detecting system capabilities...
   </div>
+  <div id="capsReason" class="hidden mb-6 -mt-4 text-xs text-slate-400 bg-slate-900/40 px-3 py-2 rounded-lg border border-slate-800"></div>
 
   <div class="tabs flex space-x-1 mb-6 border-b border-slate-700/50" role="tablist">
     <button onclick="setActiveTab('wall')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="wall">All Instances</button>
@@ -955,11 +956,41 @@ async function fetchCaps() {
             }
         }
 
-        const parts = Object.entries(r.data.nodes || {}).map(([key, nd]) =>
-            `<span class="text-blue-400 font-bold mx-1">${escapeHtml((nd.name || key))}: ${(state.apiModes[key] || 'nitro').toUpperCase()}</span>`);
-        $('capsLine').innerHTML = `Mode: <span class="text-white font-bold uppercase mr-2">${escapeHtml(state.mode)}</span> | Capabilities: ${parts.join(' | ') || '—'}`;
+        state.apiDetect = r.data.api_detect || {};
+        const parts = Object.entries(r.data.nodes || {}).map(([key, nd]) => {
+            const m = (state.apiModes[key] || 'nitro').toUpperCase();
+            const why = (state.apiDetect[key] || {}).reason || '';
+            const cls = m === 'NEXTGEN' ? 'text-green-400' : 'text-blue-400';
+            return `<span class="${cls} font-bold mx-1" title="${escapeHtml(why)}">${escapeHtml(nd.name || key)}: ${m}</span>`;
+        });
+        $('capsLine').innerHTML = `Mode: <span class="text-white font-bold uppercase mr-2">${escapeHtml(state.mode)}</span> | Capabilities: ${parts.join(' | ') || '—'}`
+            + `<button onclick="redetectApi()" id="redetectBtn" class="ml-auto text-xs px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition-colors" title="Re-check whether each node offers the Next-Gen API">Re-detect API</button>`;
         updateAppsTabAvailability();
     }
+}
+
+async function redetectApi() {
+    const btn = $('redetectBtn'), box = $('capsReason');
+    if (btn) { btn.disabled = true; btn.textContent = 'Detecting…'; }
+    const r = await getJSON('/api/detect-api', { method: 'POST', body: JSON.stringify({}) });
+    if (btn) { btn.disabled = false; btn.textContent = 'Re-detect API'; }
+    if (r.expired) return;
+    if (!r.ok || !r.data.success) {
+        box.className = 'mb-6 -mt-4 text-xs text-red-400 bg-slate-900/40 px-3 py-2 rounded-lg border border-red-900';
+        box.textContent = 'Detection failed: ' + ((r.data && r.data.error) || 'unknown error');
+        return;
+    }
+    const lines = Object.entries(r.data.nodes || {}).map(([k, v]) => {
+        const ok = v.mode === 'nextgen';
+        return `<div class="${ok ? 'text-green-400' : 'text-slate-400'}">`
+            + `<strong>${escapeHtml(k)}</strong>: ${escapeHtml((v.mode || '').toUpperCase())}`
+            + (v.version ? ` <span class="text-slate-500">(v${escapeHtml(v.version)})</span>` : '')
+            + (v.reason ? ` — ${escapeHtml(v.reason)}` : '') + '</div>';
+    });
+    box.className = 'mb-6 -mt-4 text-xs bg-slate-900/40 px-3 py-2 rounded-lg border border-slate-800';
+    box.innerHTML = lines.join('') +
+        '<div class="text-slate-600 mt-1">Still on NITRO? Open <span class="font-mono">/api/nextgen-debug</span> for the full probe.</div>';
+    await fetchCaps();
 }
 
 function updateAppsTabAvailability() {
@@ -972,6 +1003,20 @@ function updateAppsTabAvailability() {
         note.classList.remove('hidden');
         note.innerHTML = '⚠️ <strong>Nitro Mode:</strong> Showing LB vServers as Applications (fallback).';
     }
+}
+
+// NetScaler service / vServer states: UP, DOWN, OUT OF SERVICE, GOING OUT OF
+// SERVICE, TRANSITION TO OUT OF SERVICE, PARTIAL-UP, DISABLED, UNKNOWN.
+// Order matters: PARTIAL-UP contains "UP" (it was showing green) and OUT OF
+// SERVICE contains neither UP nor DOWN (it was falling through to red).
+function svcStateBadge(state) {
+    const s = String(state || '').toUpperCase().replace(/[_-]/g, ' ');
+    if (s.includes('PARTIAL')) return 'badge-warning';
+    if (s.includes('OUT OF SERVICE') || s.includes('TRANSITION')) return 'badge-warning';
+    if (s.includes('DISABLED')) return 'badge-warning';
+    if (s.includes('DOWN') || s.includes('FAIL')) return 'badge-danger';
+    if (s.includes('UP') || s.includes('ENABLED') || s.includes('ACTIVE')) return 'badge-success';
+    return 'badge-warning';   // UNKNOWN / unrecognised - never claim healthy
 }
 
 // ---------- ALL-INSTANCES HEALTH WALL ----------
@@ -1162,7 +1207,7 @@ async function loadApplications() {
         const name = item.name || item.vservername || `app-${i}`;
         const vip = item.vip || item.ipv46 || item.ipaddress || '';
         const state = (item.state || item.curstate || '').toUpperCase();
-        const badge = (state.includes('UP') || state.includes('ENABLED')) ? 'badge-success' : 'badge-danger';
+        const badge = svcStateBadge(state);
         return `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500 font-mono">${i + 1}</td><td class="text-white font-medium">${escapeHtml(name)}</td><td class="text-blue-300 font-mono text-xs">${escapeHtml(vip)}</td><td class="text-slate-400 font-mono text-xs">${item.port || ''}</td><td><span class="badge ${badge}">${state}</span></td></tr>`;
     }).join('') : '<tr><td colspan="5" class="text-center py-4 text-slate-500">No items found</td></tr>';
     $('appsTable').innerHTML = rows;
@@ -1174,7 +1219,7 @@ async function loadServices() {
     if (r.ok && r.data.service) {
         const rows = r.data.service.map((s, i) => {
             const st = (s.curstate || '').toUpperCase();
-            return `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500">${i + 1}</td><td class="text-xs">SVC</td><td class="text-white">${escapeHtml(s.name)}</td><td class="font-mono text-xs text-slate-400">${escapeHtml(s.ip)}</td><td class="text-xs text-slate-300">${s.port}</td><td><span class="badge ${st.includes('UP') ? 'badge-success' : 'badge-danger'}">${st}</span></td><td>-</td></tr>`;
+            return `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500">${i + 1}</td><td class="text-xs">SVC</td><td class="text-white">${escapeHtml(s.name)}</td><td class="font-mono text-xs text-slate-400">${escapeHtml(s.ip)}</td><td class="text-xs text-slate-300">${s.port}</td><td><span class="badge ${svcStateBadge(st)}">${escapeHtml(st || 'UNKNOWN')}</span></td><td>-</td></tr>`;
         }).join('');
         $('svcTable').innerHTML = rows || '<tr><td colspan="7" class="text-center text-slate-500 py-4">No services</td></tr>';
     }

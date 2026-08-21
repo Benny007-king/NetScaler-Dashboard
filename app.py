@@ -574,16 +574,36 @@ class NetScalerAPI:
 # ======================================================================================
 # Next-Gen API Client
 # ======================================================================================
+# Management path of the Next-Gen API. Overridable so a build that exposes it
+# elsewhere can be pointed at without a code change (see /api/nextgen-debug).
+NEXTGEN_BASE_PATH = os.getenv("NEXTGEN_BASE_PATH", "/mgmt/api/nextgen/v1")
+
+def _nextgen_candidate_paths():
+    """Management API paths worth probing when Next-Gen isn't detected."""
+    out, seen = [], set()
+    for x in (NEXTGEN_BASE_PATH, "/mgmt/api/nextgen/v1", "/nitro/v2/config", "/api/v1", "/mgmt/api/v1"):
+        if x and x not in seen:
+            seen.add(x)
+            out.append(x)
+    return out
+
+
 class NextGenAPI:
-    def __init__(self, ip, username, password, port=443, protocol='https'):
+    def __init__(self, ip, username, password, port=443, protocol='https', base_path=None):
         self.ip = ip
         self.username = username
         self.password = password
         self.port = port
         self.protocol = protocol
-        self.base_url = f"{protocol}://{ip}:{port}/mgmt/api/nextgen/v1"
+        self.base_path = base_path or NEXTGEN_BASE_PATH
+        self.base_url = f"{protocol}://{ip}:{port}{self.base_path}"
         self.session = requests.Session()
         self.session.verify = os.getenv("NEXTGEN_VERIFY_SSL", "0").lower() in ("1", "true", "yes")
+        # Appliance management interfaces negotiate legacy ciphers that OpenSSL 3
+        # rejects at its default security level. NITRO got this adapter in 1.4.0;
+        # without it here the Next-Gen login fails and we silently fell back.
+        if str(protocol).lower() == 'https':
+            self.session.mount('https://', _LegacyTLSAdapter(verify_ssl=self.session.verify))
         try: self.timeout = int(os.getenv("NEXTGEN_TIMEOUT_SECS", "15"))
         except Exception: self.timeout = 15
         self.session.headers.update({
@@ -725,23 +745,95 @@ def _parse_version_tuple(version_str: str):
 def _is_nextgen_supported(version_str: str) -> bool:
     return _parse_version_tuple(version_str) >= (14, 1)
 
+# Why each node ended up on its API mode: {instance_id: {node_key: {...}}}.
+# Surfaced in /api/caps so "falls back to NITRO" is explainable, not a mystery.
+API_DETECT_INFO = {}
+
+def _set_detect_info(instance_id, node_key, **kw):
+    iid = str(get_instance(instance_id).get('id'))
+    kw['checked'] = datetime.now(IL_TZ).strftime('%d/%m/%Y %H:%M:%S')
+    API_DETECT_INFO.setdefault(iid, {})[node_key] = kw
+
+def get_detect_info(instance_id, node_key):
+    return API_DETECT_INFO.get(str(get_instance(instance_id).get('id')), {}).get(node_key, {})
+
 def detect_api_mode_for_node(node_key: str, cfg: dict, instance_id=None):
     if not cfg.get('ip') or not cfg.get('username') or not cfg.get('password'):
         set_api_mode(instance_id, node_key, 'nitro')
+        _set_detect_info(instance_id, node_key, mode='nitro', reason='Node is not fully configured')
         return
+    version, reason = None, ''
     try:
         nitro = NetScalerAPI(cfg['ip'], cfg['username'], cfg['password'], cfg['port'], cfg['protocol'])
         vi = nitro._get('/config/nsversion', custom_timeout=5)
         meta = vi['nsversion'][0] if isinstance(vi.get('nsversion'), list) else vi.get('nsversion', {})
-        v_str = meta.get('version', '')
-        if _is_nextgen_supported(v_str):
-            ng = NextGenAPI(cfg['ip'], cfg['username'], cfg['password'], port=_int(os.getenv('NS_PORT_HTTPS', '443'), 443), protocol='https')
-            ng.login()
-            ng.logout()
-            set_api_mode(instance_id, node_key, 'nextgen')
-            return
-    except Exception: pass
+        version = meta.get('version') or meta.get('release') or ''
+        if not _is_nextgen_supported(version):
+            reason = f"Appliance reports {version or 'an unknown version'} (Next-Gen needs 14.1+)"
+        else:
+            try:
+                ng = NextGenAPI(cfg['ip'], cfg['username'], cfg['password'],
+                                port=_int(os.getenv('NS_PORT_HTTPS', '443'), 443), protocol='https')
+                ng.login()
+                ng.logout()
+                set_api_mode(instance_id, node_key, 'nextgen')
+                _set_detect_info(instance_id, node_key, mode='nextgen', version=version,
+                                 reason='Next-Gen login succeeded', url=ng.base_url)
+                logger.info(f"Next-Gen API detected on {node_key} ({cfg.get('ip')}), version {version}")
+                return
+            except Exception as e:
+                reason = f"Next-Gen login failed at {NEXTGEN_BASE_PATH}: {str(e)[:200]}"
+    except Exception as e:
+        reason = f"Version check failed: {str(e)[:200]}"
     set_api_mode(instance_id, node_key, 'nitro')
+    _set_detect_info(instance_id, node_key, mode='nitro', version=version, reason=reason)
+    if reason:
+        logger.info(f"{node_key} ({cfg.get('ip')}) using NITRO - {reason}")
+
+def _nextgen_probe(cfg):
+    """Report-only Next-Gen diagnosis: appliance version, which management paths
+    answer, and the real login result. Never changes the stored API mode."""
+    port = _int(os.getenv('NS_PORT_HTTPS', '443'), 443)
+    ip = cfg.get('ip')
+    out = {'ip': ip, 'port': port, 'base_path': NEXTGEN_BASE_PATH,
+           'version': None, 'nextgen_supported': None, 'paths': [], 'login': None}
+    if not ip:
+        out['error'] = 'No IP configured'
+        return out
+    try:
+        nitro = NetScalerAPI(ip, cfg.get('username'), cfg.get('password'), cfg.get('port'), cfg.get('protocol'))
+        vi = nitro._get('/config/nsversion', custom_timeout=5)
+        meta = vi['nsversion'][0] if isinstance(vi.get('nsversion'), list) else vi.get('nsversion', {})
+        out['version'] = meta.get('version') or meta.get('release')
+        out['version_parsed'] = list(_parse_version_tuple(out['version']))
+        out['nextgen_supported'] = _is_nextgen_supported(out['version'])
+    except Exception as e:
+        out['version_error'] = str(e)[:200]
+
+    # Unauthenticated GET per candidate: 404 means "not here", 401/403 means it exists.
+    sess = requests.Session()
+    sess.verify = os.getenv('NEXTGEN_VERIFY_SSL', '0').lower() in ('1', 'true', 'yes')
+    sess.mount('https://', _LegacyTLSAdapter(verify_ssl=sess.verify))
+    for base in _nextgen_candidate_paths():
+        rec = {'url': f"https://{ip}:{port}{base}"}
+        try:
+            r = sess.get(rec['url'], timeout=5)
+            rec['status'] = r.status_code
+            rec['looks_present'] = r.status_code not in (404, 400)
+            rec['body'] = (r.text or '')[:120]
+        except Exception as e:
+            rec['error'] = str(e)[:160]
+        out['paths'].append(rec)
+
+    try:
+        ng = NextGenAPI(ip, cfg.get('username'), cfg.get('password'), port=port, protocol='https')
+        ng.login()
+        ng.logout()
+        out['login'] = {'ok': True, 'url': f"{ng.base_url}/login"}
+    except Exception as e:
+        out['login'] = {'ok': False, 'url': f"https://{ip}:{port}{NEXTGEN_BASE_PATH}/login",
+                        'error': str(e)[:300]}
+    return out
 
 def get_nitro(node_key: str, instance_id=None) -> NetScalerAPI:
     cfg = get_instance(instance_id).get(node_key or 'primary')
@@ -1239,6 +1331,34 @@ def _instance_health(inst):
             'nodes_up': up, 'nodes_total': total, 'nodes': nodes,
             'warnings': warnings}
 
+@app.route('/api/detect-api', methods=['POST'])
+@login_required
+def api_detect_api():
+    """Re-run API capability detection now, without restarting the dashboard —
+    so enabling the Next-Gen API on the appliance is picked up immediately."""
+    body = request.get_json(silent=True) or {}
+    inst = request.args.get('instance') or body.get('instance')
+    i = get_instance(inst)
+    out = {}
+    for k in active_node_keys(inst):
+        detect_api_mode_for_node(k, i.get(k) or {}, i.get('id'))
+        out[k] = dict(get_detect_info(inst, k), mode=get_api_mode(inst, k))
+    return jsonify({'success': True, 'instance': i.get('id'), 'nodes': out})
+
+@app.route('/api/nextgen-debug')
+@login_required
+def api_nextgen_debug():
+    """Why Next-Gen isn't being used: version, reachable management paths, and
+    the actual login error for each node of the instance."""
+    inst = request.args.get('instance')
+    i = get_instance(inst)
+    return jsonify({
+        'instance': i.get('id'),
+        'base_path': NEXTGEN_BASE_PATH,
+        'ns_port_https': _int(os.getenv('NS_PORT_HTTPS', '443'), 443),
+        'nodes': {k: _nextgen_probe(i.get(k) or {}) for k in active_node_keys(inst)},
+    })
+
 @app.route('/api/instances-health')
 @login_required
 def api_instances_health():
@@ -1357,8 +1477,9 @@ def api_caps():
             hn = _HOSTNAME_CACHE.get(cache_key) or default_name.get(k, k.title())
         nodes_data[k] = {'ip': v.get('ip', ''), 'protocol': v.get('protocol', 'https'), 'port': v.get('port', 443), 'name': hn }
     api_mode = {k: get_api_mode(inst, k) for k in active_node_keys(inst)}
+    detect = {k: get_detect_info(inst, k) for k in active_node_keys(inst)}
     return jsonify({'api_mode': api_mode, 'nodes': nodes_data, 'mode': mode,
-                    'instance': get_instance(inst).get('id')})
+                    'api_detect': detect, 'instance': get_instance(inst).get('id')})
 
 @app.route('/api/system-stats')
 @login_required

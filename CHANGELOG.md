@@ -6,6 +6,27 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.12.0
+- **Service / Application status colours now reflect the real state.** The tables
+  coloured anything containing `UP` green and everything else red, so
+  **PARTIAL-UP showed as healthy green** and **OUT OF SERVICE showed as a red
+  failure**. States are now classified properly: `UP` green, `DOWN` red, and
+  `OUT OF SERVICE`, `GOING/TRANSITION TO OUT OF SERVICE`, `PARTIAL-UP`,
+  `DISABLED` and `UNKNOWN` in amber (the same warning colour as a forced HA
+  mode). An unrecognised state is amber rather than falsely green.
+- **Fix: the Next-Gen API was never used, even on 14.1 with it enabled.** Two
+  causes: (1) the Next-Gen client did **not** mount the legacy-cipher TLS adapter
+  that NITRO got in 1.4.0, so its login failed the same OpenSSL handshake that
+  broke NITRO over 443; and (2) capability detection only ran **at startup and on
+  settings save**, so enabling Next-Gen on the appliance afterwards was never
+  noticed. Every failure was also swallowed silently, leaving no way to tell why.
+- **Detection is now explainable and re-runnable.** `/api/caps` reports *why* each
+  node is on its API mode, the capability line shows it on hover (and turns green
+  for Next-Gen), and a **Re-detect API** button re-runs detection live — no
+  restart. New `POST /api/detect-api` and `GET /api/nextgen-debug` (appliance
+  version, which management paths answer, and the real login error). The
+  management path is overridable via `NEXTGEN_BASE_PATH`.
+
 ## 1.11.0
 - **All-instances health wall.** A new **All Instances** tab shows every configured
   deployment as a status card — overall state (**Operational / Degraded /
