@@ -69,6 +69,14 @@
     .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.2); }
     .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.2); }
     .badge-info { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.2); }
+    .status-dot { width: 10px; height: 10px; border-radius: 9999px; display: inline-block; flex-shrink: 0; }
+    .dot-up { background: #34d399; box-shadow: 0 0 8px rgba(52,211,153,.7); }
+    .dot-degraded { background: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,.7); }
+    .dot-down { background: #f87171; box-shadow: 0 0 8px rgba(248,113,113,.7); }
+    .dot-unknown { background: #64748b; }
+    .wall-card { cursor: pointer; transition: transform .18s ease, border-color .2s ease, background .2s ease; }
+    .wall-card:hover { transform: translateY(-3px); border-color: rgba(59,130,246,.45); background: rgba(255,255,255,.04); }
+    .wall-card:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
     
     .fade-in { animation: fadeIn 0.4s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -199,12 +207,14 @@
   <div class="flex items-center gap-3 bg-slate-900/50 p-1.5 rounded-xl border border-white/5">
     <label class="text-sm text-slate-400 pl-2">Instance:</label>
     <select id="instanceSelect" onchange="changeInstance(this.value)" class="bg-slate-800 text-white text-sm border-none rounded-lg focus:ring-2 focus:ring-cyan-500 py-1.5 px-3 cursor-pointer hover:bg-slate-700 transition-colors max-w-[200px]"></select>
-    <span class="w-px h-6 bg-white/10 mx-1" aria-hidden="true"></span>
-    <label class="text-sm text-slate-400 pl-1">Node:</label>
-    <select id="nodeSelect" onchange="changeNode(this.value)" class="bg-slate-800 text-white text-sm border-none rounded-lg focus:ring-2 focus:ring-blue-500 py-1.5 px-3 cursor-pointer hover:bg-slate-700 transition-colors">
-      <option value="primary">Primary</option>
-      <option value="secondary">Secondary</option>
-    </select>
+    <span id="nodePicker" class="flex items-center gap-3">
+      <span class="w-px h-6 bg-white/10 mx-1" aria-hidden="true"></span>
+      <label class="text-sm text-slate-400 pl-1">Node:</label>
+      <select id="nodeSelect" onchange="changeNode(this.value)" class="bg-slate-800 text-white text-sm border-none rounded-lg focus:ring-2 focus:ring-blue-500 py-1.5 px-3 cursor-pointer hover:bg-slate-700 transition-colors">
+        <option value="primary">Primary</option>
+        <option value="secondary">Secondary</option>
+      </select>
+    </span>
     <button id="refreshBtn" type="button" onclick="forceRefresh()" class="bg-blue-600 hover:bg-blue-500 text-white p-2 rounded-lg transition-all shadow-lg active:scale-95">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
     </button>
@@ -225,6 +235,7 @@
   </div>
 
   <div class="tabs flex space-x-1 mb-6 border-b border-slate-700/50" role="tablist">
+    <button onclick="setActiveTab('wall')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="wall">All Instances</button>
     <button onclick="setActiveTab('overview')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg active" data-tab="overview">Overview</button>
     <button onclick="setActiveTab('applications')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="applications">Applications</button>
     <button onclick="setActiveTab('failover')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="failover">Failover</button>
@@ -232,6 +243,19 @@
     <button onclick="setActiveTab('certificates')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="certificates">Certificates</button>
     <button onclick="setActiveTab('unlock')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="unlock">Unlock User</button>
   </div>
+
+  <section class="panel hidden fade-in" id="panel-wall">
+    <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+      <div>
+        <h2 class="text-lg font-bold text-white">All Instances</h2>
+        <p class="text-xs text-slate-400">Live health of every configured deployment — click a card to open it.</p>
+      </div>
+      <div class="text-xs text-slate-500" id="wallMeta"></div>
+    </div>
+    <div id="wallGrid" class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+      <div class="text-slate-500 text-sm">Loading…</div>
+    </div>
+  </section>
 
   <section class="panel fade-in" id="panel-overview">
     
@@ -475,7 +499,7 @@
 
 <script>
 // --- GLOBAL VARS ---
-const state = { node: 'primary', instance: null, instances: [], apiModes: {}, interval: null, refreshMs: 5000 };
+const state = { node: 'primary', instance: null, instances: [], apiModes: {}, interval: null, refreshMs: 5000, wallRefreshMs: 15000 };
 let cpuChart, memChart, httpChart;
 const httpHistory = { labels: [], data: [] };
 
@@ -810,6 +834,11 @@ function setActiveTab(name) {
         else b.classList.remove('active');
     });
 
+    // The node picker is per-instance, so it makes no sense on the wall.
+    const np = $('nodePicker');
+    if (np) np.style.display = (name === 'wall') ? 'none' : '';
+
+    if (name === 'wall') loadWall();
     if (name === 'overview') loadOverview();
     if (name === 'applications') { loadApplications(); loadServices(); }
     if (name === 'failover') loadFailover();
@@ -943,6 +972,80 @@ function updateAppsTabAvailability() {
         note.classList.remove('hidden');
         note.innerHTML = '⚠️ <strong>Nitro Mode:</strong> Showing LB vServers as Applications (fallback).';
     }
+}
+
+// ---------- ALL-INSTANCES HEALTH WALL ----------
+const WALL_STATUS = {
+    up:       { dot: 'dot-up',       badge: 'badge-success', label: 'Operational' },
+    degraded: { dot: 'dot-degraded', badge: 'badge-warning', label: 'Degraded' },
+    down:     { dot: 'dot-down',     badge: 'badge-danger',  label: 'Unreachable' },
+    unknown:  { dot: 'dot-unknown',  badge: 'badge-warning', label: 'Not configured' },
+};
+
+function wallNodeRow(n) {
+    const dot = n.reachable ? 'dot-up' : 'dot-down';
+    const label = escapeHtml(n.name || (n.key || '').replace(/^./, c => c.toUpperCase()));
+    const ip = escapeHtml(n.ip || '—');
+    const state = n.state ? `<span class="badge ${haStateBadge(n.state)}">${escapeHtml(n.state.toUpperCase())}</span>` : '';
+    const load = (n.cpu !== null && n.cpu !== undefined)
+        ? `<span class="font-mono text-slate-400 text-[11px] whitespace-nowrap">cpu ${n.cpu}% · mem ${n.mem === null || n.mem === undefined ? '—' : n.mem}%</span>`
+        : `<span class="text-slate-600 text-[11px]">${escapeHtml(n.error || 'no data')}</span>`;
+    const forced = (n.ha_status && n.ha_status.forced)
+        ? `<span class="badge badge-warning" title="Failover suppressed">\u26A0 ${escapeHtml(n.ha_status.code)}</span>` : '';
+    return `<div class="flex items-center gap-2 py-1.5 border-t border-white/5 first:border-0">
+        <span class="status-dot ${dot}"></span>
+        <span class="text-slate-200 text-xs truncate">${label}</span>
+        <span class="font-mono text-[11px] text-slate-500 truncate">${ip}</span>
+        <span class="ml-auto flex items-center gap-2">${state}${forced}${load}</span>
+    </div>`;
+}
+
+function wallCard(it) {
+    const meta = WALL_STATUS[it.status] || WALL_STATUS.unknown;
+    const warn = (it.warnings || []).length
+        ? `<div class="mt-3 pt-2 border-t border-white/5 text-[11px] text-amber-300">\u26A0 ${escapeHtml(it.warnings.join(' · '))}</div>`
+        : '';
+    return `<div class="wall-card glass-panel rounded-xl border border-white/5 p-4" data-inst="${escapeHtml(it.id)}"
+                 role="button" tabindex="0" aria-label="Open ${escapeHtml(it.name)}">
+        <div class="flex items-start justify-between gap-3 mb-3">
+            <div class="min-w-0">
+                <div class="flex items-center gap-2">
+                    <span class="status-dot ${meta.dot}"></span>
+                    <h3 class="text-white font-semibold truncate">${escapeHtml(it.name)}</h3>
+                </div>
+                <div class="text-[11px] uppercase tracking-wider text-slate-500 mt-1">
+                    ${escapeHtml(it.mode)} · ${it.nodes_up}/${it.nodes_total} node${it.nodes_total === 1 ? '' : 's'} up
+                </div>
+            </div>
+            <span class="badge ${meta.badge} shrink-0">${meta.label}</span>
+        </div>
+        <div>${(it.nodes || []).map(wallNodeRow).join('') || '<div class="text-xs text-slate-500">No nodes configured</div>'}</div>
+        ${warn}
+    </div>`;
+}
+
+async function loadWall(background) {
+    const opts = background ? { headers: { 'X-Idle-Refresh': '1' } } : undefined;
+    const r = await getJSON('/api/instances-health', opts);
+    const grid = $('wallGrid');
+    if (!r.ok) { grid.innerHTML = '<div class="text-red-400 text-sm">Failed to load instance health.</div>'; return; }
+    const list = r.data.instances || [];
+    grid.innerHTML = list.length
+        ? list.map(wallCard).join('')
+        : '<div class="text-slate-500 text-sm">No instances configured — add one in Settings.</div>';
+    const bad = list.filter(i => i.status !== 'up').length;
+    $('wallMeta').innerHTML = `${list.length} instance${list.length === 1 ? '' : 's'} · `
+        + (bad ? `<span class="text-amber-400">${bad} needing attention</span>` : '<span class="text-green-400">all healthy</span>')
+        + ` · updated ${escapeHtml(r.data.generated || '')}`;
+}
+
+function openInstance(id) {
+    if (!id) return;
+    state.instance = id;
+    const sel = $('instanceSelect');
+    if (sel) sel.value = id;
+    state.node = 'primary';          // the new instance may not have a secondary
+    fetchCaps().then(() => setActiveTab('overview'));
 }
 
 // Map an HA role / hastatus to a badge colour. A Secondary is a healthy standby,
@@ -1437,10 +1540,13 @@ document.addEventListener('click', (e) => {
 // --- INIT ---
 function startAutoRefresh() {
     if (state.interval) clearInterval(state.interval);
-    state.interval = setInterval(() => {
-        const active = document.querySelector('.tab-btn.active').dataset.tab;
-        if (active === 'overview') loadOverview(true); // background poll
-    }, state.refreshMs);
+    const active = document.querySelector('.tab-btn.active').dataset.tab;
+    if (active === 'overview') {
+        state.interval = setInterval(() => loadOverview(true), state.refreshMs);
+    } else if (active === 'wall') {
+        // One pass hits every node of every instance - poll it less aggressively.
+        state.interval = setInterval(() => loadWall(true), state.wallRefreshMs);
+    }
 }
 
 // Keep the session alive while the user is actually interacting (typing in the
@@ -1460,9 +1566,24 @@ function activityPing() {
 (async function init() {
     setInitialDateFields();
     initCharts();
+    // Open an instance from its card on the wall (delegated: cards are re-rendered).
+    const grid = $('wallGrid');
+    if (grid) {
+        grid.addEventListener('click', e => {
+            const card = e.target.closest('[data-inst]');
+            if (card) openInstance(card.dataset.inst);
+        });
+        grid.addEventListener('keydown', e => {
+            if (e.key !== 'Enter' && e.key !== ' ') return;
+            const card = e.target.closest('[data-inst]');
+            if (card) { e.preventDefault(); openInstance(card.dataset.inst); }
+        });
+    }
     await loadInstances();
     await fetchCaps();
-    setActiveTab('overview');
+    // With several deployments the wall is the useful landing view; with one it
+    // would just be a single card, so go straight into it.
+    setActiveTab(state.instances.length > 1 ? 'wall' : 'overview');
 })();
 </script>
 </body>

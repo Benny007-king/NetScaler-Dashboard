@@ -6,6 +6,19 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.11.0
+- **All-instances health wall.** A new **All Instances** tab shows every configured
+  deployment as a status card — overall state (**Operational / Degraded /
+  Unreachable**), how many nodes are up, and per node the hostname, IP, HA role,
+  HA status and live CPU/memory. Forced HA modes and unreachable nodes are called
+  out as warnings on the card. **Click a card to open that instance** and land on
+  its Overview; the instance switcher follows along. With more than one instance
+  the wall is the landing view (a single instance goes straight to its dashboard).
+- Backed by **`GET /api/instances-health`**, which probes every instance *and*
+  every node **in parallel**, so the wall stays fast with a large fleet; the
+  node picker is hidden on the wall, and the wall auto-refreshes on a slower
+  cadence (15s) than the per-node Overview since each pass touches the whole fleet.
+
 ## 1.10.0
 - **HA status is now shown, including STAYPRIMARY / STAYSECONDARY.** The dashboard
   only read a node's `state` (Primary/Secondary) and ignored NITRO's `hastatus`,

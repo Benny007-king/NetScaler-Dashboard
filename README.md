@@ -4,12 +4,13 @@ A modern Flask dashboard for NetScaler with **parallel support** for both the **
 
 Manage **multiple NetScaler deployments** from one dashboard — any mix of **standalone**, **HA-pair**, and **cluster (CLIP)** instances (e.g. two HA pairs plus three standalones). An **Instance switcher** in the header scopes every tab to the selected deployment. Serves **HTTPS on 443** with a self-signed certificate out of the box (replaceable from Settings), and supports **local** and **LDAP/AD** login.
 
-Tabs: **Overview**, **Applications / Services**, **Failover History**, **User Sessions**, **Unlock Users**.
+Tabs: **All Instances** (fleet health wall), **Overview**, **Applications / Services**, **Failover History**, **User Sessions**, **Certificates**, **Unlock Users**.
 
 ---
 
 ## Key Features
 
+- **All-instances health wall**: the **All Instances** tab shows every deployment as a card — Operational / Degraded / Unreachable, nodes up, and per node the hostname, IP, HA role + status and live CPU/memory, with warnings for unreachable nodes and forced HA modes. Click a card to drill into that instance. Powered by `GET /api/instances-health` (all instances and nodes probed in parallel).
 - **Multiple instances**: manage many deployments at once. Add / rename / remove them in **Settings → NetScaler Instances** and pick the active one from the header **Instance** switcher; every tab, plus session and failover history, is scoped to it.
 - **Deployment modes** (per instance): `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode`). Selectable in **Settings**.
 - **HA status at a glance**: the HA panel shows each node's role *and* its NITRO `hastatus` — including the forced **STAYPRIMARY / STAYSECONDARY** modes (flagged amber, since they suppress failover), `Up`, and failure states like route-monitor/partial/complete failure.

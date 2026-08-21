@@ -16,6 +16,7 @@ import logging
 import secrets
 import ssl
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
@@ -1146,6 +1147,110 @@ def api_settings():
                 v['password'] = ''
     safe['session_timeout_minutes'] = get_session_timeout_min()
     return jsonify(safe)
+
+def _to_pct(v):
+    """Best-effort percentage float from a NITRO stat value."""
+    try:
+        f = float(str(v).strip())
+        return round(f, 1)
+    except Exception:
+        return None
+
+def _node_probe(instance_id, node_key, cfg):
+    """Cheap reachability + load probe for one node (powers the health wall)."""
+    out = {'key': node_key, 'ip': cfg.get('ip', ''), 'name': '',
+           'reachable': False, 'cpu': None, 'mem': None}
+    if not cfg.get('ip'):
+        out['error'] = 'No IP configured'
+        return out
+    try:
+        ns = get_nitro(node_key, instance_id)._get('/stat/ns', custom_timeout=3) or {}
+        ns = ns.get('ns', {})
+        if isinstance(ns, list):
+            ns = ns[0] if ns else {}
+        out['reachable'] = bool(ns)
+        out['cpu'] = _to_pct(ns.get('cpuusagepcnt', ns.get('cpuusage')))
+        out['mem'] = _to_pct(ns.get('memusagepcnt', ns.get('memusagepct')))
+    except Exception as e:
+        out['error'] = str(e)[:100]
+    # Prefer the cached hostname; only pay for a lookup when we don't have one.
+    ck = (instance_id, node_key)
+    out['name'] = _HOSTNAME_CACHE.get(ck) or ''
+    if out['reachable'] and not out['name']:
+        try:
+            hn = (get_nitro(node_key, instance_id)
+                  ._get('/config/nshostname', custom_timeout=3)
+                  .get('nshostname', [{}]) or [{}])[0].get('hostname')
+            if hn:
+                _HOSTNAME_CACHE[ck] = hn
+                out['name'] = hn
+        except Exception:
+            pass
+    return out
+
+def _instance_health(inst):
+    """One instance's health card: per-node reachability/load plus HA role+status."""
+    iid = str(inst.get('id'))
+    keys = active_node_keys(iid)
+    nodes = []
+    if keys:
+        with ThreadPoolExecutor(max_workers=len(keys)) as ex:
+            nodes = list(ex.map(lambda nk: _node_probe(iid, nk, inst.get(nk) or {}), keys))
+
+    # Overlay HA role / hastatus (one call, from whichever node answers).
+    try:
+        by_ip = {}
+        for n in (_get_ha_data_fast(iid).get('hanode') or []):
+            if isinstance(n, dict):
+                ip = n.get('ipaddress') or n.get('ip') or n.get('nsip')
+                if ip:
+                    by_ip[str(ip)] = n
+        for nd in nodes:
+            raw = by_ip.get(str(nd.get('ip')))
+            if raw:
+                nd['state'] = str(raw.get('state') or raw.get('hacurstate') or '')
+                nd['hasync'] = str(raw.get('hasync') or '')
+                nd['ha_status'] = _ha_status_meta(raw)
+    except Exception:
+        pass
+
+    up = sum(1 for n in nodes if n.get('reachable'))
+    total = len(nodes)
+    warnings = []
+    for n in nodes:
+        who = n.get('name') or (n.get('key') or '').title()
+        hs = n.get('ha_status') or {}
+        if not n.get('reachable'):
+            warnings.append(f"{who} unreachable")
+        elif hs.get('severity') == 'bad' or hs.get('forced'):
+            warnings.append(f"{who}: {hs.get('label')}")
+
+    if total == 0:
+        status = 'unknown'
+    elif up == 0:
+        status = 'down'
+    elif up < total or any((n.get('ha_status') or {}).get('severity') == 'bad' for n in nodes):
+        status = 'degraded'
+    else:
+        status = 'up'
+
+    return {'id': iid, 'name': inst.get('name') or iid,
+            'mode': str(inst.get('mode', 'ha')).lower(), 'status': status,
+            'nodes_up': up, 'nodes_total': total, 'nodes': nodes,
+            'warnings': warnings}
+
+@app.route('/api/instances-health')
+@login_required
+def api_instances_health():
+    """Health of every configured instance, for the all-instances wall.
+    Instances (and their nodes) are probed in parallel so the wall stays fast."""
+    insts = get_instances()
+    if not insts:
+        return jsonify({'instances': []})
+    with ThreadPoolExecutor(max_workers=min(8, len(insts))) as ex:
+        out = list(ex.map(_instance_health, insts))
+    return jsonify({'instances': out,
+                    'generated': datetime.now(IL_TZ).strftime('%d/%m/%Y %H:%M:%S')})
 
 @app.route('/api/instances')
 @login_required
