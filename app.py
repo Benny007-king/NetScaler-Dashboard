@@ -755,6 +755,38 @@ def get_nextgen(node_key: str, instance_id=None) -> NextGenAPI:
 # ======================================================================================
 # System Overview & Fast HA Tracking Logic
 # ======================================================================================
+# NITRO reports the configured/effective HA state in `hastatus`
+# (`set ha node -hastatus ...`). STAYPRIMARY / STAYSECONDARY are *forced* modes
+# that suppress normal failover, so they must be surfaced, not hidden behind the
+# plain Primary/Secondary role.
+_HA_STATUS_LABELS = {
+    'UP':               ('Up', 'ok'),
+    'ENABLED':          ('Enabled', 'ok'),
+    'STAYPRIMARY':      ('Stay Primary (forced)', 'warn'),
+    'STAYSECONDARY':    ('Stay Secondary (forced)', 'warn'),
+    'DISABLED':         ('HA Disabled', 'warn'),
+    'INIT':             ('Initializing', 'warn'),
+    'DUMB':             ('No Peer (dumb)', 'warn'),
+    'DOWN':             ('Down', 'bad'),
+    'DOWN_TO_UP':       ('Recovering', 'warn'),
+    'PARTIALFAIL':      ('Partial Failure', 'bad'),
+    'PARTIALFAILSSL':   ('Partial Failure (SSL card)', 'bad'),
+    'COMPLETEFAIL':     ('Complete Failure', 'bad'),
+    'ROUTEMONITORFAIL': ('Route Monitor Failed', 'bad'),
+}
+
+def _ha_status_meta(node):
+    """Normalize a hanode's `hastatus` into {code,label,severity,forced} for the UI."""
+    if not isinstance(node, dict):
+        return {}
+    code = str(node.get('hastatus') or node.get('hacurstatus')
+               or node.get('hastate') or '').strip().upper()
+    if not code:
+        return {}
+    label, severity = _HA_STATUS_LABELS.get(code, (code.title(), 'warn'))
+    return {'code': code, 'label': label, 'severity': severity,
+            'forced': code in ('STAYPRIMARY', 'STAYSECONDARY')}
+
 def _get_cluster_nodes_normalized(instance_id=None):
     """Read cluster members from the CLIP (primary) and map them to the hanode shape."""
     try:
@@ -771,6 +803,7 @@ def _get_cluster_nodes_normalized(instance_id=None):
             'ipaddress': n.get('ipaddress') or n.get('nodeip') or n.get('ip') or '',
             'state': str(n.get('masterstate') or n.get('state') or n.get('health') or 'Unknown'),
             'hasync': str(n.get('operationalsyncstate') or n.get('effectivestate') or ''),
+            'hastatus': str(n.get('hastatus') or n.get('health') or ''),
         })
     return {'hanode': norm} if norm else {}
 
@@ -858,10 +891,12 @@ def _build_node_overview(node_key: str, instance_id=None) -> dict:
     except Exception: pass
 
     role = 'Unknown'
+    ha_status = {}
     ha_data = _get_ha_data_fast(instance_id)
     for n in ha_data.get('hanode', []):
         if isinstance(n, dict) and (n.get('ipaddress') or n.get('ip') or n.get('nsip')) == ip:
             role = n.get('state') or n.get('hacurstate') or n.get('haStatus') or 'Unknown'
+            ha_status = _ha_status_meta(n)
 
     # BULLETPROOF configchanged check
     config_changed = False
@@ -896,7 +931,7 @@ def _build_node_overview(node_key: str, instance_id=None) -> dict:
     except Exception: pass
 
     return {
-        'connected': connected, 'ha_role': role, 'ns_stats': stats,
+        'connected': connected, 'ha_role': role, 'ha_status': ha_status, 'ns_stats': stats,
         'version': version, 'ip': ip, 'config_changed': config_changed,
         'license_type': lic_type, 'license_mode': lic_mode, 'bandwidth': bandwidth,
     }
@@ -1269,6 +1304,7 @@ def api_ha_status():
         if not n.get('name'):
             st = str(n.get('state', '')).upper()
             n['name'] = 'Primary' if 'PRIMARY' in st else ('Secondary' if 'SECONDARY' in st else (hostnames.get(ip) or 'node'))
+        n['ha_status'] = _ha_status_meta(n)
 
     result = {'mode': get_mode(inst), 'hanode': nodes}
     for nk in active_node_keys(inst):

@@ -6,6 +6,23 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.10.0
+- **HA status is now shown, including STAYPRIMARY / STAYSECONDARY.** The dashboard
+  only read a node's `state` (Primary/Secondary) and ignored NITRO's `hastatus`,
+  so *forced* HA modes were invisible — a node pinned with
+  `set ha node -hastatus STAYPRIMARY` looked like an ordinary primary even though
+  **failover is suppressed**. The HA panel has a new **HA Status** column
+  rendering the real code: `Stay Primary (forced)` / `Stay Secondary (forced)`
+  (amber, with a ⚠ marker), `Up` (green), and failure states such as
+  `Route Monitor Failed`, `Partial/Complete Failure` (red), plus `HA Disabled`,
+  `Initializing` and `No Peer`. Unknown codes are shown verbatim rather than
+  dropped. The node's Overview panel gained a matching **HA Status** row.
+- **Fix: a healthy Secondary was flagged red.** The HA table coloured any state
+  that wasn't `UP`/`PRIMARY` as an error, so a perfectly healthy `Secondary`
+  showed as danger. Secondary is now blue (normal standby); only genuine
+  down/failed states are red.
+- **HA panel also shows the node name/hostname** alongside the IP.
+
 ## 1.9.2
 - **Fix: sessions (and failover events) vanished on days 1–12 of the month.** The
   date-range filter parsed the dashboard's own `DD/MM/YYYY HH:MM:SS` timestamps

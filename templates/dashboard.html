@@ -68,6 +68,7 @@
     .badge-success { background: rgba(16, 185, 129, 0.15); color: #34d399; border-color: rgba(16, 185, 129, 0.2); }
     .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.2); }
     .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.2); }
+    .badge-info { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.2); }
     
     .fade-in { animation: fadeIn 0.4s ease-out forwards; }
     @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -944,6 +945,26 @@ function updateAppsTabAvailability() {
     }
 }
 
+// Map an HA role / hastatus to a badge colour. A Secondary is a healthy standby,
+// so it must not render as an error (it previously fell through to red).
+const HA_SEV_CLS = { ok: 'badge-success', warn: 'badge-warning', bad: 'badge-danger' };
+
+function haStateBadge(state) {
+    const s = String(state || '').toUpperCase();
+    if (s.includes('PRIMARY')) return 'badge-success';
+    if (s.includes('SECONDARY')) return 'badge-info';
+    if (s.includes('UP') || s.includes('ACTIVE')) return 'badge-success';
+    if (s.includes('DOWN') || s.includes('FAIL')) return 'badge-danger';
+    return 'badge-warning';
+}
+
+function haStatusCell(st) {
+    if (!st || !st.label) return '<span class="text-slate-600">—</span>';
+    const cls = HA_SEV_CLS[st.severity] || 'badge-warning';
+    const lock = st.forced ? '<span title="Failover is suppressed on this node">⚠ </span>' : '';
+    return `<span class="badge ${cls}">${lock}${escapeHtml(st.label)}</span>`;
+}
+
 async function loadOverview(background) {
     // Background auto-refresh polls carry a header so they don't reset the
     // idle-timeout clock. Both calls run in parallel to cut first-paint latency.
@@ -970,13 +991,18 @@ async function loadOverview(background) {
         }
 
         const role = r.data.ha_role || '';
-        const badge = role.toUpperCase().includes('PRIMARY') ? 'badge-success' : 'badge-warning';
+        const badge = haStateBadge(role);
+        const haSt = r.data.ha_status || {};
+        const haStRow = haSt.label
+            ? `<tr class="border-t border-slate-700"><td class="text-slate-500">HA Status</td><td>${haStatusCell(haSt)}</td></tr>`
+            : '';
         
         $('sysStats').innerHTML = `
         <table class="w-full">
             <tr class="border-b border-slate-700"><td class="text-slate-500 w-32">IP Address</td><td class="font-mono text-white">${escapeHtml(r.data.ip)}</td></tr>
             <tr class="border-b border-slate-700"><td class="text-slate-500">Version</td><td class="text-white">${escapeHtml(r.data.version)}</td></tr>
             <tr><td class="text-slate-500">HA Role</td><td><span class="badge ${badge}">${escapeHtml(role)}</span></td></tr>
+            ${haStRow}
         </table>`;
         
         $('licStats').innerHTML = `
@@ -1007,11 +1033,15 @@ async function loadOverview(background) {
 
         if (ha.data.hanode) {
             const rows = ha.data.hanode.map((n, i) => {
-                const s = (n.state || '').toUpperCase();
-                const cls = s.includes('UP') || s.includes('PRIMARY') ? 'badge-success' : 'badge-danger';
-                return `<tr class="border-b border-slate-800/50"><td class="text-slate-500">${i + 1}</td><td class="font-mono text-slate-300">${escapeHtml(n.ipaddress || n.ip)}</td><td><span class="badge ${cls}">${s}</span></td><td class="text-slate-500 text-xs">${escapeHtml(n.hasync || '')}</td></tr>`;
+                const s = (n.state || 'Unknown').toUpperCase();
+                return `<tr class="border-b border-slate-800/50"><td class="text-slate-500">${i + 1}</td>` +
+                    `<td class="text-white">${escapeHtml(n.name || '')}</td>` +
+                    `<td class="font-mono text-slate-300">${escapeHtml(n.ipaddress || n.ip || '')}</td>` +
+                    `<td><span class="badge ${haStateBadge(s)}">${s}</span></td>` +
+                    `<td>${haStatusCell(n.ha_status)}</td>` +
+                    `<td class="text-slate-500 text-xs">${escapeHtml(n.hasync || '')}</td></tr>`;
             }).join('');
-            $('haStatus').innerHTML = `<table><thead><tr><th>#</th><th>IP</th><th>State</th><th>Sync</th></tr></thead><tbody>${rows}</tbody></table>`;
+            $('haStatus').innerHTML = `<table><thead><tr><th>#</th><th>Node</th><th>IP</th><th>State</th><th>HA Status</th><th>Sync</th></tr></thead><tbody>${rows}</tbody></table>`;
         }
     }
 }

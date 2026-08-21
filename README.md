@@ -12,6 +12,7 @@ Tabs: **Overview**, **Applications / Services**, **Failover History**, **User Se
 
 - **Multiple instances**: manage many deployments at once. Add / rename / remove them in **Settings → NetScaler Instances** and pick the active one from the header **Instance** switcher; every tab, plus session and failover history, is scoped to it.
 - **Deployment modes** (per instance): `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode`). Selectable in **Settings**.
+- **HA status at a glance**: the HA panel shows each node's role *and* its NITRO `hastatus` — including the forced **STAYPRIMARY / STAYSECONDARY** modes (flagged amber, since they suppress failover), `Up`, and failure states like route-monitor/partial/complete failure.
 - **HA resilience**: if one node of an HA pair is down, the dashboard keeps polling — HA status fails over to whichever node answers, the dead node is shown offline, the role change is logged as a failover, and the dead node fails fast (~3s connect timeout) instead of hanging.
 - **Dual-Stack** runtime: auto-detect Next-Gen per node, fall back to NITRO.
 - **HTTPS on 443** with a cert signed by a **local CA** generated on first boot. Install the CA for warning-free HTTPS, upload your own PEM cert/key, or generate a CSR for your corporate CA — all from **Settings → TLS Certificate**.
