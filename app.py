@@ -1724,15 +1724,35 @@ def _ica_gateway_map(nitro):
             continue
     return out
 
+# Audit lines produced by the MANAGEMENT plane (admin/API/CLI/GUI/SSH logins and
+# role-based auth). These are not gateway/AAA end-user activity, so they are
+# excluded from the Sessions tab.
+_MGMT_AUDIT_RE = re.compile(
+    r'CMD_EXECUTED|rba\s+authentication|\bSSHD\b|\bADM_User\b|\bnsnetsvc\b'
+    r'|\bdefault\s+(?:API|CLI|GUI|UI|SYSTEM)\b', re.I)
+
+def _system_usernames(nitro):
+    """Management account names, so their login events can be filtered out."""
+    try:
+        d = nitro._get('/config/systemuser', custom_timeout=4) or {}
+        return {str(u.get('username', '')).strip().lower()
+                for u in (d.get('systemuser') or []) if isinstance(u, dict)}
+    except Exception:
+        return set()
+
 def _audit_failed_locked_rows(nitro):
-    """Failed logins / lockouts parsed from the appliance audit log — the real
-    source for management (system) accounts, which don't live in aaauser. Best
-    effort across log formats; /api/session-debug shows the raw lines to tune it."""
+    """Failed logins / lockouts for **AAA / gateway users**, parsed from the
+    appliance audit log. Management-plane events (admin/API/CLI/GUI/SSH logins,
+    RBA) and any account that exists as a system user are skipped — the Sessions
+    tab is about end users, not administrators."""
     rows, seen = [], set()
+    sys_users = _system_usernames(nitro)
     try:
         d = nitro._get('/config/auditmessages?args=loglevel:ALL,numofmesgs:100', custom_timeout=6) or {}
         for it in (d.get('auditmessages') or []):
             line = str(it.get('value', '')) if isinstance(it, dict) else str(it)
+            if _MGMT_AUDIT_RE.search(line):
+                continue                      # management plane - not an AAA session
             low = line.lower()
             is_lock = 'lock' in low and 'user' in low
             is_fail = (('login' in low or 'logon' in low or 'authentic' in low)
@@ -1741,6 +1761,8 @@ def _audit_failed_locked_rows(nitro):
                 continue
             m = re.search(r'user[:\s]+"?([A-Za-z0-9._\\@-]+)', line, re.I)
             user = m.group(1) if m else '—'
+            if user.strip().lower() in sys_users:
+                continue                      # a management account, not an AAA user
             ipm = re.search(r'(?:remote_ip|client_ip|clientip|from|source)[:\s"]+([0-9.]+)', line, re.I)
             ip = ipm.group(1) if ipm else '—'
             # NetScaler audit stamps are MM/DD/YYYY:HH:MM:SS (US order) — convert to
@@ -1756,7 +1778,7 @@ def _audit_failed_locked_rows(nitro):
             # own row; a lockout is one row per user (current state).
             sid = f"{user}|Locked" if is_lock else f"{user}|Failed|{when or line[:40]}"
             rows.append(_synthetic_row(user, status, when=when, ip=ip, sid=sid,
-                        conn_type='Mgmt lockout' if is_lock else 'Mgmt login',
+                        conn_type='AAA lockout' if is_lock else 'AAA login',
                         extra={'resource': line[:200], 'protocol': 'Audit log'}))
             if len(rows) >= 30:
                 break
@@ -2080,6 +2102,8 @@ apply_session_timeout()
 # Local history DB (sessions + failover) with time-based retention.
 try:
     db.init_db()
+    # Older builds stored management sessions/logins; the Sessions tab is AAA-only.
+    db.purge_types(('Management', 'Mgmt login', 'Mgmt lockout'))
     db.migrate_json_failover(FAILOVER_HISTORY_FILE)
     db.start_retention_thread()
 except Exception as e:

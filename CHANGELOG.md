@@ -6,6 +6,19 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.12.1
+- **Sessions are AAA/gateway only — management logins are gone.** The audit-log
+  parser matched *any* login event, so admin-plane activity (`API/CLI/GUI
+  CMD_EXECUTED`, `SSHD` logins, role-based-auth messages for `nsroot`/`nsapi`)
+  showed up as session rows. Management-plane lines are now skipped, and any
+  account that exists as a **system user** on the appliance is excluded by name,
+  so only real end-user AAA/gateway events (e.g. `SSLVPN` / `AAATM` login
+  failures and lockouts) are listed. Rows are labelled `AAA login` / `AAA lockout`.
+- **Legacy management rows are purged from history.** Builds 1.9.0–1.12.0 stored
+  `Management` / `Mgmt login` / `Mgmt lockout` rows, which lingered for the 7-day
+  retention window even after the feature was removed. They're now deleted on
+  startup, so the tab is clean immediately rather than a week later.
+
 ## 1.12.0
 - **Service / Application status colours now reflect the real state.** The tables
   coloured anything containing `UP` green and everything else red, so

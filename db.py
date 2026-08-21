@@ -219,6 +219,20 @@ def purge(days: int | None = None) -> dict:
     return {"failover_removed": fo, "sessions_removed": se, "days": days}
 
 
+def purge_types(types) -> int:
+    """Delete stored sessions whose `type` matches (used to drop legacy
+    management rows once the Sessions tab became AAA-only)."""
+    types = tuple(types or ())
+    if not types:
+        return 0
+    with _write_lock, _conn() as c:
+        marks = ",".join("?" * len(types))
+        n = c.execute(f"DELETE FROM sessions WHERE type IN ({marks})", types).rowcount
+    if n:
+        logger.info(f"Removed {n} stored session row(s) of type: {', '.join(types)}")
+    return n
+
+
 def stats() -> dict:
     with _conn() as c:
         fo = c.execute("SELECT COUNT(*) n, MIN(ts_epoch) o FROM failover_events").fetchone()
