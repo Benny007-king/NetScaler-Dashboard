@@ -137,6 +137,22 @@ Tune with `RETENTION_DAYS`, `RETENTION_INTERVAL_SECS`, `DASHBOARD_DB_FILE` (see 
 
 ## Install & Run
 
+### Check dependencies first (optional)
+
+A read-only preflight script reports anything missing on your machine — Docker, the Docker
+daemon, Compose v2, Git (or Python 3.9+/pip for the source install), plus whether ports 443/80
+are free — and prints a download link for each gap:
+
+```bash
+./preflight.sh            # Linux / macOS  (add 'python' to check the source install)
+```
+```bat
+preflight.bat             :: Windows
+```
+
+It installs nothing and changes nothing; it exits non-zero if a required dependency is missing.
+Per-OS download links are also on the [documentation site](https://net-scaler-dashboard-web.vercel.app/docs.html#deps).
+
 ### Docker (recommended)
 
 ```bash

@@ -6,6 +6,22 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.14.0
+- **Preflight dependency check.** New `preflight.sh` (Linux/macOS) and
+  `preflight.bat` (Windows) verify everything needed *before* the first install
+  and print a download link for whatever is missing: Git, Docker, the Docker
+  **daemon actually running**, Compose v2 — or Python 3.9+/pip with
+  `preflight.sh python` for the source install — plus a warning if ports 443/80
+  are already taken. Read-only (installs and changes nothing) and exits non-zero
+  when a required dependency is absent, so it can gate a scripted setup.
+- **Per-OS dependency guide on the docs site.** A new
+  [Before you install](https://net-scaler-dashboard-web.vercel.app/docs.html#deps)
+  section lists every dependency for **Windows / macOS / Linux**, split by install
+  route (Docker vs from source), each with what it's for and a verified download
+  link — including WSL 2, the Compose v2 plugin, Docker's non-root post-install
+  step, and Docker Desktop alternatives (Rancher, Podman, OrbStack, Colima). The
+  page preselects the visitor's OS.
+
 ## 1.13.0
 - **Fix: Applications failed to load on a Next-Gen node.** The page requested
   `/api/applications` whenever a node was in Next-Gen mode — **a route that never
