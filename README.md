@@ -51,6 +51,7 @@ netscaler-dashboard/
 ├── appliance.py               # Version/health endpoints + upgrade-bundle upload
 ├── db.py                      # History + settings store: built-in SQLite or an external database
 ├── tests/test_storage.py      # Storage tests, run against real database servers
+├── tests/test_auth.py         # Login tests: default admin, forced change, hashes from earlier releases
 ├── appliance/                 # Everything that turns the image into a virtual appliance
 │   ├── build.sh               #   builds the OVA and the .nsu (needs only Docker)
 │   ├── build-image.sh         #   Debian image -> customised disk -> OVA
@@ -112,7 +113,8 @@ Copy `.env.example` → `.env`. Notable keys: `APP_PORT` (default `443`), `APP_S
 ### Dashboard login
 
 - Default local admin is `admin` / `admin`; you are forced to change it on first login.
-- Reset it by deleting `auth_config.json` and restarting.
+- Reset it by deleting `auth_config.json` and restarting (on the appliance: console menu → *Reset the web admin password*).
+- The password is stored in `auth_config.json` only as a salted scrypt hash. A hash written by 1.16.0 or earlier (unsalted SHA-256) still signs in and is replaced on the first successful sign-in.
 - **LDAP/AD is configured in the UI** — open **Settings → LDAP / Active Directory**, enable it, fill in server / base DN / bind account / user attribute (and optional allowed-group DN), and use **Test Connection** before saving. Settings persist to `ldap_config.json` (gitignored). The `LDAP_*` env vars in `.env` act as initial defaults. The local admin account always works regardless.
 
 ### Session timeout
@@ -326,6 +328,7 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 - HTTPS-only on 443; CA-signed cert out of the box, replaceable from Settings.
 - Response headers: HSTS (on HTTPS), CSP (scoped to the CDNs used), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`.
 - Secrets live in gitignored files (`nodes_config.json`, `.env`, `.app_secret`, `certs/`); never commit them.
+- The local admin password is stored as a salted, deliberately slow hash (scrypt via Werkzeug; PBKDF2-SHA256 if scrypt is unavailable) and checked in constant time. Hashes from 1.16.0 and earlier are upgraded on the next sign-in.
 - Session cookies are HttpOnly + SameSite=Lax + Secure. The session secret is random and persisted to `.app_secret`.
 - Restrict access to NetScaler management networks (firewall / allowlist).
 - An external database receives a copy of the settings, **including NetScaler passwords** as stored on the appliance. Give the dashboard its own database and account, restrict who can read it, and encrypt the connection.

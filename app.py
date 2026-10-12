@@ -12,6 +12,7 @@ import sys
 import json
 import re
 import hashlib
+import hmac
 import logging
 import secrets
 import ssl
@@ -31,6 +32,7 @@ from flask import (
     Flask, render_template, jsonify, request, redirect, url_for,
     session, flash
 )
+from werkzeug.security import generate_password_hash, check_password_hash
 
 # ======================================================================================
 # Persistent data directory — ALL runtime state lives here so code updates
@@ -308,8 +310,25 @@ def _prune_failover_history(history):
         history = sorted(history, key=lambda e: e.get('timestamp', ''))[-low:]
     return history
 
+# Releases up to 1.16.0 stored the admin password as an unsalted SHA-256 hex
+# digest. Such a value still signs in, and is replaced on that sign-in.
+_LEGACY_HASH_RE = re.compile(r'[0-9a-fA-F]{64}')
+
 def hash_password(password: str) -> str:
-    return hashlib.sha256(password.encode('utf-8')).hexdigest()
+    """Salted, slow hash of the local admin password: scrypt, or PBKDF2 where
+    this Python was built without scrypt."""
+    try: return generate_password_hash(password, method='scrypt')
+    except Exception: return generate_password_hash(password, method='pbkdf2:sha256')
+
+def is_legacy_hash(stored) -> bool:
+    return isinstance(stored, str) and bool(_LEGACY_HASH_RE.fullmatch(stored))
+
+def verify_password(password: str, stored) -> bool:
+    if not isinstance(stored, str) or not stored: return False
+    if is_legacy_hash(stored):
+        return hmac.compare_digest(hashlib.sha256(password.encode('utf-8')).hexdigest(), stored.lower())
+    try: return check_password_hash(stored, password)      # constant-time inside
+    except Exception: return False
 
 def load_auth_config() -> dict:
     try:
@@ -1054,8 +1073,10 @@ def login():
             if ldap_authenticate(username, password):
                 backend = 'ldap'
         else:
-            if (username == auth_config.get('username')
-                    and hash_password(password) == auth_config.get('password_hash')):
+            # Both checks always run, so a wrong user name costs the same as a wrong password.
+            user_ok = hmac.compare_digest(username.encode('utf-8'), str(auth_config.get('username') or '').encode('utf-8'))
+            pw_ok = verify_password(password, auth_config.get('password_hash'))
+            if user_ok and pw_ok:
                 backend = 'local'
 
         if backend:
@@ -1065,6 +1086,9 @@ def login():
             session.permanent = True
             session['last_active'] = time.time()
             if backend == 'local':
+                if is_legacy_hash(auth_config.get('password_hash')):
+                    auth_config['password_hash'] = hash_password(password)
+                    logger.info("Admin password hash upgraded from the legacy format")
                 auth_config['last_login'] = datetime.now(IL_TZ).isoformat()
                 auth_config['login_attempts'] = 0
                 save_auth_config(auth_config)
@@ -1091,7 +1115,7 @@ def change_password():
         new_pw = request.form.get('new_password', '')
         confirm_pw = request.form.get('confirm_password', '')
 
-        if hash_password(current_pw) != auth_config.get('password_hash'):
+        if not verify_password(current_pw, auth_config.get('password_hash')):
             flash('Current password is incorrect', 'error')
             return render_template('change_password.html')
         if not new_pw or len(new_pw) < 6:

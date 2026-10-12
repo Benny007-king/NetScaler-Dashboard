@@ -6,6 +6,22 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.16.1
+- **Stronger storage of the admin password.** The local admin password is now
+  kept as a salted **scrypt** hash (PBKDF2-SHA256 where Python has no scrypt)
+  instead of an unsalted SHA-256 digest, so reading `auth_config.json` - or the
+  copy of the settings in an external database - no longer allows fast offline
+  guessing. Password checks compare in constant time.
+- **Nothing to do on upgrade.** A password stored by an earlier release still
+  signs in, and is re-stored in the new format on that first successful sign-in.
+  The default `admin` / `admin` login and its forced change work as before.
+- Once a password has been re-stored, a release older than 1.16.1 can no longer
+  check it: upgrade every dashboard that shares an external database, and after
+  going back to an older release reset the admin password (console menu, or
+  delete `auth_config.json` and restart).
+- New `tests/test_auth.py` covers the default login, the forced change and
+  sign-in with a hash from an earlier release.
+
 ## 1.16.0
 - **External database.** New **Settings -> Database**: keep the dashboard's data in
   your own **PostgreSQL, MySQL / MariaDB or Microsoft SQL Server** instead of the
