@@ -42,3 +42,6 @@ dist/
 .github/
 *.ova
 *.nsu
+
+# Tests run from a checkout, not from the image
+tests/

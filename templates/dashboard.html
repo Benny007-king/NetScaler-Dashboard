@@ -144,6 +144,50 @@
 
           <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
             <div class="flex items-center justify-between mb-2">
+              <h3 class="text-lg font-semibold text-emerald-400">Database</h3>
+              <span id="dbStatusBadge" class="badge badge-info">&hellip;</span>
+            </div>
+            <p class="text-xs text-slate-400 mb-3">Where session and failover history are kept, together with a copy of these settings (instances, logins, LDAP). The built-in store lives on this dashboard; an external database keeps the data on your own server, so a new appliance can be pointed at it and pick everything up.</p>
+            <div id="dbStatusLine" class="text-xs mb-3" role="status" aria-live="polite"></div>
+            <div id="dbForm" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div class="md:col-span-2"><label for="setDbType" class="block text-xs text-slate-400 mb-1">Store data in</label>
+                <select id="setDbType" onchange="onDbType(true)" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm">
+                  <option value="builtin">Built-in store (on this dashboard)</option>
+                  <option value="postgresql">PostgreSQL</option>
+                  <option value="mysql">MySQL / MariaDB</option>
+                  <option value="mssql">Microsoft SQL Server</option>
+                  <option value="url">Connection URL (advanced)</option>
+                </select></div>
+              <div class="db-server"><label for="setDbHost" class="block text-xs text-slate-400 mb-1">Server (host or IP)</label><input type="text" id="setDbHost" placeholder="db.example.com" autocomplete="off" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div class="db-server"><label for="setDbPort" class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setDbPort" min="1" max="65535" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div class="db-server"><label for="setDbName" class="block text-xs text-slate-400 mb-1">Database name</label><input type="text" id="setDbName" placeholder="netscaler_dashboard" autocomplete="off" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div class="db-server"><label for="setDbUser" class="block text-xs text-slate-400 mb-1">User</label><input type="text" id="setDbUser" autocomplete="off" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div class="db-server md:col-span-2"><label for="setDbPass" class="block text-xs text-slate-400 mb-1">Password <span id="dbPwHint" class="text-slate-500"></span></label><input type="password" id="setDbPass" placeholder="leave blank to keep" autocomplete="new-password" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div class="db-url md:col-span-2"><label for="setDbUrl" class="block text-xs text-slate-400 mb-1">Connection URL</label><input type="text" id="setDbUrl" placeholder="postgresql://user:password@db.example.com:5432/netscaler_dashboard" autocomplete="off" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm font-mono">
+                <p class="text-xs text-slate-500 mt-1">Starts with <span class="font-mono">postgresql://</span>, <span class="font-mono">mysql://</span>, <span class="font-mono">mariadb://</span> or <span class="font-mono">mssql://</span>. Keep <span class="font-mono">***</span> as the password to keep the stored one.</p></div>
+              <div class="db-ext md:col-span-2"><label for="setDbTls" class="block text-xs text-slate-400 mb-1">Encryption</label>
+                <select id="setDbTls" onchange="onDbType(false)" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm">
+                  <option value="off">Off &mdash; not encrypted (the stored settings include NetScaler passwords)</option>
+                  <option value="on">Encrypt (TLS), do not check the server certificate</option>
+                  <option value="verify">Encrypt (TLS) and verify the server certificate</option>
+                </select></div>
+              <div class="db-ca md:col-span-2"><label for="setDbCa" class="block text-xs text-slate-400 mb-1">CA certificate (PEM) &mdash; leave blank to use the public CAs</label><textarea id="setDbCa" rows="3" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs font-mono" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+            </div>
+            <fieldset id="dbChoice" class="hidden mt-4 p-3 rounded-lg bg-amber-500/10 border border-amber-500/40">
+              <legend class="px-1 text-sm font-semibold text-amber-300">This database already holds dashboard settings</legend>
+              <p id="dbChoiceInfo" class="text-xs text-slate-300 mb-3"></p>
+              <label class="flex items-start gap-2 text-sm text-white mb-2 cursor-pointer"><input type="radio" name="dbChoice" value="database" class="mt-1 accent-emerald-500"><span>Use the settings in the database<span class="block text-xs text-slate-400">This dashboard&rsquo;s instances, admin login and LDAP settings are replaced by the ones stored there. You then sign in with the admin password saved in the database.</span></span></label>
+              <label class="flex items-start gap-2 text-sm text-white cursor-pointer"><input type="radio" name="dbChoice" value="local" class="mt-1 accent-emerald-500"><span>Keep this dashboard&rsquo;s settings<span class="block text-xs text-slate-400">The settings stored in the database are overwritten with the ones on this dashboard. History in the database is kept either way.</span></span></label>
+            </fieldset>
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+              <button onclick="testDatabase()" id="dbTestBtn" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm border border-slate-600 transition-colors disabled:opacity-50">Test Connection</button>
+              <button onclick="saveDatabase()" id="dbSaveBtn" class="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-sm border border-emerald-500 transition-colors disabled:opacity-50">Save Database Settings</button>
+              <span id="dbMsg" class="text-xs" role="status" aria-live="polite"></span>
+            </div>
+          </div>
+
+          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
+            <div class="flex items-center justify-between mb-2">
               <h3 class="text-lg font-semibold text-cyan-400">LDAP / Active Directory</h3>
               <span id="ldapStatusBadge" class="badge badge-warning">Disabled</span>
             </div>
@@ -207,6 +251,10 @@
         <span class="text-xl mr-3" aria-hidden="true">🟠</span>
         <p class="text-orange-200 font-medium tracking-wide">Warning: Unsaved configuration detected on NetScaler!</p>
     </div>
+</div>
+
+<div id="dbBanner" class="hidden max-w-7xl mx-auto bg-amber-500/15 border-l-4 border-amber-500 p-4 mb-6 rounded-r-lg shadow-lg fade-in" role="status">
+    <p class="text-amber-100 text-sm"><strong class="font-semibold">The external database is not reachable.</strong> <span id="dbBannerText"></span></p>
 </div>
 
 <header class="glass-panel rounded-2xl mb-6 p-4 flex flex-col md:flex-row items-center justify-between sticky top-4 z-50 fade-in">
@@ -695,11 +743,166 @@ async function openSettings() {
     }
     loadLdapSettings();
     loadAppliance();
+    loadDatabase();
     $('settingsModal').classList.remove('hidden');
 }
 
 function closeSettings() {
     $('settingsModal').classList.add('hidden');
+}
+
+// --- DATABASE SETTINGS ---
+const DB_PORTS = { postgresql: 5432, mysql: 3306, mssql: 1433 };
+let dbLocked = false;
+
+function dbSay(html) { const m = $('dbMsg'); if (m) m.innerHTML = html; }
+
+function onDbType(typeChanged) {
+    const t = $('setDbType').value, tls = $('setDbTls').value;
+    const show = (cls, on) => document.querySelectorAll('#dbForm .' + cls).forEach(e => e.classList.toggle('hidden', !on));
+    show('db-server', t !== 'builtin' && t !== 'url');
+    show('db-url', t === 'url');
+    show('db-ext', t !== 'builtin');
+    show('db-ca', t !== 'builtin' && t !== 'mssql' && tls === 'verify');
+    const verify = $('setDbTls').querySelector('option[value="verify"]');
+    verify.disabled = (t === 'mssql');                       // not offered by the SQL Server driver
+    if (t === 'mssql' && tls === 'verify') { $('setDbTls').value = 'on'; }
+    if (typeChanged) {
+        const port = $('setDbPort');
+        if (DB_PORTS[t] && (!port.value || Object.values(DB_PORTS).includes(parseInt(port.value)))) port.value = DB_PORTS[t];
+        $('dbChoice').classList.add('hidden');
+        dbSay('');
+    }
+    $('dbTestBtn').classList.toggle('hidden', t === 'builtin');
+}
+
+function dbCounts(c) {
+    return c ? `${c.sessions} session${c.sessions === 1 ? '' : 's'} and ${c.failover_events} failover event${c.failover_events === 1 ? '' : 's'}` : '';
+}
+
+function renderDatabaseStatus(d) {
+    const badge = $('dbStatusBadge'), line = $('dbStatusLine');
+    if (!badge || !line) return;
+    if (d.backend !== 'external') {
+        badge.textContent = 'Built-in'; badge.className = 'badge badge-info';
+        line.className = 'text-xs mb-3 text-slate-400';
+        line.textContent = `Stored on this dashboard: ${dbCounts(d.counts)}, kept for ${d.retention_days} days.`;
+    } else if (d.connected) {
+        badge.textContent = 'Connected'; badge.className = 'badge badge-success';
+        line.className = 'text-xs mb-3 text-green-400';
+        line.textContent = `Connected to ${d.server || 'the database'} — it holds ${dbCounts(d.counts)}, kept for ${d.retention_days} days.`;
+    } else {
+        const w = d.waiting || { sessions: 0, failover_events: 0 };
+        badge.textContent = 'Unreachable'; badge.className = 'badge badge-danger';
+        line.className = 'text-xs mb-3 text-amber-300';
+        line.textContent = `Not reachable: ${d.error || 'no answer'}. New history is kept on this dashboard (${dbCounts(w)} waiting) and is moved into the database automatically when it answers again.`;
+    }
+}
+
+function renderDatabaseBanner(d) {
+    const b = $('dbBanner');
+    if (!b) return;
+    const down = d && d.backend === 'external' && !d.connected;
+    b.classList.toggle('hidden', !down);
+    if (down) $('dbBannerText').textContent = 'New history is being kept on this dashboard and will be moved into the database when it answers again. ' + (d.error ? '(' + d.error + ')' : '');
+}
+
+async function loadDatabase(background) {
+    const r = await getJSON('/api/database', { headers: { 'X-Idle-Refresh': '1' } });
+    if (!r.ok || !r.data.backend) return;
+    const d = r.data;
+    renderDatabaseBanner(d);
+    if (background) { renderDatabaseStatus(d); return; }
+    const c = d.config || {};
+    dbLocked = !!d.locked;
+    $('setDbType').value = d.backend === 'external' ? (c.type || 'url') : 'builtin';
+    $('setDbHost').value = c.host || '';
+    $('setDbPort').value = c.port || '';
+    $('setDbName').value = c.database || '';
+    $('setDbUser').value = c.username || '';
+    $('setDbPass').value = '';
+    $('setDbUrl').value = c.url || '';
+    $('setDbTls').value = c.tls || 'on';                       // a new connection starts encrypted
+    $('setDbCa').value = c.ca_pem || '';
+    $('dbPwHint').textContent = c.password_set ? '(a password is stored)' : '';
+    $('dbChoice').classList.add('hidden');
+    document.querySelectorAll('input[name="dbChoice"]').forEach(x => { x.checked = false; });
+    onDbType(false);
+    renderDatabaseStatus(d);
+    document.querySelectorAll('#dbForm input, #dbForm select, #dbForm textarea').forEach(e => { e.disabled = dbLocked; });
+    $('dbSaveBtn').classList.toggle('hidden', dbLocked);
+    $('dbTestBtn').classList.toggle('hidden', dbLocked || $('setDbType').value === 'builtin');
+    dbSay(dbLocked ? '<span class="text-slate-400">Set by the DATABASE_URL environment variable; change it there.</span>' : '');
+}
+
+function dbPayload() {
+    return {
+        type: $('setDbType').value,
+        host: $('setDbHost').value.trim(),
+        port: parseInt($('setDbPort').value) || 0,
+        database: $('setDbName').value.trim(),
+        username: $('setDbUser').value.trim(),
+        password: $('setDbPass').value,
+        url: $('setDbUrl').value.trim(),
+        tls: $('setDbTls').value,
+        ca_pem: $('setDbTls').value === 'verify' ? $('setDbCa').value.trim() : ''
+    };
+}
+
+function dbExistingText(server, ex) {
+    if (!ex || !ex.settings) return `Connected to ${escapeHtml(server)}. No dashboard settings are stored there yet.`;
+    const who = ex.saved_by ? ` by <strong>${escapeHtml(ex.saved_by)}</strong>` : '';
+    const when = ex.saved_at ? ` on ${escapeHtml(String(ex.saved_at).replace('T', ' ').slice(0, 16))}` : '';
+    const inst = (ex.instances && ex.instances.length) ? ` Instances: ${ex.instances.map(escapeHtml).join(', ')}.` : '';
+    return `Connected to ${escapeHtml(server)}. It already holds dashboard settings saved${who}${when}.${inst} History there: ${dbCounts(ex)}.`;
+}
+
+// A server without TLS answers an encrypted attempt with a driver error that
+// does not say what to do about it.
+function dbTlsHint(err) {
+    if ($('setDbTls').value === 'off' || !/ssl|tls|certificate|encrypt/i.test(err || '')) return '';
+    return ' <span class="text-slate-300">— if this server has no TLS, set Encryption to Off; if the certificate is not trusted, add its CA or choose not to check it.</span>';
+}
+
+async function testDatabase() {
+    const btn = $('dbTestBtn');
+    btn.disabled = true; btn.textContent = 'Testing...';
+    dbSay('<span class="text-slate-400">Testing…</span>');
+    const r = await getJSON('/api/database/test', { method: 'POST', body: JSON.stringify(dbPayload()) });
+    btn.disabled = false; btn.textContent = 'Test Connection';
+    if (r.expired) return;
+    dbSay((r.ok && r.data.success)
+        ? `<span class="text-green-400">✔ ${dbExistingText(r.data.server, r.data.existing)}</span>`
+        : `<span class="text-red-400">✖ ${escapeHtml((r.data && r.data.error) || 'Could not connect')}${dbTlsHint(r.data && r.data.error)}</span>`);
+}
+
+async function saveDatabase() {
+    const btn = $('dbSaveBtn'), body = dbPayload();
+    const choiceBox = $('dbChoice');
+    if (!choiceBox.classList.contains('hidden')) {
+        const picked = document.querySelector('input[name="dbChoice"]:checked');
+        if (!picked) { dbSay('<span class="text-amber-400">Choose which settings to keep, then save again.</span>'); return; }
+        body.settings_from = picked.value;
+    }
+    btn.disabled = true; btn.textContent = 'Saving...';
+    dbSay('<span class="text-slate-400">' + (body.type === 'builtin' ? 'Switching…' : 'Connecting and moving history…') + '</span>');
+    const r = await getJSON('/api/database', { method: 'POST', body: JSON.stringify(body) });
+    btn.disabled = false; btn.textContent = 'Save Database Settings';
+    if (r.expired) return;
+    if (r.status === 409 && r.data.needs_choice) {
+        $('dbChoiceInfo').innerHTML = dbExistingText(r.data.server, r.data.existing);
+        choiceBox.classList.remove('hidden');
+        dbSay('<span class="text-amber-400">Choose which settings to keep, then save again.</span>');
+        return;
+    }
+    if (r.ok && r.data.success) {
+        const tookSettings = body.settings_from === 'database';
+        await loadDatabase();
+        dbSay(`<span class="text-green-400">✔ ${escapeHtml(r.data.message || 'Saved')}${tookSettings ? ' Reloading…' : ''}</span>`);
+        if (tookSettings) setTimeout(() => location.reload(), 2500);
+    } else {
+        dbSay(`<span class="text-red-400">✖ ${escapeHtml((r.data && r.data.error) || 'Failed')}${dbTlsHint(r.data && r.data.error)}</span>`);
+    }
 }
 
 // --- LDAP SETTINGS ---
@@ -1731,6 +1934,9 @@ function activityPing() {
 ['keydown', 'click', 'mousemove', 'touchstart'].forEach(ev =>
     document.addEventListener(ev, activityPing, { passive: true }));
 
+// Watch the external database in the background so an outage is visible on every tab.
+setInterval(() => { if (!document.hidden) loadDatabase(true); }, 60000);
+
 (async function init() {
     setInitialDateFields();
     initCharts();
@@ -1748,6 +1954,7 @@ function activityPing() {
         });
     }
     loadAppliance();
+    loadDatabase(true);
     await loadInstances();
     await fetchCaps();
     // With several deployments the wall is the useful landing view; with one it

@@ -45,8 +45,23 @@ jobs:
       - name: Build the appliance (OVA) and the upgrade bundle (.nsu)
         run: bash appliance/build.sh
 
-      - name: Boot the appliance and test install, upgrade, rollback and the console menu
+      - name: Boot the appliance and test install, upgrade, external database, rollback and the console menu
         run: bash appliance/smoke-test.sh
+
+      # The upgrade file is the only way an installed appliance gets this release,
+      # so prove it on the release people are actually running.
+      - name: Upgrade the previous release to this one
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases --json tagName -q '.[0].tagName' || true)
+          if [ -z "$prev" ] || [ "$prev" = "v$(tr -d ' \t\r\n' < VERSION)" ]; then
+            echo "No earlier release to upgrade from - skipping."
+            exit 0
+          fi
+          mkdir -p previous
+          gh release download "$prev" --pattern 'netscaler-dashboard-appliance-*.ova' --dir previous
+          FROM_OVA=$(ls previous/*.ova | head -n 1) bash appliance/smoke-test.sh
 
       - name: Write the release notes
         run: |

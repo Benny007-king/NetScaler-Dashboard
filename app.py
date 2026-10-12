@@ -152,6 +152,7 @@ def save_ldap_config(new: dict) -> dict:
     with open(LDAP_CONFIG_FILE, "w", encoding="utf-8") as f:
         json.dump(merged, f, indent=2)
     LDAP_CFG = load_ldap_config()
+    db.documents_changed()
     return LDAP_CFG
 
 def ldap_enabled() -> bool:
@@ -327,6 +328,7 @@ def load_auth_config() -> dict:
 def save_auth_config(config: dict) -> None:
     try:
         with open(AUTH_CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(config, f, indent=2, ensure_ascii=False)
+        db.documents_changed()
     except Exception as e:
         logger.error(f"Error saving auth config: {e}")
 
@@ -686,6 +688,7 @@ def save_nodes_config(config):
     with open(NODES_CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(config, f, indent=2)
     global NETSCALER_CONFIG
     NETSCALER_CONFIG = config
+    db.documents_changed()
 
 def get_instances():
     return NETSCALER_CONFIG.get('instances', [])
@@ -921,7 +924,8 @@ def track_ha_state_changes(nodes, instance_id=None):
         try:
             with open(HA_STATE_FILE, 'r', encoding='utf-8') as f: last_states = json.load(f)
         except Exception: pass
-        
+    _states_before = json.dumps(last_states, sort_keys=True)
+
     history = load_failover_history()
     changed = False
     new_events = []
@@ -954,6 +958,7 @@ def track_ha_state_changes(nodes, instance_id=None):
         except Exception as e: logger.warning(f"Could not persist failover events: {e}")
     try:
         with open(HA_STATE_FILE, 'w', encoding='utf-8') as f: json.dump(last_states, f)
+        if json.dumps(last_states, sort_keys=True) != _states_before: db.documents_changed()
     except Exception: pass
 
 def _roles_from_ha(instance_id=None) -> tuple[dict, dict]:
@@ -1162,6 +1167,112 @@ def api_ldap_test():
     return jsonify({"success": ok, "message": msg})
 
 # ======================================================================================
+# External database (Settings -> Database)
+# ======================================================================================
+def _db_documents():
+    """The settings documents an external database gets a copy of, each with
+    whether this dashboard really has it (a file somebody saved) or is still on
+    defaults. A dashboard on defaults takes the document from the database."""
+    ha = None
+    try:
+        if os.path.exists(HA_STATE_FILE):
+            with open(HA_STATE_FILE, 'r', encoding='utf-8') as f: ha = json.load(f)
+    except Exception: ha = None
+    return {
+        'nodes': (NETSCALER_CONFIG, os.path.exists(NODES_CONFIG_FILE)),
+        'auth': (dict(auth_config), os.path.exists(AUTH_CONFIG_FILE) and not auth_config.get('is_default_password', False)),
+        'ldap': (dict(LDAP_CFG), os.path.exists(LDAP_CONFIG_FILE)),
+        'ha_state': (ha, isinstance(ha, dict) and bool(ha)),
+    }
+
+def _detect_all_api_modes():
+    API_MODE.clear()
+    for inst in get_instances():
+        for k, cfg in ((kk, vv) for kk, vv in inst.items() if isinstance(vv, dict)):
+            try: detect_api_mode_for_node(k, cfg, inst.get('id'))
+            except Exception: pass
+
+def _db_apply_document(name, doc):
+    """Replace one of this dashboard's settings documents with the database's copy."""
+    global LDAP_CFG
+    if not isinstance(doc, dict):
+        return
+    if name == 'nodes':
+        save_nodes_config(doc)
+        apply_session_timeout()
+        threading.Thread(target=_detect_all_api_modes, name='api-detect-once', daemon=True).start()
+    elif name == 'auth' and doc.get('username') and doc.get('password_hash'):
+        auth_config.clear()
+        auth_config.update(doc)
+        save_auth_config(auth_config)
+    elif name == 'ldap':
+        with open(LDAP_CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(doc, f, indent=2)
+        LDAP_CFG = load_ldap_config()
+    elif name == 'ha_state':
+        with open(HA_STATE_FILE, 'w', encoding='utf-8') as f: json.dump(doc, f)
+
+db.register_documents(_db_documents, _db_apply_document)
+
+@app.route('/api/database', methods=['GET', 'POST'])
+@login_required
+def api_database():
+    if request.method == 'GET':
+        return jsonify(db.status())
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"success": False, "error": "Invalid payload"}), 400
+    try:
+        if str(body.get('type') or '').lower() == 'builtin':
+            res = db.disconnect_external()
+            copied = res.get('copied')
+            msg = "Now using the built-in store."
+            if copied:
+                msg += f" {copied['sessions']} session(s) and {copied['failover_events']} failover event(s) were copied back."
+            elif res.get('reachable') is False:
+                msg += " The database was not reachable, so its history was not copied back."
+            return jsonify({"success": True, "message": msg, "status": db.status()})
+
+        cfg = db.clean_config(body, db.stored_config())
+        choice = str(body.get('settings_from') or '').lower()
+        if choice not in ('local', 'database'):
+            # Never guess which side wins: if the database already holds another
+            # dashboard's settings, the administrator has to say.
+            found = db.test_config(cfg)
+            if found['existing']['settings']:
+                return jsonify({"success": False, "needs_choice": True, "server": found['server'],
+                                "existing": found['existing'],
+                                "error": "This database already holds dashboard settings."}), 409
+            choice = 'local'
+        res = db.connect_external(cfg, choice)
+        logger.info(f"External database connected by {session.get('user')}: {res['server']}")
+        moved = res['moved']
+        msg = f"Connected to {res['server']}."
+        if moved['sessions'] or moved['failover_events']:
+            msg += f" Moved {moved['sessions']} session(s) and {moved['failover_events']} failover event(s) into it."
+        if choice == 'database':
+            msg += " Settings were loaded from the database."
+        return jsonify({"success": True, "message": msg, "status": db.status()})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        logger.warning(f"Database settings not applied: {db.describe_error(e)}")
+        return jsonify({"success": False, "error": db.describe_error(e)}), 400
+
+@app.route('/api/database/test', methods=['POST'])
+@login_required
+def api_database_test():
+    body = request.get_json(force=True, silent=True)
+    if not isinstance(body, dict):
+        return jsonify({"success": False, "error": "Invalid payload"}), 400
+    try:
+        found = db.test_config(db.clean_config(body, db.stored_config()))
+        return jsonify({"success": True, "server": found['server'], "existing": found['existing']})
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"success": False, "error": db.describe_error(e)}), 400
+
+# ======================================================================================
 # JSON API Endpoints (System & Apps)
 # ======================================================================================
 def _new_instance_id():
@@ -1226,10 +1337,7 @@ def api_settings():
 
         save_nodes_config({'instances': clean, 'session_timeout_minutes': st})
         apply_session_timeout()
-        API_MODE.clear()
-        for inst in clean:
-            for k, cfg in ((kk, vv) for kk, vv in inst.items() if isinstance(vv, dict)):
-                detect_api_mode_for_node(k, cfg, inst['id'])
+        _detect_all_api_modes()
         return jsonify({"success": True, "message": "Settings updated",
                         "instances": [{'id': i['id'], 'name': i['name']} for i in clean]})
 
@@ -2144,7 +2252,8 @@ def _500(err): return jsonify({'error': 'Internal Server Error'}) if request.pat
 validate_env()
 apply_session_timeout()
 
-# Local history DB (sessions + failover) with time-based retention.
+# History store (sessions + failover) with time-based retention: the built-in
+# file, plus the external database when one is configured in Settings.
 try:
     db.init_db()
     # Older builds stored management sessions/logins; the Sessions tab is AAA-only.

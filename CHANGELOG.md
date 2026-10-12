@@ -6,6 +6,30 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.16.0
+- **External database.** New **Settings -> Database**: keep the dashboard's data in
+  your own **PostgreSQL, MySQL / MariaDB or Microsoft SQL Server** instead of the
+  built-in store. It holds session and failover history plus a copy of the
+  settings (instances, admin login, LDAP, HA state), so a replacement appliance
+  can be pointed at the database and pick everything up. Connect by server /
+  port / database / user or by a connection URL; **Test Connection** proves the
+  settings work and leaves nothing behind. Encryption can be off, on, or on with
+  certificate verification (a CA can be pasted).
+- **Built to survive the database being down.** Sign-in and settings never wait
+  for it. During an outage new history is kept on the dashboard, a banner says
+  so, and everything waiting is moved into the database when it answers again.
+- Connecting moves existing history into the database; switching back copies it
+  back. If the database already holds another dashboard's settings you choose
+  which side wins - nothing is overwritten silently.
+- The storage layer now runs on SQLAlchemy for both the built-in SQLite file and
+  external servers; database files from earlier releases are used as they are.
+  New `tests/test_storage.py` runs the storage tests against real servers.
+- **Release tests.** The appliance boot test now also connects the appliance to a
+  PostgreSQL server over TLS, stops and restarts it, and - new - upgrades the
+  *previous release's* appliance with this release's upgrade file.
+- SQL Server support is implemented but has not been run against a real server
+  yet; PostgreSQL, MySQL and MariaDB are tested end to end.
+
 ## 1.15.0
 - **Virtual appliance.** The dashboard now ships as an **OVA**: a minimal Debian 13
   virtual machine with Docker and the dashboard pre-installed, for VMware ESXi /

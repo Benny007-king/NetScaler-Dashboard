@@ -39,6 +39,7 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 - **Tabs follow the live primary**: Applications, Failover, Sessions, Certificates and Unlock User open on the node currently holding the PRIMARY role, so they track a failover automatically.
 - **Failover History & User Sessions**: date-range filters with a pop-up picker; **Excel/PDF** export (client-side). Sessions cover both **Gateway/AAA** deployments and **LB-only** appliances: the tab is **AAA/gateway only** (management/admin logins are excluded, both by audit-plane and by system-user name) and alongside real VPN/AAA sessions it surfaces **failed login attempts** (status `Failed`, attempt time, source IP) and **locked accounts** (status `Locked`) — parsed from the appliance **audit log** for management accounts and from `aaauser` for Gateway ones — and resolves the **gateway name** from live ICA connections. Failed/Locked rows are **persisted** in the history DB (they don't vanish when the audit line scrolls out). `GET /api/session-debug` dumps per-node reachability/hostname plus the raw (redacted) NITRO session/user/audit fields to tune mapping across builds.
 - **Unlock Users**: unlock a locked AAA user (NITRO, with automatic `?action=unlock` fallback).
+- **External database (optional)**: keep session and failover history, plus a copy of the settings, in your own **PostgreSQL, MySQL / MariaDB or Microsoft SQL Server** — set up in **Settings → Database**. The dashboard keeps working when that database is unreachable and catches up by itself when it returns.
 
 ---
 
@@ -48,6 +49,8 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 netscaler-dashboard/
 ├── app.py                     # Flask app + NITRO/Next-Gen clients + API routes
 ├── appliance.py               # Version/health endpoints + upgrade-bundle upload
+├── db.py                      # History + settings store: built-in SQLite or an external database
+├── tests/test_storage.py      # Storage tests, run against real database servers
 ├── appliance/                 # Everything that turns the image into a virtual appliance
 │   ├── build.sh               #   builds the OVA and the .nsu (needs only Docker)
 │   ├── build-image.sh         #   Debian image -> customised disk -> OVA
@@ -146,9 +149,9 @@ the reverse proxy, set `COMPOSE_FILE` once so the script uses both files:
 export COMPOSE_FILE=docker-compose.yml:deploy/docker-compose.proxy.yml
 ```
 
-### Local history database & retention
+### History store & retention
 
-`dashboard.db` (SQLite — no external service) stores **failover events** and **session history**, so the Failover and Sessions tabs show real history rather than only what's live on the appliance.
+The built-in store, `dashboard.db` (SQLite — no external service), holds **failover events** and **session history**, so the Failover and Sessions tabs show real history rather than only what's live on the appliance. An [external database](#external-database) can hold them instead.
 
 A **retention pass runs at startup and hourly**, deleting anything older than **`RETENTION_DAYS` (default 7)** — you always keep at least a week, and the file can't grow unbounded. Sessions are de-duplicated per **(node, stable session id)** — so repeated polls of the same session refresh **one row** instead of piling up — and marked `Active` while still being seen, `Terminated` afterwards.
 
@@ -159,6 +162,34 @@ curl -k https://<host>/api/history-stats     # size, row counts, oldest data, re
 ```
 
 Tune with `RETENTION_DAYS`, `RETENTION_INTERVAL_SECS`, `DASHBOARD_DB_FILE` (see `.env.example`). The DB is gitignored.
+
+### External database
+
+**Settings → Database** connects the dashboard to a database server of your own. Supported: **PostgreSQL**, **MySQL / MariaDB** and **Microsoft SQL Server**, entered as server / port / database / user / password or as one connection URL.
+
+What goes into it:
+
+| | Tables | Notes |
+|---|---|---|
+| Session history | `nsd_sessions` | one row per session, same retention as the built-in store |
+| Failover history | `nsd_failover_events` | |
+| A copy of the settings | `nsd_settings` | instances (**including NetScaler passwords**), the admin login (hash), LDAP settings, last HA state |
+
+Not stored there: the TLS certificate and its CA, the session secret, and the database connection itself — those belong to one appliance.
+
+- **Prepare an empty database and a user that owns it** (the dashboard creates its three tables itself; it never creates or drops a database). Use a Unicode character set.
+- **Test Connection** signs in, creates the tables, writes, reads and deletes a row, and removes the tables again if they were not there before — so a test leaves nothing behind.
+- **Connecting moves** this dashboard's existing history into the database. If the database already holds settings from another dashboard you are asked which side wins: *use the settings in the database* (this is how a replacement appliance picks everything up) or *keep this dashboard's settings*.
+- **Encryption** has three modes that do exactly what they say: off, encrypt without checking the certificate, or encrypt and verify it (against the public CAs or a CA you paste; verification is not available for SQL Server). Because the settings copy contains NetScaler passwords, use encryption unless the database is on a trusted segment.
+- **If the database is unreachable** the dashboard keeps running: sign-in and settings never depend on it, new history is kept in the built-in store, a banner says so, and everything waiting is moved into the database automatically when it answers again.
+- **Switching back** to the built-in store copies the history back and leaves the database untouched.
+- One dashboard per database: two dashboards writing settings to the same database overwrite each other.
+
+For a self-run container the same can be set with `DATABASE_URL` (e.g. `postgresql://user:password@host:5432/dbname`) and `DATABASE_TLS=off|on|verify`; the Settings section is then read-only. Other knobs: `DB_TABLE_PREFIX` (default `nsd_`), `DB_TIMEOUT_SECS` (default 10).
+
+```bash
+python tests/test_storage.py postgresql://user:pw@host/scratchdb mysql://user:pw@host/scratchdb   # storage tests against real servers
+```
 
 ---
 
@@ -182,7 +213,8 @@ VM (Debian 13, minimal)
 
 ```bash
 appliance/build.sh         # -> dist/*.ova, dist/*.nsu, dist/SHA256SUMS   (needs only Docker)
-appliance/smoke-test.sh    # boots the OVA in QEMU: first sign-in, upgrade by upload, forced rollback, console menu
+appliance/smoke-test.sh    # boots the OVA in QEMU: first sign-in, upgrade by upload, external database, forced rollback, console menu
+FROM_OVA=old.ova appliance/smoke-test.sh   # the same, but boots an older release and upgrades it to this build
 ```
 
 Pushing a tag `vX.Y.Z` that matches `VERSION` runs both in GitHub Actions and publishes the files as a GitHub Release (`.github/workflows/release.yml`). The base image is the official Debian 13 cloud image, verified against Debian's published SHA-512. The disk is written with VMware's [open-vmdk](https://github.com/vmware/open-vmdk) (pinned to a commit): VMware's importer rejects a stream disk written by `qemu-img` with a manifest checksum error, even though the file is intact.
@@ -258,6 +290,9 @@ python app.py            # serves HTTPS on :443 by default
 - `GET  /api/failover-history` · `GET /api/user-sessions?node=...`
 - `POST /api/unlock-user` — `{ "node": "primary", "username": "user1" }`
 - `GET/POST /api/settings` — read/update nodes + mode
+- `GET  /api/database` — where data is stored, connection state, row counts
+- `POST /api/database/test` — try connection settings without changing anything
+- `POST /api/database` — connect an external database (`settings_from: local|database` when it already holds settings) or `{ "type": "builtin" }` to go back
 - `POST /api/tls-cert` — replace the TLS cert (`{ "cert": "...PEM...", "key": "...PEM..." }`; key optional after a CSR)
 - `GET  /api/tls-ca` — download the local CA certificate
 - `POST /api/tls-csr` — generate a CSR (`{ "common_name": "..." }`)
@@ -293,6 +328,7 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 - Secrets live in gitignored files (`nodes_config.json`, `.env`, `.app_secret`, `certs/`); never commit them.
 - Session cookies are HttpOnly + SameSite=Lax + Secure. The session secret is random and persisted to `.app_secret`.
 - Restrict access to NetScaler management networks (firewall / allowlist).
+- An external database receives a copy of the settings, **including NetScaler passwords** as stored on the appliance. Give the dashboard its own database and account, restrict who can read it, and encrypt the connection.
 
 ---
 
