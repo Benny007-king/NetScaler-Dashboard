@@ -1,0 +1,152 @@
+#!/bin/bash
+# Console menu for the NetScaler Dashboard appliance.
+# Launched automatically (via sudo) when `nsadmin` logs in on the console or SSH.
+set -u
+
+DATA=/var/lib/ns-dashboard/data
+STATIC_NET=/etc/systemd/network/10-ns-static.network
+SSH_CONF=/etc/ssh/sshd_config.d/10-ns-appliance.conf
+FIRST_LOGIN_HINT=/etc/issue.d/50-first-login.issue
+
+[ "$(id -u)" = 0 ] || exec sudo "$0" "$@"
+
+# The default-password hint on the login screen is only true until first login.
+rm -f "$FIRST_LOGIN_HINT"
+
+bold=$(tput bold 2>/dev/null || true); dim=$(tput dim 2>/dev/null || true); rst=$(tput sgr0 2>/dev/null || true)
+
+pause() { echo; read -r -p "Press Enter to continue..." _; }
+ask()   { local a; read -r -p "$1" a; echo "$a"; }
+confirm() { case "$(ask "$1 [y/N] ")" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac; }
+
+primary_if() { ip -o link show 2>/dev/null | awk -F': ' '$2 ~ /^(en|eth)/ {print $2; exit}'; }
+ipv4_of()    { ip -4 -o addr show dev "$1" scope global 2>/dev/null | awk '{print $4; exit}'; }
+valid_ip()   { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1; local o; IFS=. read -ra o <<<"$1"; for x in "${o[@]}"; do [ "$x" -le 255 ] || return 1; done; }
+# valid_ip runs its own regex match, so the captures are copied out first.
+valid_cidr() { local a p; [[ "$1" =~ ^(.+)/([0-9]{1,2})$ ]] || return 1; a=${BASH_REMATCH[1]}; p=${BASH_REMATCH[2]}; valid_ip "$a" && [ "$p" -ge 1 ] && [ "$p" -le 32 ]; }
+
+header() {
+  clear 2>/dev/null || true
+  local ifc addr ver state mode ssh
+  ifc=$(primary_if); addr=$(ipv4_of "${ifc:-none}")
+  ver=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' netscaler-dashboard:current 2>/dev/null || true)
+  state=$(systemctl is-active ns-dashboard 2>/dev/null || true)
+  [ -f "$STATIC_NET" ] && mode=static || mode=DHCP
+  systemctl is-enabled ssh >/dev/null 2>&1 && ssh=enabled || ssh=disabled
+  echo "${bold}NetScaler Dashboard appliance${rst}   ${dim}dashboard ${ver:-not loaded yet} / appliance $(cat /etc/ns-appliance/version 2>/dev/null)${rst}"
+  echo "----------------------------------------------------------------------"
+  if [ -n "$addr" ]; then
+    echo "  Web interface : ${bold}https://${addr%/*}/${rst}     (service: ${state:-unknown})"
+  else
+    echo "  Web interface : ${bold}no IP address yet${rst} - configure the network below"
+  fi
+  echo "  Network       : ${ifc:-no interface}  ${addr:-unconfigured}  ($mode)"
+  echo "  Gateway / DNS : $(ip -4 route show default 2>/dev/null | awk '{print $3; exit}') / $(resolvectl dns 2>/dev/null | awk -F': ' 'NF>1 && $2!="" {print $2; exit}')"
+  echo "  Hostname      : $(hostname)        SSH: $ssh"
+  echo "----------------------------------------------------------------------"
+}
+
+configure_network() {
+  local ifc choice addr gw dns
+  ifc=$(primary_if)
+  [ -n "$ifc" ] || { echo "No network interface was found."; pause; return; }
+  echo; echo "Interface: $ifc"
+  echo "  1) DHCP (automatic)"
+  echo "  2) Static address"
+  choice=$(ask "Choose [1-2, Enter to cancel]: ")
+  case "$choice" in
+    1)
+      rm -f "$STATIC_NET"
+      ;;
+    2)
+      addr=$(ask "IP address with prefix (e.g. 192.168.10.20/24): ")
+      valid_cidr "$addr" || { echo "That is not a valid address/prefix."; pause; return; }
+      gw=$(ask "Default gateway (Enter for none): ")
+      [ -z "$gw" ] || valid_ip "$gw" || { echo "That is not a valid gateway."; pause; return; }
+      dns=$(ask "DNS servers, space separated (Enter for none): ")
+      for d in $dns; do valid_ip "$d" || { echo "'$d' is not a valid DNS server."; pause; return; }; done
+      {
+        echo "# Written by ns-console. Takes precedence over 20-ns-dhcp.network."
+        echo "[Match]"; echo "Name=$ifc"; echo
+        echo "[Network]"; echo "Address=$addr"
+        [ -n "$gw" ] && echo "Gateway=$gw"
+        for d in $dns; do echo "DNS=$d"; done
+        echo "LinkLocalAddressing=no"
+      } > "$STATIC_NET"
+      chmod 0644 "$STATIC_NET"
+      ;;
+    *) return ;;
+  esac
+  networkctl reload >/dev/null 2>&1
+  networkctl reconfigure "$ifc" >/dev/null 2>&1
+  echo "Applying..."; sleep 2
+  addr=""
+  for _ in $(seq 15); do addr=$(ipv4_of "$ifc"); [ -n "$addr" ] && break; sleep 1; done
+  if [ -n "$addr" ]; then
+    echo "Address is now: $addr"
+  elif [ "$(cat "/sys/class/net/$ifc/carrier" 2>/dev/null)" != 1 ]; then
+    echo "Saved, but the network adapter has no link, so no address is active yet."
+    echo "Check that the virtual machine's network adapter is connected."
+  else
+    echo "No address yet - no DHCP server has answered. It is applied as soon as one does."
+  fi
+  pause
+}
+
+set_hostname() {
+  local h; h=$(ask "New hostname: ")
+  [[ "$h" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || { echo "Use letters, digits and hyphens only."; pause; return; }
+  hostnamectl set-hostname "$h"
+  sed -i "s/^127\.0\.1\.1.*/127.0.1.1 $h/" /etc/hosts
+  grep -q '^127\.0\.1\.1' /etc/hosts || echo "127.0.1.1 $h" >> /etc/hosts
+  echo "Hostname set to $h."; pause
+}
+
+reset_web_admin() {
+  echo; echo "This resets the dashboard's local admin login to ${bold}admin / admin${rst}."
+  echo "Instances, LDAP settings, certificates and history are kept."
+  confirm "Reset it?" || return
+  rm -f "$DATA/auth_config.json"
+  systemctl restart ns-dashboard
+  echo "Done - sign in as admin / admin; you will be asked to choose a new password."; pause
+}
+
+toggle_ssh() {
+  if systemctl is-enabled ssh >/dev/null 2>&1; then
+    systemctl disable --now ssh >/dev/null 2>&1
+    echo "SSH is now disabled."
+  else
+    ssh-keygen -A >/dev/null 2>&1          # host keys are created per appliance, never shipped
+    mkdir -p "$(dirname "$SSH_CONF")"
+    printf 'PermitRootLogin no\nPasswordAuthentication yes\nAllowUsers nsadmin\n' > "$SSH_CONF"
+    systemctl unmask ssh >/dev/null 2>&1
+    systemctl enable --now ssh >/dev/null 2>&1 && echo "SSH is now enabled for user nsadmin." || echo "SSH could not be started."
+  fi
+  pause
+}
+
+while true; do
+  header
+  cat <<MENU
+  1) Configure network (DHCP / static)     6) Show dashboard log
+  2) Set hostname                          7) Show last upgrade log
+  3) Restart the dashboard                 8) Reboot
+  4) Reset the web admin password          9) Shut down
+  5) Enable / disable SSH                  s) Root shell
+  p) Change the console password           q) Log out
+MENU
+  case "$(ask "> ")" in
+    1) configure_network ;;
+    2) set_hostname ;;
+    3) systemctl restart ns-dashboard && echo "Restarted."; pause ;;
+    4) reset_web_admin ;;
+    5) toggle_ssh ;;
+    6) journalctl -u ns-dashboard -n 60 --no-pager; pause ;;
+    7) journalctl -u ns-upgrade -n 60 --no-pager; pause ;;
+    8) confirm "Reboot the appliance now?" && systemctl reboot ;;
+    9) confirm "Shut the appliance down now?" && systemctl poweroff ;;
+    p|P) passwd nsadmin; pause ;;
+    s|S) echo "Type 'exit' to return to the menu."; NS_CONSOLE=1 bash --login ;;
+    q|Q) exit 0 ;;
+  esac
+done

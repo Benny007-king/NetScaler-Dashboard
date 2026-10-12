@@ -8,6 +8,22 @@ Tabs: **All Instances** (fleet health wall), **Overview**, **Applications / Serv
 
 ---
 
+## Get it — the virtual appliance
+
+The dashboard ships as a **virtual appliance**: a minimal Linux VM with Docker and the dashboard pre-installed and tested together. There is nothing to install on a host.
+
+| | File | What to do with it |
+|---|---|---|
+| **First-time install** | `netscaler-dashboard-appliance-<version>.ova` | Import into VMware ESXi / Workstation / Fusion or VirtualBox and power on. The console shows the address to browse to. |
+| **Upgrade** | `netscaler-dashboard-upgrade-<version>.nsu` | Upload in **Settings → Software & Upgrade**. Configuration is kept; a version that fails to start is rolled back automatically. |
+
+Both are attached to every [GitHub Release](https://github.com/Benny007-king/NetScaler-Dashboard/releases/latest), with a `SHA256SUMS` file. Full guide: **https://net-scaler-dashboard-web.vercel.app/docs.html**
+
+- VM defaults: 2 vCPU · 2 GB RAM · 16 GB thin disk · DHCP (a static address is set from the console menu).
+- Web sign-in `admin` / `admin`, console sign-in `nsadmin` / `nsadmin` — both must be changed at first use. SSH is off until enabled from the console.
+
+---
+
 ## Key Features
 
 - **All-instances health wall**: the **All Instances** tab shows every deployment as a card — Operational / Degraded / Unreachable, nodes up, and per node the hostname, IP, HA role + status and live CPU/memory, with warnings for unreachable nodes and forced HA modes. Click a card to drill into that instance. Powered by `GET /api/instances-health` (all instances and nodes probed in parallel).
@@ -31,6 +47,17 @@ Tabs: **All Instances** (fleet health wall), **Overview**, **Applications / Serv
 ```
 netscaler-dashboard/
 ├── app.py                     # Flask app + NITRO/Next-Gen clients + API routes
+├── appliance.py               # Version/health endpoints + upgrade-bundle upload
+├── appliance/                 # Everything that turns the image into a virtual appliance
+│   ├── build.sh               #   builds the OVA and the .nsu (needs only Docker)
+│   ├── build-image.sh         #   Debian image -> customised disk -> OVA
+│   ├── make-upgrade.sh        #   packs the upgrade bundle
+│   ├── host-install.sh        #   installs rootfs/ (at build time and at upgrade time)
+│   ├── rootfs/                #   host files: systemd units, ns-dashboard, ns-upgrade, ns-console
+│   ├── appliance.ovf.in       #   OVF descriptor template
+│   ├── smoke-test.sh          #   boots the OVA in QEMU: install, upgrade, rollback, console
+│   └── console-test.py        #   drives the console menu over the VM's serial port
+├── .github/workflows/release.yml  # tag -> build -> boot-test -> GitHub Release
 ├── cert_utils.py              # Self-signed cert generation / PEM validation
 ├── gunicorn.conf.py           # Binds 0.0.0.0:443 with TLS; generates cert on boot
 ├── Dockerfile
@@ -135,7 +162,40 @@ Tune with `RETENTION_DAYS`, `RETENTION_INTERVAL_SECS`, `DASHBOARD_DB_FILE` (see 
 
 ---
 
-## Install & Run
+## How the appliance works
+
+```
+VM (Debian 13, minimal)
+ ├─ ns-dashboard.service   runs the container: host networking, one bind mount (the data dir)
+ ├─ ns-upgrade.path/.service   applies an uploaded upgrade - the only thing that talks to Docker
+ ├─ ns-console             menu on the VM console: network, hostname, SSH, web-admin reset
+ ├─ ns-issue.service       keeps the address on the console login screen current
+ └─ /var/lib/ns-dashboard/data   config, LDAP, history DB, certificates - never part of an upgrade
+```
+
+- **No Docker socket in the container.** The web app only validates an uploaded bundle and parks it in the data directory with a `request` flag. `ns-upgrade` on the host re-verifies it (product, version, SHA-256 of every part), loads the new image beside the running one, retags, restarts and polls `GET /healthz`. If the new version is not healthy within 150 s the previous image is retagged and restarted, and the UI reports a rollback.
+- **No address clashes.** The container uses the host's network stack and Docker's bridge is disabled, so no `172.17.0.0/16` route exists in the appliance to shadow a NetScaler subnet.
+- **Unique per deployment.** The machine-id, SSH host keys, TLS CA/certificate and session secret are all created on first boot or first use — none are shipped in the image.
+- **One description of the host layer.** `appliance/host-install.sh` installs `appliance/rootfs/` both when the disk is built and when an upgrade carries newer host files.
+
+### Building and testing a release
+
+```bash
+appliance/build.sh         # -> dist/*.ova, dist/*.nsu, dist/SHA256SUMS   (needs only Docker)
+appliance/smoke-test.sh    # boots the OVA in QEMU: first sign-in, upgrade by upload, forced rollback, console menu
+```
+
+Pushing a tag `vX.Y.Z` that matches `VERSION` runs both in GitHub Actions and publishes the files as a GitHub Release (`.github/workflows/release.yml`). The base image is the official Debian 13 cloud image, verified against Debian's published SHA-512. The disk is written with VMware's [open-vmdk](https://github.com/vmware/open-vmdk) (pinned to a commit): VMware's importer rejects a stream disk written by `qemu-img` with a manifest checksum error, even though the file is intact.
+
+### Upgrade bundle format (`.nsu`)
+
+A plain tar: `manifest.json` (product, version, SHA-256 of each member), `image.tar.gz` (the container image) and `host.tar.gz` (`host-install.sh` + `rootfs/`). Bundles are integrity-checked, not signed: only install files from this project's releases, and compare against `SHA256SUMS`.
+
+---
+
+## Running the container yourself (development)
+
+The appliance is the supported way to run the dashboard. The same image runs directly under Docker or Python for development; upload upgrades are an appliance feature, so a self-run container is upgraded from its host (`upgrade.sh` / `upgrade.bat`).
 
 ### Check dependencies first (optional)
 
@@ -188,6 +248,9 @@ python app.py            # serves HTTPS on :443 by default
 
 ## REST Endpoints (summary)
 
+- `GET  /healthz` — unauthenticated liveness + version (polled by the appliance's upgrade agent)
+- `GET  /api/appliance/status` — running version, appliance mode, and upgrade progress
+- `POST /api/appliance/upgrade` — upload an `.nsu` bundle (appliance only; raw request body)
 - `GET  /api/caps` — per-node API capability + deployment mode
 - `GET  /api/system-stats?node=primary|secondary`
 - `GET  /api/ha-status` — HA nodes (or cluster members in cluster mode)

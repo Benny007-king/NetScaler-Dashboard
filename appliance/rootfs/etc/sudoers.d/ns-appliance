@@ -1,0 +1,2 @@
+# The appliance administrator manages the box through the console menu.
+nsadmin ALL=(root) NOPASSWD: /opt/ns-appliance/bin/ns-console

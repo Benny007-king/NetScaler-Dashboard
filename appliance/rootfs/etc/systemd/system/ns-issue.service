@@ -1,0 +1,11 @@
+[Unit]
+Description=NetScaler Dashboard appliance - address on the console login screen
+Before=getty.target
+
+[Service]
+ExecStart=/opt/ns-appliance/bin/ns-issue
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target

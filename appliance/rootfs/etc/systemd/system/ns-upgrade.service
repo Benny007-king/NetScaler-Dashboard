@@ -1,0 +1,9 @@
+[Unit]
+Description=Apply an uploaded NetScaler Dashboard upgrade
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/opt/ns-appliance/bin/ns-upgrade
+TimeoutStartSec=1800

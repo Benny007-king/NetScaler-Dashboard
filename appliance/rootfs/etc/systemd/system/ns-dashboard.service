@@ -1,0 +1,18 @@
+[Unit]
+Description=NetScaler Dashboard
+Documentation=https://net-scaler-dashboard-web.vercel.app/docs.html
+After=docker.service network-online.target
+Requires=docker.service
+Wants=network-online.target
+
+[Service]
+ExecStartPre=/opt/ns-appliance/bin/ns-dashboard prepare
+ExecStart=/opt/ns-appliance/bin/ns-dashboard run
+ExecStop=/usr/bin/docker stop -t 15 netscaler-dashboard
+Restart=always
+RestartSec=5
+# The first start loads the image from disk, which takes a while on slow storage.
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

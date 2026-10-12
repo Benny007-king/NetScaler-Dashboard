@@ -34,3 +34,8 @@ __pycache__/
 *.py[cod]
 .venv/
 venv/
+
+# Built release artefacts
+dist/
+*.ova
+*.nsu

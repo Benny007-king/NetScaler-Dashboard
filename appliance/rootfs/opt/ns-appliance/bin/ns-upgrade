@@ -1,0 +1,193 @@
+#!/bin/bash
+# Applies an upgrade bundle (.nsu) that was uploaded through the dashboard.
+#
+# Started by ns-upgrade.path when the dashboard drops a `request` file into its
+# data directory. The dashboard container has no access to Docker, so this agent
+# does the privileged part on the host - and trusts nothing the container wrote:
+# the bundle is checked again here before anything is changed.
+#
+#   verify -> load image -> retag -> (host files) -> restart -> health check
+#                                                           \-> roll back on failure
+#
+# Progress is written to status.json, which the dashboard reads back for the UI.
+set -uo pipefail
+
+NAME=netscaler-dashboard
+PRODUCT=netscaler-dashboard
+DATA=/var/lib/ns-dashboard/data
+UP=$DATA/upgrade
+BUNDLE=$UP/incoming.nsu
+REQUEST=$UP/request
+STATUS=$UP/status.json
+WORK=/var/lib/ns-dashboard/upgrade-work
+ENV_FILE=/etc/ns-appliance/dashboard.env
+HEALTH_TIMEOUT=150
+
+FROM=""
+TO=""
+
+log() { echo "ns-upgrade: $*"; }
+
+status() {   # status <state> <message>
+  local tmp="$STATUS.tmp"
+  mkdir -p "$UP"
+  jq -n --arg s "$1" --arg m "$2" --arg f "$FROM" --arg t "$TO" \
+        --arg u "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{state:$s, message:$m, from:$f, to:$t, updated:$u}' > "$tmp" && mv -f "$tmp" "$STATUS"
+  log "[$1] $2"
+}
+
+cleanup() { rm -rf "$WORK" "$BUNDLE" "$BUNDLE.part"; }
+
+fail() {     # nothing has been switched yet - the running version is untouched
+  status failed "$1"
+  cleanup
+  exit 1
+}
+
+image_version() {   # image_version <tag>
+  docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' \
+    "$NAME:$1" 2>/dev/null || true
+}
+
+env_value() {       # env_value <KEY> <default>   (read, never sourced)
+  local v=""
+  [ -f "$ENV_FILE" ] && v=$(grep -E "^$1=" "$ENV_FILE" | tail -n 1 | cut -d= -f2- | tr -d '"'\''[:space:]')
+  echo "${v:-$2}"
+}
+
+wait_healthy() {    # wait_healthy <expected-version>
+  local port scheme url deadline got
+  port=$(env_value APP_PORT 443)
+  scheme=https
+  case "$(env_value APP_SSL 1)" in 0|false|no) scheme=http ;; esac
+  url="$scheme://127.0.0.1:$port/healthz"
+  deadline=$(( $(date +%s) + HEALTH_TIMEOUT ))
+  while [ "$(date +%s)" -lt "$deadline" ]; do
+    got=$(curl -ks --max-time 4 "$url" 2>/dev/null | jq -r '.version // empty' 2>/dev/null || true)
+    [ "$got" = "$1" ] && return 0
+    sleep 3
+  done
+  return 1
+}
+
+regular_file() { [ -f "$1" ] && [ ! -L "$1" ]; }
+
+main() {
+  # One upgrade at a time.
+  exec 9>/run/ns-upgrade.lock
+  flock -n 9 || { log "another upgrade is running"; exit 0; }
+
+  [ -e "$REQUEST" ] || exit 0
+  rm -f "$REQUEST"                       # consume it, or the path unit fires again
+
+  FROM=$(image_version current)
+  regular_file "$BUNDLE" || fail "The upgrade file was not found on the appliance."
+
+  # ---- verify ---------------------------------------------------------------
+  status verifying "Checking the upgrade file..."
+  rm -rf "$WORK" && mkdir -p "$WORK"
+
+  tar -xf "$BUNDLE" -C "$WORK" --no-same-owner --no-same-permissions manifest.json 2>/dev/null \
+    && regular_file "$WORK/manifest.json" \
+    || fail "The upgrade file is damaged or is not an upgrade file."
+
+  local m="$WORK/manifest.json" product format img_file img_sha img_ref host_file host_sha
+  product=$(jq -r '.product // empty' "$m" 2>/dev/null)
+  format=$(jq -r '.format // empty' "$m" 2>/dev/null)
+  TO=$(jq -r '.version // empty' "$m" 2>/dev/null)
+  img_file=$(jq -r '.image.file // empty' "$m" 2>/dev/null)
+  img_sha=$(jq -r '.image.sha256 // empty' "$m" 2>/dev/null)
+  img_ref=$(jq -r '.image.ref // empty' "$m" 2>/dev/null)
+  host_file=$(jq -r '.host.file // empty' "$m" 2>/dev/null)
+  host_sha=$(jq -r '.host.sha256 // empty' "$m" 2>/dev/null)
+
+  [ "$product" = "$PRODUCT" ] || fail "This upgrade file is for a different product."
+  [ "$format" = "1" ] || fail "This upgrade file needs a newer appliance. Install an intermediate release first."
+  [[ "$TO" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "The upgrade file does not state a valid version."
+  [[ "$img_file" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "The upgrade file is malformed."
+  [ "$img_ref" = "$NAME:$TO" ] || fail "The upgrade file is malformed."
+  if [ -n "$host_file" ]; then
+    [[ "$host_file" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || fail "The upgrade file is malformed."
+  fi
+
+  if [ -n "$FROM" ] && [ "$FROM" != "$TO" ] \
+     && [ "$(printf '%s\n%s\n' "$FROM" "$TO" | sort -V | head -n 1)" = "$TO" ]; then
+    fail "This file is version $TO, older than the running $FROM. Downgrades are not supported."
+  fi
+
+  local part
+  for part in "$img_file:$img_sha" ${host_file:+"$host_file:$host_sha"}; do
+    local f="${part%%:*}" want="${part##*:}"
+    tar -xf "$BUNDLE" -C "$WORK" --no-same-owner --no-same-permissions "$f" 2>/dev/null \
+      && regular_file "$WORK/$f" \
+      || fail "The upgrade file is incomplete - please download it again."
+    [ "$(sha256sum "$WORK/$f" | cut -d' ' -f1)" = "$want" ] \
+      || fail "The upgrade file is corrupted (checksum mismatch) - please download it again."
+  done
+
+  # ---- load -----------------------------------------------------------------
+  status loading "Installing version $TO..."
+  docker load -i "$WORK/$img_file" >/dev/null 2>&1 \
+    || fail "The new version could not be loaded. The running version was not changed."
+  docker image inspect "$NAME:$TO" >/dev/null 2>&1 \
+    || fail "The upgrade file did not contain version $TO. The running version was not changed."
+
+  # ---- switch ---------------------------------------------------------------
+  local had_previous=0
+  if docker image inspect "$NAME:current" >/dev/null 2>&1; then
+    docker tag "$NAME:current" "$NAME:previous" && had_previous=1
+  fi
+  docker tag "$NAME:$TO" "$NAME:current"
+
+  local host_ok=1
+  if [ -n "$host_file" ]; then
+    mkdir -p "$WORK/host"
+    if tar -xzf "$WORK/$host_file" -C "$WORK/host" --no-same-owner 2>/dev/null \
+       && regular_file "$WORK/host/host-install.sh"; then
+      sh "$WORK/host/host-install.sh" / "$TO" || host_ok=0
+    else
+      host_ok=0
+    fi
+  fi
+
+  if [ "$host_ok" = 1 ]; then
+    status restarting "Restarting the dashboard on version $TO..."
+    systemctl daemon-reload
+    systemctl restart ns-dashboard
+    if wait_healthy "$TO"; then
+      status success "Now running version $TO."
+      # Keep only what is needed to run and to roll back once.
+      local tag
+      for tag in $(docker images "$NAME" --format '{{.Tag}}' | sort -u); do
+        case "$tag" in current|previous|"$TO"|"$FROM"|"<none>") ;; *) docker rmi "$NAME:$tag" >/dev/null 2>&1 || true ;; esac
+      done
+      docker image prune -f >/dev/null 2>&1 || true
+      cleanup
+      exit 0
+    fi
+    log "version $TO did not become healthy within ${HEALTH_TIMEOUT}s"
+  else
+    log "the appliance files in the bundle could not be installed"
+  fi
+
+  # ---- roll back --------------------------------------------------------------
+  if [ "$had_previous" = 1 ]; then
+    docker tag "$NAME:previous" "$NAME:current"
+    systemctl restart ns-dashboard
+    if wait_healthy "$FROM"; then
+      status rolled_back "Version $TO did not start, so the appliance went back to $FROM. Your data was not changed."
+    else
+      status failed "Version $TO did not start and $FROM did not come back either. Check the appliance console."
+    fi
+  else
+    status failed "Version $TO did not start and there is no earlier version to return to. Check the appliance console."
+  fi
+  cleanup
+  exit 1
+}
+
+# Everything above is parsed before it runs, so replacing this file mid-upgrade
+# (the bundle can carry a newer copy) cannot disturb the run in progress.
+main "$@"
+exit $?

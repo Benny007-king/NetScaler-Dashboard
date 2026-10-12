@@ -25,6 +25,7 @@ from pathlib import Path
 import pytz
 import requests
 
+import appliance
 import db
 from flask import (
     Flask, render_template, jsonify, request, redirect, url_for,
@@ -2128,6 +2129,9 @@ def api_unlock_user():
 # ======================================================================================
 # Error Handlers
 # ======================================================================================
+# Version/health endpoints, plus upload-based upgrades when running as the appliance.
+appliance.register(app, login_required, DATA_DIR, logger)
+
 @app.errorhandler(404)
 def _404(err): return jsonify({'error': 'Not Found'}) if request.path.startswith('/api/') else render_template('dashboard.html'), 404
 

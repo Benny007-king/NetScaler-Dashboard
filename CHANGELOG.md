@@ -6,6 +6,34 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.15.0
+- **Virtual appliance.** The dashboard now ships as an **OVA**: a minimal Debian 13
+  virtual machine with Docker and the dashboard pre-installed, for VMware ESXi /
+  Workstation / Fusion and VirtualBox. Import it, power it on, and browse to the
+  address shown on its console (the screen follows address changes, and says so
+  when there is no address yet) - nothing is installed on a host. A console menu
+  (`nsadmin`) sets a static address, the hostname and SSH access, restarts the
+  dashboard and resets the web admin password. The container uses host networking
+  with Docker's bridge disabled, so no `172.17.x.x` route can shadow a NetScaler
+  subnet; machine-id, SSH host keys and TLS material are generated per appliance.
+- **Upgrades by upload.** A release is also published as a single **`.nsu`** file,
+  uploaded in the new **Settings -> Software & Upgrade** section. The dashboard
+  validates it (product, version, checksums; older versions are refused) and
+  hands it to a host-side agent - the container never gets the Docker socket. The
+  agent verifies it again, loads the new image beside the running one, restarts
+  and health-checks it, and **rolls back automatically** if the new version does
+  not come up. Configuration, history and certificates are not part of the swap.
+- **The app knows its version.** Shown next to the logo and in Settings; new
+  `GET /healthz` (liveness + version) and `GET /api/appliance/status`.
+- **Release pipeline.** `appliance/build.sh` builds the OVA and the bundle with
+  nothing but Docker; `appliance/smoke-test.sh` boots the OVA in QEMU and tests
+  first sign-in, an upgrade by upload, a forced rollback and the console menu
+  (over the serial port). The disk is written with VMware's open-vmdk so that
+  VMware's importer accepts the OVA's checksum manifest. A pushed tag runs both
+  in GitHub Actions and publishes the files as a GitHub Release with `SHA256SUMS`.
+- The Docker / Python instructions remain for development, but the appliance is
+  now the supported way to install and upgrade.
+
 ## 1.14.0
 - **Preflight dependency check.** New `preflight.sh` (Linux/macOS) and
   `preflight.bat` (Windows) verify everything needed *before* the first install

@@ -35,3 +35,10 @@ certs/
 # IDE
 .vscode/
 .idea/
+
+# Release tooling and artefacts - not part of the container image
+appliance/
+dist/
+.github/
+*.ova
+*.nsu

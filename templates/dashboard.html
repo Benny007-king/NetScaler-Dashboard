@@ -128,6 +128,22 @@
 
           <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
             <div class="flex items-center justify-between mb-2">
+              <h3 class="text-lg font-semibold text-violet-400">Software &amp; Upgrade</h3>
+              <span id="swVersionBadge" class="badge badge-info">&hellip;</span>
+            </div>
+            <p id="swBlurb" class="text-xs text-slate-400 mb-3"></p>
+            <div id="upgradeControls" class="hidden">
+              <div class="flex flex-wrap items-center gap-3">
+                <input type="file" id="upgradeFile" accept=".nsu" aria-label="Upgrade file (.nsu)" class="text-xs text-slate-300 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-slate-700 file:text-white hover:file:bg-slate-600 file:cursor-pointer">
+                <button onclick="startUpgrade()" id="upgradeBtn" class="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-sm border border-violet-500 transition-colors disabled:opacity-50">Upload &amp; install</button>
+              </div>
+              <div id="upgradeBarWrap" class="hidden mt-3 h-2 rounded-full bg-slate-900 overflow-hidden"><div id="upgradeBar" class="h-full bg-violet-500" style="width:0%;transition:width .2s"></div></div>
+              <div id="upgradeMsg" class="text-xs mt-3" role="status" aria-live="polite"></div>
+            </div>
+          </div>
+
+          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
+            <div class="flex items-center justify-between mb-2">
               <h3 class="text-lg font-semibold text-cyan-400">LDAP / Active Directory</h3>
               <span id="ldapStatusBadge" class="badge badge-warning">Disabled</span>
             </div>
@@ -200,7 +216,7 @@
     </div>
     <div>
         <h1 class="text-xl font-bold tracking-tight text-white">NetScaler Dashboard</h1>
-        <p class="text-xs text-blue-400 font-mono">Live Monitoring</p>
+        <p class="text-xs text-blue-400 font-mono">Live Monitoring <span id="appVersionTag" class="text-slate-500"></span></p>
     </div>
   </div>
 
@@ -678,6 +694,7 @@ async function openSettings() {
         insts.forEach(inst => addInstance(inst));
     }
     loadLdapSettings();
+    loadAppliance();
     $('settingsModal').classList.remove('hidden');
 }
 
@@ -818,6 +835,105 @@ async function saveSettings() {
         // Don't show a scary alert on session expiry — the redirect handles that.
         alert("Failed to save settings" + (r.data && r.data.error ? ": " + r.data.error : "."));
     }
+}
+
+// --- SOFTWARE VERSION & APPLIANCE UPGRADE ---
+// On the virtual appliance an upgrade is one uploaded .nsu file. The server only
+// validates and parks it; a host-side agent swaps the container, health-checks it
+// and rolls back on failure, reporting through /api/appliance/status.
+const UPGRADE_ACTIVE = ['queued', 'verifying', 'loading', 'restarting'];
+let upgradePoll = null;
+
+function upgradeSay(html, cls) {
+    const m = $('upgradeMsg');
+    if (m) { m.className = 'text-xs mt-3 ' + (cls || 'text-slate-400'); m.innerHTML = html; }
+}
+
+async function loadAppliance() {
+    const r = await getJSON('/api/appliance/status', { headers: { 'X-Idle-Refresh': '1' } });
+    if (!r.ok || !r.data.version) return;
+    const d = r.data;
+    const tag = $('appVersionTag'); if (tag) tag.textContent = '· v' + d.version;
+    const badge = $('swVersionBadge'); if (badge) badge.textContent = 'v' + d.version;
+    const blurb = $('swBlurb'), ctl = $('upgradeControls');
+    if (!blurb || !ctl) return;
+    if (d.appliance) {
+        blurb.innerHTML = 'Download the upgrade file (<span class="font-mono">.nsu</span>) for the new release and upload it here. '
+            + 'Your instances, LDAP, certificates and history are kept. If the new version does not start, the appliance returns to this one automatically.';
+        ctl.classList.remove('hidden');
+        const st = d.upgrade || {};
+        if (UPGRADE_ACTIVE.includes(st.state)) { lockUpgrade(true); upgradeSay(escapeHtml(st.message || 'Upgrade in progress…')); pollUpgrade(); }
+        else if (st.state && st.state !== 'success' && st.message && !upgradePoll) upgradeSay('Last attempt: ' + escapeHtml(st.message), 'text-amber-400');
+    } else {
+        blurb.textContent = 'This dashboard is running as a plain container, so it is upgraded from the host (upgrade.sh / upgrade.bat). Upload upgrades are part of the virtual appliance.';
+        ctl.classList.add('hidden');
+    }
+}
+
+function lockUpgrade(on) {
+    const b = $('upgradeBtn'), f = $('upgradeFile');
+    if (b) { b.disabled = on; b.textContent = on ? 'Upgrading…' : 'Upload & install'; }
+    if (f) f.disabled = on;
+}
+
+function startUpgrade() {
+    const file = ($('upgradeFile').files || [])[0];
+    if (!file) return upgradeSay('Choose the upgrade file first.', 'text-amber-400');
+    if (!/\.nsu$/i.test(file.name)) return upgradeSay('That is not an upgrade file — it should end in <span class="font-mono">.nsu</span>.', 'text-red-400');
+    if (!confirm('Install ' + file.name + '?\n\nThe dashboard restarts and is unavailable for about a minute. '
+        + 'If the new version fails to start, the appliance rolls back automatically.')) return;
+
+    lockUpgrade(true);
+    const wrap = $('upgradeBarWrap'), bar = $('upgradeBar');
+    wrap.classList.remove('hidden'); bar.style.width = '0%';
+    upgradeSay('Uploading…');
+
+    const xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/appliance/upgrade');
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('Accept', 'application/json');
+    xhr.upload.onprogress = e => {
+        if (!e.lengthComputable) return;
+        const pct = Math.round(e.loaded / e.total * 100);
+        bar.style.width = pct + '%';
+        upgradeSay(pct < 100 ? `Uploading… ${pct}%` : 'Upload complete — checking the file…');
+    };
+    const fail = msg => { lockUpgrade(false); wrap.classList.add('hidden'); upgradeSay('✖ ' + escapeHtml(msg), 'text-red-400'); };
+    xhr.onerror = () => fail('The upload failed — check the connection and try again.');
+    xhr.onload = () => {
+        if (xhr.status === 401 || /\/login/.test(xhr.responseURL || '')) { location.href = '/login?expired=1'; return; }
+        let d = {};
+        try { d = JSON.parse(xhr.responseText || '{}'); } catch (e) { /* not JSON */ }
+        if (xhr.status >= 200 && xhr.status < 300 && d.success) {
+            wrap.classList.add('hidden');
+            upgradeSay(`Upgrade to v${escapeHtml(d.version)} accepted — installing…`);
+            pollUpgrade();
+        } else fail(d.error || ('The appliance rejected the file (HTTP ' + xhr.status + ').'));
+    };
+    xhr.send(file);
+}
+
+function pollUpgrade() {
+    if (upgradePoll) clearInterval(upgradePoll);
+    upgradePoll = setInterval(async () => {
+        let d = null;
+        try {
+            const res = await fetch('/api/appliance/status', { headers: { 'Accept': 'application/json', 'X-Idle-Refresh': '1' } });
+            if (res.status === 401 || (res.redirected && /\/login/.test(res.url))) { location.href = '/login?expired=1'; return; }
+            if (res.ok) d = await res.json();
+        } catch (e) { /* the dashboard is restarting — keep waiting */ }
+        if (!d) { upgradeSay('The dashboard is restarting on the new version…'); return; }
+        const st = d.upgrade || {};
+        if (UPGRADE_ACTIVE.includes(st.state)) { upgradeSay(escapeHtml(st.message || 'Working…')); return; }
+        clearInterval(upgradePoll); upgradePoll = null;
+        if (st.state === 'success') {
+            upgradeSay('✔ ' + escapeHtml(st.message || 'Upgrade complete.') + ' Reloading…', 'text-green-400');
+            setTimeout(() => location.reload(), 2500);
+        } else {
+            lockUpgrade(false);
+            upgradeSay('✖ ' + escapeHtml(st.message || 'The upgrade did not complete.'), st.state === 'rolled_back' ? 'text-amber-400' : 'text-red-400');
+        }
+    }, 2000);
 }
 
 // --- TABS LOGIC ---
@@ -1631,6 +1747,7 @@ function activityPing() {
             if (card) { e.preventDefault(); openInstance(card.dataset.inst); }
         });
     }
+    loadAppliance();
     await loadInstances();
     await fetchCaps();
     // With several deployments the wall is the useful landing view; with one it

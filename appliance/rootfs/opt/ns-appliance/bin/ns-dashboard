@@ -1,0 +1,49 @@
+#!/bin/bash
+# Runs the NetScaler Dashboard container under systemd (ns-dashboard.service).
+#
+#   ns-dashboard prepare   make sure an image tagged :current exists, clear leftovers
+#   ns-dashboard run       run the container in the foreground
+#
+# The container gets host networking and one bind mount - the data directory. It
+# is never given the Docker socket; upgrades are applied by ns-upgrade on the host.
+set -euo pipefail
+
+NAME=netscaler-dashboard
+DATA=/var/lib/ns-dashboard/data
+SEED_DIR=/opt/ns-appliance/seed
+ENV_FILE=/etc/ns-appliance/dashboard.env
+
+case "${1:-}" in
+  prepare)
+    mkdir -p "$DATA/upgrade"
+    if ! docker image inspect "$NAME:current" >/dev/null 2>&1; then
+      # First boot: the image ships as a file next to the OS and is loaded once.
+      seed=$(find "$SEED_DIR" -maxdepth 1 -name '*.tar.gz' 2>/dev/null | sort | tail -n 1)
+      if [ -z "$seed" ]; then
+        echo "ns-dashboard: no '$NAME:current' image and no seed image in $SEED_DIR" >&2
+        exit 1
+      fi
+      echo "ns-dashboard: first start - loading $(basename "$seed")"
+      ref=$(docker load -i "$seed" | sed -n 's/^Loaded image: //p' | tail -n 1)
+      [ -n "$ref" ] || { echo "ns-dashboard: could not load the seed image" >&2; exit 1; }
+      docker tag "$ref" "$NAME:current"
+      rm -f "$SEED_DIR"/*.tar.gz
+    fi
+    docker rm -f "$NAME" >/dev/null 2>&1 || true
+    ;;
+
+  run)
+    args=(--rm --name "$NAME" --network host
+          -v "$DATA:/app/data"
+          -e DATA_DIR=/app/data
+          -e NS_APPLIANCE=1
+          -e "NS_APPLIANCE_VERSION=$(cat /etc/ns-appliance/version 2>/dev/null || echo unknown)")
+    [ -f "$ENV_FILE" ] && args+=(--env-file "$ENV_FILE")
+    exec docker run "${args[@]}" "$NAME:current"
+    ;;
+
+  *)
+    echo "usage: $0 prepare|run" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,12 @@
+# Default: DHCP on the wired interface. A static address set from the console
+# menu is written to 10-ns-static.network, which takes precedence over this file.
+[Match]
+Name=en* eth*
+
+[Network]
+DHCP=ipv4
+IPv6AcceptRA=yes
+
+[DHCPv4]
+# Identify by MAC so a DHCP reservation made for the VM's adapter just works.
+ClientIdentifier=mac
