@@ -181,11 +181,14 @@ Not stored there: the TLS certificate and its CA, the session secret, and the da
 
 - **Prepare an empty database and a user that owns it** (the dashboard creates its three tables itself; it never creates or drops a database). Use a Unicode character set.
 - **Test Connection** signs in, creates the tables, writes, reads and deletes a row, and removes the tables again if they were not there before — so a test leaves nothing behind.
+- **Restore with the same or a newer release.** The settings copy records its format; a dashboard that is too old for it refuses to load it rather than ending up with a login it cannot check.
 - **Connecting moves** this dashboard's existing history into the database. If the database already holds settings from another dashboard you are asked which side wins: *use the settings in the database* (this is how a replacement appliance picks everything up) or *keep this dashboard's settings*.
 - **Encryption** has three modes that do exactly what they say: off, encrypt without checking the certificate, or encrypt and verify it (against the public CAs or a CA you paste; verification is not available for SQL Server). Because the settings copy contains NetScaler passwords, use encryption unless the database is on a trusted segment.
 - **If the database is unreachable** the dashboard keeps running: sign-in and settings never depend on it, new history is kept in the built-in store, a banner says so, and everything waiting is moved into the database automatically when it answers again.
 - **Switching back** to the built-in store copies the history back and leaves the database untouched.
 - One dashboard per database: two dashboards writing settings to the same database overwrite each other.
+
+Tested against PostgreSQL 16/17, MySQL 8.4, MariaDB 11 and SQL Server 2022. PostgreSQL is part of the automated release test; the others are run with `tests/test_storage.py` and an end-to-end run before a release that touches the storage layer.
 
 For a self-run container the same can be set with `DATABASE_URL` (e.g. `postgresql://user:password@host:5432/dbname`) and `DATABASE_TLS=off|on|verify`; the Settings section is then read-only. Other knobs: `DB_TABLE_PREFIX` (default `nsd_`), `DB_TIMEOUT_SECS` (default 10).
 

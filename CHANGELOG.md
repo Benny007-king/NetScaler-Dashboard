@@ -6,6 +6,28 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.16.2
+- **SQL Server is now tested.** The external database feature was run end to end
+  against Microsoft SQL Server 2022 (storage tests and the real dashboard:
+  connect, encryption on and off, an outage and recovery, a restart, restoring
+  a second dashboard). Two things that turned up are fixed:
+  - Session ids and failover keys now compare **case-sensitively** on SQL Server,
+    as on every other backend; before, two sessions whose ids differed only in
+    case were stored as one. Tables created by 1.16.0 / 1.16.1 keep the old
+    behaviour - to rebuild them, switch to the built-in store, drop the three
+    `nsd_` tables and connect again.
+  - SQL Server errors are shown as one readable line ("Login failed for user
+    ...") instead of the driver's multi-line dump.
+- **Settings from a newer dashboard are never loaded by an older one.** The copy
+  of the settings in an external database now records its format. Choosing
+  "use the settings in the database" on a dashboard that is too old for them is
+  refused with an explanation, instead of leaving an admin login it cannot
+  check. (Releases before 1.16.2 do not have this check: when restoring, use an
+  appliance at least as new as the one that saved the settings.)
+- The "database already holds settings" prompt shows which version saved them.
+- Building the image from a folder that contains another checkout (and its
+  `dist/`) no longer copies those release files into the image.
+
 ## 1.16.1
 - **Stronger storage of the admin password.** The local admin password is now
   kept as a salted **scrypt** hash (PBKDF2-SHA256 where Python has no scrypt)

@@ -851,7 +851,8 @@ function dbPayload() {
 
 function dbExistingText(server, ex) {
     if (!ex || !ex.settings) return `Connected to ${escapeHtml(server)}. No dashboard settings are stored there yet.`;
-    const who = ex.saved_by ? ` by <strong>${escapeHtml(ex.saved_by)}</strong>` : '';
+    const ver = ex.saved_version ? ` (version ${escapeHtml(ex.saved_version)})` : '';
+    const who = ex.saved_by ? ` by <strong>${escapeHtml(ex.saved_by)}</strong>${ver}` : ver;
     const when = ex.saved_at ? ` on ${escapeHtml(String(ex.saved_at).replace('T', ' ').slice(0, 16))}` : '';
     const inst = (ex.instances && ex.instances.length) ? ` Instances: ${ex.instances.map(escapeHtml).join(', ')}.` : '';
     return `Connected to ${escapeHtml(server)}. It already holds dashboard settings saved${who}${when}.${inst} History there: ${dbCounts(ex)}.`;
@@ -890,7 +891,12 @@ async function saveDatabase() {
     btn.disabled = false; btn.textContent = 'Save Database Settings';
     if (r.expired) return;
     if (r.status === 409 && r.data.needs_choice) {
-        $('dbChoiceInfo').innerHTML = dbExistingText(r.data.server, r.data.existing);
+        const newer = !!(r.data.existing && r.data.existing.newer);
+        $('dbChoiceInfo').innerHTML = dbExistingText(r.data.server, r.data.existing)
+            + (newer ? ' <strong class="text-amber-300">They were saved by a newer dashboard: upgrade this one before loading them.</strong>' : '');
+        const fromDb = document.querySelector('input[name="dbChoice"][value="database"]');
+        fromDb.disabled = newer;
+        if (newer) fromDb.checked = false;
         choiceBox.classList.remove('hidden');
         dbSay('<span class="text-amber-400">Choose which settings to keep, then save again.</span>');
         return;

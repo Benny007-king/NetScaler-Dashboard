@@ -27,6 +27,7 @@ import hashlib
 import json
 import logging
 import os
+import re
 import socket
 import ssl
 import threading
@@ -66,7 +67,11 @@ _URL_SCHEMES = {
 # Settings documents mirrored into the external database.
 DOC_NAMES = ("nodes", "auth", "ldap", "ha_state")
 _META = "meta"
-_SCHEMA_VERSION = 1
+# Format of the settings documents. Raised when a dashboard starts writing
+# something older dashboards cannot read; a dashboard refuses to load settings
+# with a higher number than its own instead of ending up unusable.
+#   2: the admin login is a salted hash (written from 1.16.1 on)
+_SCHEMA_VERSION = 2
 _PROBE_TEXT = "unicode בדיקה ✓"
 
 _write_lock = threading.RLock()      # one writer at a time (history + spool moves)
@@ -97,17 +102,23 @@ class _Backend:
         md = sa.MetaData()
         big = sa.UnicodeText().with_variant(_mysql.LONGTEXT(), "mysql", "mariadb")
         big = big.with_variant(_mssql.NVARCHAR(None), "mssql")          # NVARCHAR(max), not NTEXT
-        # Case-sensitive keys on MySQL/MariaDB, like every other backend.
+        # Keys compare case-sensitively on every backend. MySQL/MariaDB and SQL
+        # Server default to case-insensitive, which would fold two sessions whose
+        # ids differ only in case into one row.
         opts = {"mysql_charset": "utf8mb4", "mysql_collate": "utf8mb4_bin"}
+
+        def key(width):
+            return sa.Unicode(width).with_variant(
+                _mssql.NVARCHAR(width, collation="Latin1_General_100_BIN2"), "mssql")
         self.failover = sa.Table(
             prefix + "failover_events", md,
             sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
             sa.Column("ts_epoch", sa.Double, nullable=False),
-            sa.Column("timestamp", sa.Unicode(64), nullable=False),
+            sa.Column("timestamp", key(64), nullable=False),
             sa.Column("type", sa.Unicode(64)),
             sa.Column("reason", big),
-            sa.Column("role_change", sa.Unicode(128)),
-            sa.Column("ip", sa.Unicode(64)),
+            sa.Column("role_change", key(128)),
+            sa.Column("ip", key(64)),
             sa.Column("instance", sa.Unicode(64)),
             sa.UniqueConstraint("timestamp", "ip", "role_change", name=prefix + "uq_failover"),
             sa.Index(prefix + "idx_fo_ts", "ts_epoch"),
@@ -117,9 +128,9 @@ class _Backend:
         self.sessions = sa.Table(
             prefix + "sessions", md,
             sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
-            sa.Column("instance", sa.Unicode(64)),
-            sa.Column("node", sa.Unicode(64)),
-            sa.Column("session_id", sa.Unicode(255)),
+            sa.Column("instance", key(64)),
+            sa.Column("node", key(64)),
+            sa.Column("session_id", key(255)),
             sa.Column("username", sa.Unicode(255)),
             sa.Column("type", sa.Unicode(64)),
             sa.Column("ip", sa.Unicode(255)),
@@ -560,14 +571,30 @@ def _server_name(b: _Backend) -> str:
 def _explain(e: Exception) -> str:
     """One readable line from a driver error - never the statement or a traceback."""
     orig = getattr(e, "orig", None) or e
-    args = getattr(orig, "args", None) or ()
-    if args and isinstance(args[0], dict):            # pg8000 reports server errors as a dict
-        text = str(args[0].get("M") or args[0])
-    elif args:
-        text = " ".join(a.decode("utf-8", "replace") if isinstance(a, bytes) else str(a)
-                        for a in args if a not in (None, ""))
-    else:
-        text = str(orig)
+
+    def parts(value):
+        # Drivers nest their arguments differently: pymssql wraps (code, bytes) in
+        # another tuple, PyMySQL passes (code, text), pg8000 a dict or a string.
+        if isinstance(value, (tuple, list)):
+            for v in value:
+                yield from parts(v)
+        elif isinstance(value, bytes):
+            yield value.decode("utf-8", "replace")
+        elif isinstance(value, dict):
+            yield str(value.get("M") or value)       # pg8000: the server's message
+        elif value not in (None, ""):
+            yield value
+
+    found = list(parts(getattr(orig, "args", None) or ()))
+    words = [str(v) for v in found if not isinstance(v, int)] or [str(v) for v in found]
+    text = " ".join(words) if words else str(orig)
+    if "DB-Lib error message" in text:               # FreeTDS repeats itself over many lines
+        head = text.split("DB-Lib error message")[0].strip()
+        lines = [ln.strip() for ln in re.findall(r"severity \d+:\s*([^\n]+)", text)]
+        useful = [ln for ln in lines if not ln.startswith(("General SQL Server error", "TDS server connection failed",
+                                                           "Adaptive Server connection failed"))]
+        text = head or (useful[0] if useful else
+                        "SQL Server refused the connection - check the database name and that this login may use it")
     for marker in ("(Background on this error", "[SQL:", "(timeout is "):
         text = text.split(marker)[0]
     text = " ".join(text.split())
@@ -716,11 +743,16 @@ def _sync_docs(b: _Backend, mode: str = "auto") -> None:
         return
     local = provider()
     remote = _get_docs(b)
+    meta = remote.get(_META) or {}
+    too_new = _schema_of(meta) > _SCHEMA_VERSION
+    if too_new and mode == "database":
+        raise ValueError("These settings were saved by a newer dashboard (%s). Upgrade this dashboard before "
+                         "loading them." % (meta.get("app_version") or "unknown version"))
     push, remove = {}, []
     for name in DOC_NAMES:
         doc, present = local.get(name, (None, False))
         in_db = remote.get(name)
-        take = in_db is not None and applier is not None and (
+        take = in_db is not None and applier is not None and not too_new and (
             mode == "database" or (mode == "auto" and not present and name != "auth"))
         if take:
             if in_db != doc:
@@ -732,6 +764,13 @@ def _sync_docs(b: _Backend, mode: str = "auto") -> None:
             remove.append(name)
     if (push or remove) and _put_docs(b, push, remove):
         logger.info("Settings copy in the external database updated")
+
+
+def _schema_of(meta) -> int:
+    try:
+        return int((meta or {}).get("schema") or 1)
+    except (TypeError, ValueError):
+        return 1
 
 
 def _recover() -> bool:
@@ -863,6 +902,7 @@ def test_config(cfg: dict) -> dict:
                 "instances": [str(i.get("name") or i.get("id")) for i in (nodes.get("instances") or [])
                               if isinstance(i, dict)][:20],
                 "saved_by": meta.get("saved_by"), "saved_at": meta.get("saved_at"),
+                "saved_version": meta.get("app_version"), "newer": _schema_of(meta) > _SCHEMA_VERSION,
                 "sessions": counts["sessions"], "failover_events": counts["failover_events"],
             },
         }

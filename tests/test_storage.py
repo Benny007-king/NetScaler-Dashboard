@@ -228,7 +228,7 @@ def external_suite(tmp, url):
     remote = db._get_docs(db._ext)
     check(remote["nodes"] == local["nodes"][0] and remote["auth"]["password_hash"] == "h1" and "ldap" not in remote,
           "settings documents are copied, absent ones are not invented")
-    check(remote["meta"]["schema"] == 1, "a meta document says who wrote them")
+    check(remote["meta"]["schema"] == db._SCHEMA_VERSION, "a meta document says who wrote them, and in which format")
     check(db.purge(days=36500)["sessions_removed"] == 0, "retention inside the window removes nothing")
     time.sleep(0.3)
     db.purge(days=1e-6)                            # start the history suite from empty
@@ -307,6 +307,23 @@ def external_suite(tmp, url):
     check(st["waiting"]["sessions"] == 0 and st["counts"]["sessions"] == 2, f"after recovery the waiting history is in the database: {st}")
 
     db.disconnect_external()
+
+    # settings saved by a newer dashboard are never loaded by an older one
+    b = db._make_backend(cfg)
+    with b.engine.begin() as c:
+        c.execute(b.settings.update().where(b.settings.c.name == "meta").values(
+            value=json.dumps({"schema": db._SCHEMA_VERSION + 1, "app_version": "9.9.9"})))
+    b.engine.dispose()
+    t = db.test_config(cfg)
+    check(t["existing"]["newer"] and t["existing"]["saved_version"] == "9.9.9", "a test says the settings come from a newer dashboard")
+    applied.clear()
+    try:
+        db.connect_external(cfg, "database")
+        raise AssertionError("settings in a newer format were loaded")
+    except ValueError as e:
+        check("newer dashboard (9.9.9)" in str(e), "loading them is refused with an explanation")
+    check(applied == {} and db.status()["backend"] == "builtin", "and nothing was changed or connected")
+
     wipe(db, cfg)
     print(f"   ok  {label}: test, connect, settings copy, restore, restart, outage and recovery, disconnect")
 

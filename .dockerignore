@@ -42,6 +42,12 @@ dist/
 .github/
 *.ova
 *.nsu
+# ...wherever they are: a second checkout or worktree inside this folder (with its
+# own dist/) would otherwise be copied into the image, artefacts and all.
+.claude/
+**/dist/
+**/*.ova
+**/*.nsu
 
 # Tests run from a checkout, not from the image
 tests/
