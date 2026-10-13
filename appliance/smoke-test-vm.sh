@@ -11,7 +11,7 @@
 #   6. an external database (a PostgreSQL server in this container): connect over
 #      TLS, settings copied, an outage, recovery
 #   7. uploading a release that cannot start is rolled back automatically
-#   8. the console menu: first login, static address, back to DHCP (console-test.py)
+#   8. the console menu: first login, static address, time zone, back to DHCP (console-test.py)
 #
 # With FROM_OVA=<the .ova of an older release> the VM boots that release instead,
 # so step 5 is a real upgrade from it to the version being built.

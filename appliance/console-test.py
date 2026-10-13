@@ -105,6 +105,32 @@ def main(sock_path, base):
         sys.exit("   FAIL  the dashboard stopped answering after the static address was set")
     passed("a bad address is refused; a static address is applied and the dashboard stays reachable")
 
+    # --- time zone: a name that matches nothing, a search, then a real change
+    c.send("t"); c.expect(r"Enter to cancel")
+    c.send("Nowhere/Land"); c.expect(r"No time zone matches")
+    c.send(); c.expect(r"q\) Log out")
+    c.send("t"); c.expect(r"Enter to cancel")
+    c.send("lond"); c.expect(r"Zones that contain it:\s+Europe/London")
+    c.send(); c.expect(r"q\) Log out")
+    c.send("t"); c.expect(r"Enter to cancel")
+    c.send("europe/london"); c.expect(r"Time zone is now Europe/London", 180)
+    c.send(); c.expect(r"\(Europe/London\)")
+    c.expect(r"q\) Log out")
+    # ...and the dashboard itself has to be running in it, not only the console.
+    c.send("s"); c.expect(r"exit' to return")
+    c.send("for i in $(seq 90); do z=$(docker exec netscaler-dashboard printenv TZ 2>/dev/null | tail -n 1); [ -n \"$z\" ] && break; sleep 2; done; echo \"ZONE<$z>\"; echo ZONE-DONE")
+    out = c.expect(r"ZONE<[^$>]*>\s+ZONE-DONE", 400)
+    if "ZONE<Europe/London>" not in out:
+        sys.exit("   FAIL  the dashboard is not running in the time zone set on the console:\n" + out[-300:])
+    c.send("exit"); c.expect(r"q\) Log out")
+    for _ in range(60):
+        if dashboard_version(base):
+            break
+        time.sleep(3)
+    else:
+        sys.exit("   FAIL  the dashboard did not come back after the time zone change")
+    passed("time zone: an unknown name is refused, a search lists zones, a change reaches the dashboard")
+
     c.send("1"); c.expect(r"1\) DHCP")
     c.send("1"); c.expect(r"Address is now:|No address yet", 180)
     c.send()

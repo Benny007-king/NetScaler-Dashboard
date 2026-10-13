@@ -7,16 +7,15 @@
   
   <link rel="icon" type="image/x-icon" href="/static/netscaler_icon.ico">
   
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-  
-  <script src="https://cdn.tailwindcss.com"></script>
-  
-  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+  <!-- Everything the page needs is served by the dashboard itself (static/vendor). -->
+  <link href="/static/vendor/fonts.css" rel="stylesheet">
+
+  <script src="/static/vendor/tailwindcss-3.4.17.js"></script>
+
+  <script src="/static/vendor/chart-4.5.1.umd.js"></script>
+  <script src="/static/vendor/xlsx-0.18.5.full.min.js"></script>
+  <script src="/static/vendor/jspdf-2.5.1.umd.min.js"></script>
+  <script src="/static/vendor/jspdf-autotable-3.8.2.min.js"></script>
 
   <script>
     tailwind.config = {
@@ -597,6 +596,10 @@ function parseDateFlexible(v) {
     return new Date(s).getTime();   // ISO and other unambiguous formats
 }
 
+// The zone the dashboard itself works in (the appliance's time zone), so times
+// read the same in every browser.
+const APP_TZ = {{ app_tz|tojson }};
+
 function formatILTime(isoStr) {
     if (!isoStr) return '';
     try {
@@ -605,7 +608,7 @@ function formatILTime(isoStr) {
         if (/^\d{1,2}\/\d{1,2}\/\d{4}[ ]/.test(String(isoStr).trim())) return isoStr;
         const d = new Date(isoStr);
         if (isNaN(d.getTime())) return isoStr;
-        return d.toLocaleString('en-GB', { timeZone: 'Asia/Jerusalem', hour12: false });
+        return d.toLocaleString('en-GB', { timeZone: APP_TZ, hour12: false });
     } catch(e) {
         return isoStr;
     }
@@ -1483,7 +1486,7 @@ async function loadOverview(background) {
         if (cpuChart) { cpuChart.data.datasets[0].data = [cpu, 100 - cpu]; cpuChart.update(); $('valCpu').innerText = cpu.toFixed(1) + '%'; }
         if (memChart) { memChart.data.datasets[0].data = [mem, 100 - mem]; memChart.update(); $('valMem').innerText = mem.toFixed(1) + '%'; }
         if (httpChart) {
-            const now = new Date().toLocaleTimeString('en-GB', { timeZone: 'Asia/Jerusalem', hour12: false });
+            let now; try { now = new Date().toLocaleTimeString('en-GB', { timeZone: APP_TZ, hour12: false }); } catch (e) { now = new Date().toLocaleTimeString('en-GB', { hour12: false }); }
             if (httpHistory.labels.length > 20) { httpHistory.labels.shift(); httpHistory.data.shift(); }
             httpHistory.labels.push(now); httpHistory.data.push(http);
             httpChart.data.labels = httpHistory.labels; httpChart.data.datasets[0].data = httpHistory.data; httpChart.update();

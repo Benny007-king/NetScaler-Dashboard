@@ -6,6 +6,24 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.17.0
+- **Works without internet access.** The pages used to load their styling,
+  charts, Excel/PDF export and fonts from public CDNs, so a browser on a closed
+  management network showed the dashboard unstyled. Those files (Tailwind CSS,
+  Chart.js, SheetJS, jsPDF with AutoTable, Inter and JetBrains Mono) are now part
+  of the dashboard, in `static/vendor`, each the published file with its checksum
+  recorded and tested. The content security policy no longer allows any other
+  host.
+- **Time zone.** The appliance was fixed to Israel time. The console menu has
+  **Time zone**: pick a zone (or type part of a name to search) and the appliance
+  and the dashboard both use it - the times on the page, in the failover history
+  and in exports. Nothing changes until you choose one. With Docker, set `TZ` in
+  `.env`.
+- New test `tests/test_offline.py` (no page may reference another host, every
+  bundled file matches its checksum, the time zone follows `TZ`); the boot test
+  changes the time zone from the console and checks that the dashboard runs in
+  it.
+
 ## 1.16.3
 A release of fixes from a full QA pass (security, robustness, appliance, docs).
 

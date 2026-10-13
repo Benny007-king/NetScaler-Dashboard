@@ -198,7 +198,8 @@ else
   echo '127.0.1.1 ns-dashboard' >> /etc/hosts
 fi
 
-# The dashboard image runs in this timezone; keep the host clock display in step.
+# The zone the appliance starts in; "Time zone" on the console menu changes it, and
+# the dashboard container is started in whatever zone the appliance is set to.
 ln -sf /usr/share/zoneinfo/Asia/Jerusalem /etc/localtime
 echo Asia/Jerusalem > /etc/timezone
 

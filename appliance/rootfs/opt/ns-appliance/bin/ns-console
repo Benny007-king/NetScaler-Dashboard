@@ -21,6 +21,18 @@ pause() { echo; read -r -p "Press Enter to continue..." _ || exit 0; }
 ask()   { local a; read -r -p "$1" a || return 1; echo "$a"; }
 confirm() { local a; a=$(ask "$1 [y/N] ") || exit 0; case "$a" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac; }
 
+# The zone the appliance is set to, read from the link itself (no service needed).
+current_tz() { local l; l=$(readlink -f /etc/localtime 2>/dev/null); case "$l" in */zoneinfo/*) echo "${l#*/zoneinfo/}" ;; *) echo UTC ;; esac; }
+# Every zone name, from the zone files themselves - `timedatectl list-timezones`
+# answers nothing when the time service cannot be reached.
+all_zones() {
+  ( cd /usr/share/zoneinfo 2>/dev/null || exit 0
+    find . '(' -type f -o -type l ')' ! -path './posix/*' ! -path './right/*' 2>/dev/null |
+      sed 's|^[.]/||' |
+      grep -E '^[A-Z][A-Za-z0-9_+-]*(/[A-Za-z0-9_+-]+)*$' |
+      grep -vxE 'SECURITY|Factory|localtime|posixrules' | sort )
+}
+
 primary_if() { ip -o link show 2>/dev/null | awk -F': ' '$2 ~ /^(en|eth)/ {print $2; exit}'; }
 ipv4_of()    { ip -4 -o addr show dev "$1" scope global 2>/dev/null | awk '{print $4; exit}'; }
 # A dotted address a host can really have: no leading zeros (systemd-networkd
@@ -57,6 +69,7 @@ header() {
   echo "  Network       : ${ifc:-no interface}  ${addr:-unconfigured}  ($mode)"
   echo "  Gateway / DNS : $(ip -4 route show default 2>/dev/null | awk '{print $3; exit}') / $(resolvectl dns 2>/dev/null | awk -F': ' 'NF>1 && $2!="" {print $2; exit}')"
   echo "  Hostname      : $(hostname)        SSH: $ssh"
+  echo "  Time          : $(date '+%d/%m/%Y %H:%M')  ($(current_tz))"
   echo "----------------------------------------------------------------------"
 }
 
@@ -124,6 +137,36 @@ set_hostname() {
   echo "Hostname set to $h."; pause
 }
 
+set_timezone() {
+  local z exact matches
+  echo; echo "Time zone now: ${bold}$(current_tz)${rst}"
+  echo "Give a zone such as Europe/London or America/New_York - or part of a name"
+  echo "(a city, a country's capital) to see the zones that match."
+  z=$(ask "Time zone (Enter to cancel): ") || exit 0
+  z=${z//[[:space:]]/}
+  [ -n "$z" ] || return
+  exact=$(all_zones | grep -ixF -- "$z" | head -n 1)
+  if [ -z "$exact" ]; then
+    matches=$(all_zones | grep -iF -- "$z" | head -n 40)
+    if [ -n "$matches" ]; then
+      echo "No zone is called exactly '$z'. Zones that contain it:"
+      echo "$matches" | sed 's/^/    /'
+    else
+      echo "No time zone matches '$z'."
+    fi
+    pause; return
+  fi
+  if ! timedatectl set-timezone "$exact" >/dev/null 2>&1; then
+    # no time service to ask: point the link at the zone ourselves
+    [ -f "/usr/share/zoneinfo/$exact" ] || { echo "The time zone could not be set."; pause; return; }
+    ln -sfn "/usr/share/zoneinfo/$exact" /etc/localtime
+  fi
+  echo "$exact" > /etc/timezone
+  systemctl restart ns-dashboard
+  echo "Time zone is now $exact - $(date '+%d/%m/%Y %H:%M:%S %Z')."
+  echo "The dashboard is restarting to use it."; pause
+}
+
 reset_web_admin() {
   echo; echo "This resets the dashboard's local admin login to ${bold}admin / admin${rst}."
   echo "Instances, LDAP settings, certificates and history are kept."
@@ -165,7 +208,7 @@ while true; do
   4) Reset the web admin password          9) Shut down
   5) Enable / disable SSH                  s) Root shell
   p) Change the console password           c) New web certificate
-                                           q) Log out
+  t) Time zone                             q) Log out
 MENU
   choice=$(ask "> ") || exit 0
   case "$choice" in
@@ -180,6 +223,7 @@ MENU
     9) confirm "Shut the appliance down now?" && systemctl poweroff ;;
     p|P) passwd nsadmin; pause ;;
     c|C) new_certificate ;;
+    t|T) set_timezone ;;
     s|S) echo "Type 'exit' to return to the menu."; NS_CONSOLE=1 bash --login ;;
     q|Q) exit 0 ;;
   esac

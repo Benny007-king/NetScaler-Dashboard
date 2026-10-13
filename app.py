@@ -296,13 +296,17 @@ if os.getenv('TRUST_PROXY', '0').lower() in ('1', 'true', 'yes'):
     from werkzeug.middleware.proxy_fix import ProxyFix
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_port=1)
 
-# Content Security Policy — allows exactly the CDNs/fonts the dashboard loads.
+# Older Pythons do not know the font type the bundled fonts are served as.
+import mimetypes
+mimetypes.add_type('font/woff2', '.woff2')
+
+# Content Security Policy — the page loads nothing from other hosts: its libraries
+# and fonts are served from static/vendor.
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com "
-    "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
-    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; "
-    "font-src 'self' https://fonts.gstatic.com data:; "
+    "script-src 'self' 'unsafe-inline'; "
+    "style-src 'self' 'unsafe-inline'; "
+    "font-src 'self' data:; "
     "img-src 'self' data:; connect-src 'self'; "
     "frame-ancestors 'none'; base-uri 'self'; form-action 'self'; object-src 'none'"
 )
@@ -314,6 +318,9 @@ def _security_headers(resp):
     resp.headers.setdefault('Referrer-Policy', 'no-referrer')
     resp.headers.setdefault('Permissions-Policy', 'geolocation=(), microphone=(), camera=()')
     resp.headers.setdefault('Content-Security-Policy', _CSP)
+    # Bundled libraries carry their version in the file name, so they never change.
+    if request.path.startswith('/static/vendor/') and resp.status_code == 200:
+        resp.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
     # HSTS only makes sense once we're actually on HTTPS.
     if request.is_secure and os.getenv('HSTS_ENABLED', '1').lower() in ('1', 'true', 'yes'):
         resp.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
@@ -340,8 +347,29 @@ DEFAULT_USERNAME = os.getenv('UI_DEFAULT_USERNAME', 'admin')
 DEFAULT_PASSWORD = os.getenv('UI_DEFAULT_PASSWORD', 'admin')
 PASSWORD_MIN_LENGTH = 8
 
-# Timezone
-IL_TZ = pytz.timezone("Asia/Jerusalem")
+# Time zone the dashboard shows and records times in. It comes from TZ - on the
+# appliance that is the zone chosen on the console menu, with Docker it is TZ in
+# .env - and stays Asia/Jerusalem when nothing is set, as it always was.
+_DEFAULT_TZ = "Asia/Jerusalem"
+
+def _app_timezone():
+    name = (os.environ.get("TZ") or "").strip().lstrip(":")
+    if name:
+        try:
+            return name, pytz.timezone(name)
+        except Exception:
+            logger.warning("TZ=%r is not a time zone this system knows - using %s", name, _DEFAULT_TZ)
+            # the C library would silently fall back to UTC; keep both in step
+            os.environ["TZ"] = _DEFAULT_TZ
+            if hasattr(time, "tzset"):
+                time.tzset()
+    return _DEFAULT_TZ, pytz.timezone(_DEFAULT_TZ)
+
+APP_TZ_NAME, APP_TZ = _app_timezone()
+
+@app.context_processor
+def _template_globals():
+    return {"app_tz": APP_TZ_NAME}
 
 # Bounded retention for failover history: when it reaches 80% of the cap, prune
 # back to 50% (keeping the most recent events) so the file never fills up.
@@ -394,7 +422,7 @@ def load_auth_config() -> dict:
                     'unreadable': True}
     cfg = {
         'username': DEFAULT_USERNAME, 'password_hash': hash_password(DEFAULT_PASSWORD),
-        'is_default_password': True, 'created_at': datetime.now(IL_TZ).isoformat(),
+        'is_default_password': True, 'created_at': datetime.now(APP_TZ).isoformat(),
         'last_login': None, 'login_attempts': 0, 'last_password_change': None
     }
     save_auth_config(cfg)
@@ -1019,7 +1047,7 @@ API_DETECT_INFO = {}
 
 def _set_detect_info(instance_id, node_key, **kw):
     iid = str(get_instance(instance_id).get('id'))
-    kw['checked'] = datetime.now(IL_TZ).strftime('%d/%m/%Y %H:%M:%S')
+    kw['checked'] = datetime.now(APP_TZ).strftime('%d/%m/%Y %H:%M:%S')
     API_DETECT_INFO.setdefault(iid, {})[node_key] = kw
 
 def get_detect_info(instance_id, node_key):
@@ -1217,7 +1245,7 @@ def _track_ha_state_changes(nodes, instance_id=None):
             if prev and prev != role and 'UNKNOWN' not in role:
                 _inst = get_instance(instance_id)
                 evt = {
-                    'timestamp': datetime.now(IL_TZ).isoformat(),
+                    'timestamp': datetime.now(APP_TZ).isoformat(),
                     'type': 'Role Change',
                     'reason': f"Node HA State Shift",
                     'role_change': f"{prev} -> {role}",
@@ -1357,7 +1385,7 @@ def login():
                 if is_legacy_hash(auth_config.get('password_hash')):
                     auth_config['password_hash'] = hash_password(password)
                     logger.info("Admin password hash upgraded from the legacy format")
-                auth_config['last_login'] = datetime.now(IL_TZ).isoformat()
+                auth_config['last_login'] = datetime.now(APP_TZ).isoformat()
                 auth_config['login_attempts'] = 0
                 save_auth_config(auth_config)
             return redirect(url_for('dashboard'))
@@ -1404,7 +1432,7 @@ def change_password():
 
         auth_config['password_hash'] = hash_password(new_pw)
         auth_config['is_default_password'] = False
-        auth_config['last_password_change'] = datetime.now(IL_TZ).isoformat()
+        auth_config['last_password_change'] = datetime.now(APP_TZ).isoformat()
         save_auth_config(auth_config)
         flash('Password changed successfully', 'success')
         return redirect(url_for('dashboard'))
@@ -1863,7 +1891,7 @@ def api_instances_health():
     with ThreadPoolExecutor(max_workers=min(8, len(insts))) as ex:
         out = list(ex.map(_instance_health, insts))
     return jsonify({'instances': out,
-                    'generated': datetime.now(IL_TZ).strftime('%d/%m/%Y %H:%M:%S')})
+                    'generated': datetime.now(APP_TZ).strftime('%d/%m/%Y %H:%M:%S')})
 
 @app.route('/api/instances')
 @login_required
@@ -2163,7 +2191,7 @@ def _normalize_session(raw, kind):
     try: duration_secs = max(0, int(float(str(s.get('duration') or 0).strip())))
     except (TypeError, ValueError): duration_secs = 0
     start_dt = datetime.now().timestamp() - duration_secs
-    start = datetime.fromtimestamp(start_dt, IL_TZ).strftime('%d/%m/%Y %H:%M:%S')
+    start = datetime.fromtimestamp(start_dt, APP_TZ).strftime('%d/%m/%Y %H:%M:%S')
 
     src_ip = _pick(s, ['publicip', 'clientip', 'srcip', 'client_ip', 'ipaddress', 'ip'])
     intranet_ip = _pick(s, ['intranetip', 'iip', 'peip', 'mappedip'])

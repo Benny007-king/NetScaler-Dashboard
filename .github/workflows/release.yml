@@ -42,10 +42,10 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
 
-      - name: Unit tests (login, certificates, LDAP group rule, storage, upgrade agent)
+      - name: Unit tests (login, certificates, LDAP group rule, storage, offline pages, upgrade agent)
         run: |
           docker build -q --build-arg APP_VERSION="$(cat VERSION)" -t nsd-ci-test . >/dev/null
-          for t in test_auth test_certs test_ldap_group test_storage; do
+          for t in test_auth test_certs test_ldap_group test_storage test_offline; do
             docker run --rm -v "$PWD:/app:ro" -w /tmp nsd-ci-test python "/app/tests/$t.py"
           done
           docker run --rm -v "$PWD:/src:ro" debian:13 bash /src/appliance/test-upgrade-agent.sh

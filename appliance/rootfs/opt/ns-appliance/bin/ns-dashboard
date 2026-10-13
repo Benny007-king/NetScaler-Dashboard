@@ -38,6 +38,9 @@ case "${1:-}" in
           -e DATA_DIR=/app/data
           -e NS_APPLIANCE=1
           -e "NS_APPLIANCE_VERSION=$(cat /etc/ns-appliance/version 2>/dev/null || echo unknown)")
+    # The dashboard works in the appliance's time zone (console menu > Time zone).
+    zone=$(readlink -f /etc/localtime 2>/dev/null || true)
+    case "$zone" in */zoneinfo/?*) args+=(-e "TZ=${zone#*/zoneinfo/}") ;; esac
     if [ -f "$ENV_FILE" ]; then
       # Docker reads an env file literally: quotes around a value, a leading
       # "export" or a Windows line ending would become part of the value and

@@ -20,6 +20,8 @@ The dashboard ships as a **virtual appliance**: a minimal Linux VM with Docker a
 Both are attached to every [GitHub Release](https://github.com/Benny007-king/NetScaler-Dashboard/releases/latest), with a `SHA256SUMS` file. Full guide: **https://net-scaler-dashboard-web.vercel.app/docs.html**
 
 - VM defaults: 2 vCPU · 2 GB RAM · 16 GB thin disk · DHCP (a static address is set from the console menu).
+- Neither the appliance nor the browser needs internet access: the pages load everything from the appliance itself.
+- Times are shown in the appliance's time zone - Asia/Jerusalem until you choose another under **Time zone** on the console menu.
 - Web sign-in `admin` / `admin`, console sign-in `nsadmin` / `nsadmin` — both must be changed at first use. SSH is off until enabled from the console.
 
 ---
@@ -52,6 +54,8 @@ netscaler-dashboard/
 ├── db.py                      # History + settings store: built-in SQLite or an external database
 ├── tests/test_storage.py      # Storage tests, run against real database servers
 ├── tests/test_auth.py         # Login tests: default admin, forced change, hashes from earlier releases
+├── tests/test_offline.py      # No page loads from another host; bundled files match their checksums; time zone
+├── static/vendor/             # Browser libraries and fonts served by the dashboard itself (see its README)
 ├── appliance/                 # Everything that turns the image into a virtual appliance
 │   ├── build.sh               #   builds the OVA and the .nsu (needs only Docker)
 │   ├── build-image.sh         #   Debian image -> customised disk -> OVA
@@ -206,7 +210,7 @@ python tests/test_storage.py postgresql://user:pw@host/scratchdb mysql://user:pw
 VM (Debian 13, minimal)
  ├─ ns-dashboard.service   runs the container: host networking, one bind mount (the data dir)
  ├─ ns-upgrade.path/.service   applies an uploaded upgrade - the only thing that talks to Docker
- ├─ ns-console             menu on the VM console: network, hostname, SSH, web-admin reset
+ ├─ ns-console             menu on the VM console: network, hostname, time zone, SSH, web-admin reset
  ├─ ns-issue.service       keeps the address on the console login screen current
  └─ /var/lib/ns-dashboard/data   config, LDAP, history DB, certificates - never part of an upgrade
 ```
@@ -332,12 +336,12 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 ## Security
 
 - HTTPS-only on 443; CA-signed cert out of the box, replaceable from Settings.
-- Response headers: HSTS (on HTTPS), CSP (scoped to the CDNs used), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`.
+- Response headers: HSTS (on HTTPS), CSP (the dashboard's own origin only), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`.
 - Secrets live in gitignored files (`nodes_config.json`, `ldap_config.json`, `db_config.json`, `auth_config.json`, `.env`, `.app_secret`, `certs/`); never commit them.
 - Sign-in: the admin password is at least 8 characters and stored as a salted hash; five wrong attempts from one address lock that address out for five minutes (`LOGIN_MAX_FAILURES`, `LOGIN_LOCKOUT_SECS`). A damaged login file closes local sign-in instead of falling back to the default password — reset it from the appliance console.
 - NetScaler credentials are only ever sent to the configured node: redirects are not followed, and a stored password is not reused when a node's address or user is changed.
 - The upgrade agent on the appliance (root) never writes through a name inside the dashboard's data directory and works on a private copy of the uploaded file.
-- The Content-Security-Policy still allows inline scripts (the UI uses inline handlers) and the UI loads its styling and chart libraries from public CDNs — see *Third-party components*.
+- The Content-Security-Policy allows no other host - the UI's libraries and fonts are bundled (see *Third-party components*). It still allows inline scripts, because the UI uses inline handlers.
 - The local admin password is stored as a salted, deliberately slow hash (scrypt via Werkzeug; PBKDF2-SHA256 if scrypt is unavailable) and checked in constant time. Hashes from 1.16.0 and earlier are upgraded on the next sign-in.
 - Session cookies are HttpOnly + SameSite=Lax + Secure. The session secret is random and persisted to `.app_secret`.
 - Restrict access to NetScaler management networks (firewall / allowlist).
@@ -358,7 +362,7 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 
 The appliance image contains Debian, Docker and the Python packages in `requirements.txt` (Flask, SQLAlchemy, requests, cryptography, ldap3, gunicorn, pg8000, PyMySQL, and pymssql with its bundled FreeTDS), each under its own licence. The disk image is written with VMware's open-vmdk.
 
-The web UI loads these from public CDNs in the administrator's browser: Tailwind CSS (cdn.tailwindcss.com), Chart.js (cdn.jsdelivr.net), SheetJS and jsPDF with AutoTable (cdnjs.cloudflare.com) and Google Fonts. **A browser without internet access shows the dashboard unstyled and without charts or Excel/PDF export.**
+The web UI's browser libraries and fonts are bundled in `static/vendor` and served by the dashboard itself, so the administrator's browser needs no internet access: Tailwind CSS 3.4.17 (MIT), Chart.js 4.5.1 (MIT), SheetJS 0.18.5 (Apache-2.0), jsPDF 2.5.1 with AutoTable 3.8.2 (MIT), and the Inter and JetBrains Mono fonts (SIL Open Font License 1.1). Each is the published file; `static/vendor/README.md` lists where it came from, `static/vendor/SHA256SUMS` its checksum, and `static/vendor/licenses/` the licence texts.
 
 NetScaler and Citrix are trademarks of Cloud Software Group, Inc. This is an independent project; it is not affiliated with, endorsed by or supported by Cloud Software Group.
 
