@@ -46,6 +46,30 @@ except Exception: pass
 def _data_path(name):
     return os.path.join(DATA_DIR, name)
 
+def _env_int(name, default, minimum=None):
+    """A whole number from the environment. Anything unusable - text, a value in
+    quotes left there by an env file, a number below the minimum - falls back to
+    the default instead of stopping the application from starting."""
+    raw = str(os.getenv(name, '') or '').strip().strip('"\'').strip()
+    try:
+        v = int(raw) if raw else default
+    except ValueError:
+        print(f"WARNING: {name}={raw!r} is not a number; using {default}", file=sys.stderr)
+        v = default
+    return default if (minimum is not None and v < minimum) else v
+
+def _write_json(path, obj, **dump_args):
+    """Write a settings file so that a crash, a power cut or a full disk can never
+    leave it empty or half-written: the new content goes to a temporary file and
+    only replaces the old one once it is complete."""
+    tmp = f"{path}.tmp"
+    with open(tmp, 'w', encoding='utf-8') as f:
+        json.dump(obj, f, **dump_args)
+        f.flush()
+        try: os.fsync(f.fileno())
+        except OSError: pass
+    os.replace(tmp, path)
+
 def _read_path(data_file, legacy_name):
     """Path to read from: the DATA_DIR file if present, else a legacy root file
     (belt-and-suspenders in case a migration didn't run). Writes always target
@@ -109,14 +133,14 @@ def _as_bool(v, default=False):
 _LDAP_ENV_DEFAULTS = {
     "enabled": _as_bool(os.getenv("LDAP_ENABLED", "0")) or ("ldap" in AUTH_BACKENDS),
     "server": os.getenv("LDAP_SERVER", ""),
-    "port": int(os.getenv("LDAP_PORT", "389") or 389),
+    "port": _env_int("LDAP_PORT", 389, 1),
     "use_ssl": _as_bool(os.getenv("LDAP_USE_SSL", "0")),
     "base_dn": os.getenv("LDAP_BASE_DN", ""),
     "bind_dn": os.getenv("LDAP_BIND_DN", ""),
     "bind_pw": os.getenv("LDAP_BIND_PASSWORD", ""),
     "user_attr": os.getenv("LDAP_USER_ATTRIBUTE", "sAMAccountName"),
     "allowed_group_dn": os.getenv("LDAP_ALLOWED_GROUP_DN", ""),
-    "timeout": int(os.getenv("LDAP_TIMEOUT_SECS", "10") or 10),
+    "timeout": _env_int("LDAP_TIMEOUT_SECS", 10, 1),
 }
 
 def load_ldap_config() -> dict:
@@ -151,8 +175,7 @@ def save_ldap_config(new: dict) -> dict:
             merged[k] = new[k]
     if not new.get("bind_pw"):                     # blank = keep the stored password
         merged["bind_pw"] = LDAP_CFG.get("bind_pw", "")
-    with open(LDAP_CONFIG_FILE, "w", encoding="utf-8") as f:
-        json.dump(merged, f, indent=2)
+    _write_json(LDAP_CONFIG_FILE, merged, indent=2)
     LDAP_CFG = load_ldap_config()
     db.documents_changed()
     return LDAP_CFG
@@ -214,7 +237,8 @@ app.secret_key = _load_or_create_secret()
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE='Lax',
-    SESSION_COOKIE_SECURE=os.getenv('APP_SSL', '1').lower() in ('1', 'true', 'yes'),
+    SESSION_COOKIE_SECURE=(os.getenv('APP_SSL', '1').lower() in ('1', 'true', 'yes')
+                           or os.getenv('TRUST_PROXY', '0').lower() in ('1', 'true', 'yes')),
     PERMANENT_SESSION_LIFETIME=timedelta(minutes=DEFAULT_SESSION_TIMEOUT_MIN),
 )
 
@@ -229,6 +253,26 @@ def get_session_timeout_min() -> int:
 def apply_session_timeout():
     """Sync Flask's cookie lifetime with the configured timeout."""
     app.config['PERMANENT_SESSION_LIFETIME'] = timedelta(minutes=get_session_timeout_min())
+
+@app.before_request
+def _check_scope_params():
+    """`instance` and `node` in the query select what an API call talks to. A
+    value that does not exist used to fall through to the first instance (so a
+    tab left open on a deleted instance showed another one's data) or to a 500."""
+    if not request.path.startswith('/api/'):
+        return
+    # Settings and commands are small; only the upgrade upload carries a file.
+    if (request.method == 'POST' and request.path != '/api/appliance/upgrade'
+            and (request.content_length or 0) > 2 * 1024 * 1024):
+        return jsonify({'error': 'Request too large'}), 413
+    if not session.get('logged_in'):
+        return
+    inst = request.args.get('instance')
+    if inst is not None and inst != '' and str(inst) not in {str(i.get('id')) for i in get_instances()}:
+        return jsonify({'error': 'Unknown instance', 'code': 'unknown_instance'}), 404
+    node = request.args.get('node')
+    if node is not None and node != '' and node not in ('primary', 'secondary'):
+        return jsonify({'error': "node must be 'primary' or 'secondary'"}), 400
 
 @app.before_request
 def _enforce_idle_timeout():
@@ -255,7 +299,7 @@ if os.getenv('TRUST_PROXY', '0').lower() in ('1', 'true', 'yes'):
 # Content Security Policy — allows exactly the CDNs/fonts the dashboard loads.
 _CSP = (
     "default-src 'self'; "
-    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://cdn.tailwindcss.com "
+    "script-src 'self' 'unsafe-inline' https://cdn.tailwindcss.com "
     "https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; "
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://cdn.tailwindcss.com; "
     "font-src 'self' https://fonts.gstatic.com data:; "
@@ -277,8 +321,8 @@ def _security_headers(resp):
 
 # Rotating log so it can't grow without bound (default 5 MB × 3 backups = ~20 MB cap).
 from logging.handlers import RotatingFileHandler
-_log_max_bytes = int(os.getenv("APP_LOG_MAX_BYTES", str(5 * 1024 * 1024)))
-_log_backups = int(os.getenv("APP_LOG_BACKUPS", "3"))
+_log_max_bytes = _env_int("APP_LOG_MAX_BYTES", 5 * 1024 * 1024, 1024)
+_log_backups = _env_int("APP_LOG_BACKUPS", 3, 0)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
@@ -294,13 +338,14 @@ logger = logging.getLogger(__name__)
 # ======================================================================================
 DEFAULT_USERNAME = os.getenv('UI_DEFAULT_USERNAME', 'admin')
 DEFAULT_PASSWORD = os.getenv('UI_DEFAULT_PASSWORD', 'admin')
+PASSWORD_MIN_LENGTH = 8
 
 # Timezone
 IL_TZ = pytz.timezone("Asia/Jerusalem")
 
 # Bounded retention for failover history: when it reaches 80% of the cap, prune
 # back to 50% (keeping the most recent events) so the file never fills up.
-FAILOVER_MAX_EVENTS = int(os.getenv("FAILOVER_MAX_EVENTS", "5000"))
+FAILOVER_MAX_EVENTS = _env_int("FAILOVER_MAX_EVENTS", 5000, 10)
 
 def _prune_failover_history(history):
     high = int(FAILOVER_MAX_EVENTS * 0.8)
@@ -331,11 +376,22 @@ def verify_password(password: str, stored) -> bool:
     except Exception: return False
 
 def load_auth_config() -> dict:
-    try:
-        src = _read_path(AUTH_CONFIG_FILE, 'auth_config.json')
-        if os.path.exists(src):
-            with open(src, 'r', encoding='utf-8') as f: return json.load(f)
-    except Exception: pass
+    src = _read_path(AUTH_CONFIG_FILE, 'auth_config.json')
+    if os.path.exists(src):
+        try:
+            with open(src, 'r', encoding='utf-8') as f: cfg = json.load(f)
+            if (isinstance(cfg, dict) and isinstance(cfg.get('username'), str) and cfg['username']
+                    and isinstance(cfg.get('password_hash'), str) and cfg['password_hash']):
+                return cfg
+            raise ValueError('it does not hold a login')
+        except Exception as e:
+            # A login that exists but cannot be read must never quietly turn back
+            # into the published default. Local sign-in stays closed until an
+            # administrator resets it on purpose (appliance console: "Reset the web
+            # admin password"; otherwise delete the file and restart).
+            logger.error(f"The admin login file {src} cannot be used ({e}). Local sign-in is disabled until it is reset.")
+            return {'username': DEFAULT_USERNAME, 'password_hash': '', 'is_default_password': False,
+                    'unreadable': True}
     cfg = {
         'username': DEFAULT_USERNAME, 'password_hash': hash_password(DEFAULT_PASSWORD),
         'is_default_password': True, 'created_at': datetime.now(IL_TZ).isoformat(),
@@ -345,13 +401,56 @@ def load_auth_config() -> dict:
     return cfg
 
 def save_auth_config(config: dict) -> None:
+    if config.get('unreadable'):
+        return                      # never write over a login file we could not read
     try:
-        with open(AUTH_CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(config, f, indent=2, ensure_ascii=False)
+        _write_json(AUTH_CONFIG_FILE, config, indent=2, ensure_ascii=False)
         db.documents_changed()
     except Exception as e:
         logger.error(f"Error saving auth config: {e}")
 
 auth_config = load_auth_config()
+
+# ---- sign-in throttling ---------------------------------------------------------------
+# After LOGIN_MAX_FAILURES wrong attempts from one address within the window, that
+# address has to wait LOGIN_LOCKOUT_SECS. It is per address, so somebody guessing
+# passwords cannot lock the real administrator out from another machine.
+try: LOGIN_MAX_FAILURES = max(1, int(os.getenv('LOGIN_MAX_FAILURES', '5')))
+except ValueError: LOGIN_MAX_FAILURES = 5
+try: LOGIN_LOCKOUT_SECS = max(1, int(os.getenv('LOGIN_LOCKOUT_SECS', '300')))
+except ValueError: LOGIN_LOCKOUT_SECS = 300
+_LOGIN_WINDOW_SECS = 900
+_login_fails = {}                    # address -> [failures, first failure, blocked until]
+_login_lock = threading.Lock()
+
+def _login_wait(addr) -> int:
+    """Seconds this address still has to wait before it may try again (0 = go ahead)."""
+    with _login_lock:
+        rec = _login_fails.get(addr)
+        return max(0, int(rec[2] - time.time() + 0.999)) if rec else 0
+
+def _login_failed(addr) -> None:
+    now = time.time()
+    with _login_lock:
+        if len(_login_fails) > 10000:            # bounded, whatever is thrown at it
+            for k in [k for k, v in _login_fails.items() if v[2] < now and now - v[1] > _LOGIN_WINDOW_SECS]:
+                _login_fails.pop(k, None)
+            if len(_login_fails) > 10000: _login_fails.clear()
+        rec = _login_fails.get(addr)
+        if not rec or now - rec[1] > _LOGIN_WINDOW_SECS:
+            rec = _login_fails[addr] = [0, now, 0.0]
+        rec[0] += 1
+        if rec[0] >= LOGIN_MAX_FAILURES:
+            rec[0], rec[1], rec[2] = 0, now, now + LOGIN_LOCKOUT_SECS
+
+def _login_succeeded(addr) -> None:
+    with _login_lock:
+        _login_fails.pop(addr, None)
+
+def _login_page(status=200):
+    return render_template('login.html', ldap_on=ldap_enabled(),
+                           show_default_hint=bool(auth_config.get('is_default_password')),
+                           app_version=appliance.app_version()), status
 
 def load_failover_history():
     try:
@@ -363,28 +462,33 @@ def load_failover_history():
 def save_failover_history(history):
     try:
         history = _prune_failover_history(history)
-        with open(FAILOVER_HISTORY_FILE, 'w', encoding='utf-8') as f: json.dump(history, f, indent=2)
+        _write_json(FAILOVER_HISTORY_FILE, history, indent=2)
     except Exception: pass
 
 def login_required(fn):
     @wraps(fn)
     def _wrapped(*args, **kwargs):
+        wants_json = request.is_json or request.path.startswith('/api/')
         if not session.get('logged_in'):
-            if request.is_json: return jsonify({'error': 'Authentication required'}), 401
+            if wants_json: return jsonify({'error': 'Authentication required'}), 401
             return redirect(url_for('login'))
         # Force-change gate only applies to the local admin account, not LDAP users.
         if (session.get('auth_backend') == 'local' and auth_config.get('is_default_password', False)
                 and request.endpoint not in ("change_password", "logout")):
-            if request.is_json: return jsonify({'error': 'Password change required'}), 403
+            if wants_json: return jsonify({'error': 'Password change required'}), 403
             return redirect(url_for('change_password'))
         return fn(*args, **kwargs)
     return _wrapped
 
 def _dn_head(dn: str) -> str:
-    """Leftmost RDN value, e.g. 'domain admins' from 'CN=Domain Admins,CN=Users,...'.
-    Lets an allowed-group value match regardless of CN/OU prefix or path."""
+    """Leftmost RDN value, e.g. 'domain admins' from 'CN=Domain Admins,CN=Users,...'."""
     m = re.match(r'\s*[^=,]+=([^,]+)', str(dn or ''))
     return (m.group(1).strip().lower() if m else str(dn or '').strip().lower())
+
+def _dn_norm(dn: str) -> str:
+    """A DN in a form two spellings of the same DN share: case and the spaces
+    around ',' and '=' do not matter."""
+    return re.sub(r'\s*([,=])\s*', r'\1', str(dn or '').strip()).lower()
 
 def _ldap_user_in_group(finder, user_dn, entry, allowed_group, cfg) -> bool:
     """True if the user belongs to allowed_group. Uses AD tokenGroups (which
@@ -396,13 +500,19 @@ def _ldap_user_in_group(finder, user_dn, entry, allowed_group, cfg) -> bool:
     from ldap3 import BASE, SUBTREE
     from ldap3.utils.conv import escape_filter_chars
     head = _dn_head(allowed)
+    # A full DN names exactly one group. Only a bare name ("NetScaler-Admins") is
+    # looked up by name - matching a DN by its first part alone would let in the
+    # members of any group, in any OU or domain, that happens to share the name.
+    is_dn = '=' in allowed
 
     # --- AD tokenGroups path (covers primary + nested group membership) ---
     try:
-        # Find the group by CN (forgiving of an OU/CN or path typo in the stored DN).
-        finder.search(cfg['base_dn'],
-                      f"(&(objectClass=group)(cn={escape_filter_chars(head)}))",
-                      search_scope=SUBTREE, attributes=['objectSid'])
+        if is_dn:
+            finder.search(allowed, '(objectClass=group)', search_scope=BASE, attributes=['objectSid'])
+        else:
+            finder.search(cfg['base_dn'],
+                          f"(&(objectClass=group)(cn={escape_filter_chars(head)}))",
+                          search_scope=SUBTREE, attributes=['objectSid'])
         group_sid = None
         if finder.entries:
             try: group_sid = finder.entries[0].objectSid.raw_values[0]
@@ -421,12 +531,12 @@ def _ldap_user_in_group(finder, user_dn, entry, allowed_group, cfg) -> bool:
     except Exception as e:
         logger.info(f"LDAP tokenGroups check unavailable ({e}); using memberOf")
 
-    # --- memberOf fallback (exact DN or leftmost-RDN value match) ---
+    # --- memberOf fallback: the same DN, or the same name when only a name was given ---
     try: groups = [str(g) for g in entry.memberOf.values]
     except Exception: groups = []
-    al = allowed.lower()
+    al = _dn_norm(allowed)
     for g in groups:
-        if g.lower() == al or _dn_head(g) == head:
+        if _dn_norm(g) == al or (not is_dn and _dn_head(g) == head):
             return True
     logger.info(f"LDAP: user not in group '{head}' (memberOf: {len(groups)} group(s))")
     return False
@@ -535,6 +645,68 @@ class _LegacyTLSAdapter(requests.adapters.HTTPAdapter):
         return super().proxy_manager_for(*args, **kwargs)
 
 
+# Largest response accepted from an appliance, and how long a node that just
+# failed to answer is left alone before it is tried again.
+NITRO_MAX_BODY_BYTES = _env_int("NITRO_MAX_BODY_MB", 32, 1) * 1024 * 1024
+NODE_BACKOFF_SECS = _env_int("NODE_BACKOFF_SECS", 10, 0)
+_node_backoff = {}                   # "host:port" -> [retry at, read timeouts in a row]
+_node_backoff_lock = threading.Lock()
+
+class _ApplianceSession(requests.Session):
+    """The HTTP session used for every call to a NetScaler.
+
+    * A redirect is never followed: the credentials travel in request headers
+      and would be sent to wherever the redirect points.
+    * A response larger than NITRO_MAX_BODY_BYTES is refused instead of being
+      loaded into memory.
+    * A node that did not answer is not tried again for NODE_BACKOFF_SECS. The
+      dashboard has a handful of worker threads; without this, a few browser tabs
+      polling one dead appliance keep all of them waiting on timeouts and nobody
+      can sign in.
+    """
+    def __init__(self, node):
+        super().__init__()
+        self._node = str(node)
+
+    def _failed(self, at_once):
+        if NODE_BACKOFF_SECS <= 0: return
+        with _node_backoff_lock:
+            rec = _node_backoff.setdefault(self._node, [0.0, 0])
+            rec[1] += 1
+            if at_once or rec[1] >= 2:
+                rec[0] = time.time() + NODE_BACKOFF_SECS
+
+    def request(self, method, url, **kw):
+        with _node_backoff_lock:
+            rec = _node_backoff.get(self._node)
+            if rec and rec[0] > time.time():
+                raise requests.ConnectionError(f"{self._node} did not answer a moment ago; trying again shortly")
+        kw['allow_redirects'] = False
+        kw['stream'] = True
+        try:
+            r = super().request(method, url, **kw)
+            body = r.raw.read(NITRO_MAX_BODY_BYTES + 1, decode_content=True)
+        except requests.ConnectionError:             # refused, unreachable, connect timeout
+            self._failed(True); raise
+        except requests.Timeout:
+            self._failed(False); raise
+        except requests.RequestException:
+            raise
+        except Exception as e:                       # urllib3 errors while reading the body
+            self._failed(False)
+            raise requests.ConnectionError(str(e))
+        with _node_backoff_lock:
+            _node_backoff.pop(self._node, None)
+        if len(body) > NITRO_MAX_BODY_BYTES:
+            r.close()
+            raise requests.RequestException(
+                f"the response from {self._node} is larger than {NITRO_MAX_BODY_BYTES // (1024 * 1024)} MB")
+        r._content, r._content_consumed = body, True
+        if 300 <= r.status_code < 400:
+            raise requests.RequestException(
+                f"{self._node} answered with a redirect (HTTP {r.status_code}); redirects are not followed")
+        return r
+
 class NetScalerAPI:
     def __init__(self, ip, username, password, port=80, protocol='http'):
         self.ip = ip
@@ -543,7 +715,7 @@ class NetScalerAPI:
         self.port = port
         self.protocol = protocol
         self.base_url = f"{protocol}://{ip}:{port}/nitro/v1"
-        self.session = requests.Session()
+        self.session = _ApplianceSession(f"{ip}:{port}")
         self.session.headers.update({
             'Content-Type': 'application/json',
             'Accept': 'application/json',
@@ -581,18 +753,44 @@ class NetScalerAPI:
             except Exception: return {'raw': r.text, 'status_code': r.status_code}
         return {'status_code': r.status_code}
 
+    def _post_status(self, path, payload):
+        """POST that does not raise on an HTTP error status, so the appliance's own
+        error message can be read: (status, NITRO object or None, raw text)."""
+        r = self.session.post(f"{self.base_url}{path}", json=payload, timeout=self._to(self.timeout))
+        try: body = r.json()
+        except Exception: body = None
+        return r.status_code, (body if isinstance(body, dict) else None), r.text
+
     def unlock_user(self, username: str) -> dict:
-        try:
-            resp = self._post("/config/aaauser", {"aaauser": {"username": username, "unlockAccount": True}})
-            if isinstance(resp, dict) and str(resp.get("errorcode", "0")) not in ("0", "", "None"):
-                msg = str(resp.get("message", "")).lower()
-                if ("unlockaccount" in msg) or ("invalid" in msg) or ("unknown" in msg): raise ValueError()
-            return resp
-        except Exception:
-            try: return self._post("/config/aaauser?action=unlock", {"aaauser": {"username": username}})
-            except Exception:
-                try: return self._post(f"/config/aaauser/{username}?action=unlock", {"aaauser": {"username": username}})
-                except Exception: return {"errorcode": -1, "message": "All unlock attempts failed."}
+        """Unlock an AAA user, trying the forms of the call different builds accept.
+        It is a success only when the appliance says so - a 2xx answer that is empty
+        or a NITRO object with errorcode 0 - never on some other page that happens
+        to come back with status 200."""
+        from urllib.parse import quote
+        attempts = (
+            ("/config/aaauser", {"aaauser": {"username": username, "unlockAccount": True}}),
+            ("/config/aaauser?action=unlock", {"aaauser": {"username": username}}),
+            # the name is one path segment, whatever characters it contains
+            (f"/config/aaauser/{quote(username, safe='')}?action=unlock", {"aaauser": {"username": username}}),
+        )
+        said = []
+        for path, payload in attempts:
+            try:
+                status, body, text = self._post_status(path, payload)
+            except Exception as e:
+                said.append(f"The appliance could not be reached ({str(e)[:120]})")
+                continue
+            if 200 <= status < 300 and (not text.strip()
+                                        or (body is not None and str(body.get("errorcode", 0)) == "0")):
+                return {"errorcode": 0, "message": "Done"}
+            if body is not None and body.get("message"):
+                said.append(str(body["message"]))
+        # Prefer the answer that explains it over "invalid argument" from a form
+        # of the call this build does not know.
+        for m in said:
+            if re.search(r"no such|does not exist|not found|not locked|not authorized|permission", m, re.I):
+                return {"errorcode": -1, "message": m}
+        return {"errorcode": -1, "message": said[-1] if said else "All unlock attempts failed."}
 
 # ======================================================================================
 # Next-Gen API Client
@@ -620,7 +818,7 @@ class NextGenAPI:
         self.protocol = protocol
         self.base_path = base_path or NEXTGEN_BASE_PATH
         self.base_url = f"{protocol}://{ip}:{port}{self.base_path}"
-        self.session = requests.Session()
+        self.session = _ApplianceSession(f"{ip}:{port}")
         self.session.verify = os.getenv("NEXTGEN_VERIFY_SSL", "0").lower() in ("1", "true", "yes")
         # Appliance management interfaces negotiate legacy ciphers that OpenSSL 3
         # rejects at its default security level. NITRO got this adapter in 1.4.0;
@@ -693,18 +891,64 @@ def _migrate_config(cfg):
         'session_timeout_minutes': cfg.get('session_timeout_minutes', DEFAULT_SESSION_TIMEOUT_MIN),
     }
 
+def _clean_node(node):
+    node = node if isinstance(node, dict) else {}
+    proto = str(node.get('protocol', 'https')).lower()
+    port = _int(node.get('port', 443), 443)
+    return {'ip': str(node.get('ip') or '').strip(), 'username': str(node.get('username') or '').strip(),
+            'password': node.get('password') if isinstance(node.get('password'), str) else '',
+            'port': port if 1 <= port <= 65535 else 443,
+            'protocol': proto if proto in ('http', 'https') else 'https'}
+
+def _sane_config(cfg):
+    """A config whose shape the rest of the code can rely on, whatever was in the
+    file or in a settings copy from a database: only well-formed instances are
+    kept (None if there is not a single one)."""
+    cfg = _migrate_config(cfg)
+    insts, used = [], set()
+    for i, inst in enumerate(cfg.get('instances') or []):
+        if not isinstance(inst, dict) or not isinstance(inst.get('primary'), dict):
+            continue
+        iid = str(inst.get('id') or '').strip() or f"inst-{i + 1}"
+        if iid in used:
+            continue
+        used.add(iid)
+        mode = str(inst.get('mode', 'ha')).lower()
+        mode = mode if mode in VALID_MODES else 'ha'
+        out = {'id': iid, 'name': str(inst.get('name') or '').strip() or f"Instance {i + 1}", 'mode': mode,
+               'primary': _clean_node(inst['primary'])}
+        if mode == 'ha':
+            out['secondary'] = _clean_node(inst.get('secondary'))
+        insts.append(out)
+    if not insts:
+        return None
+    return {'instances': insts,
+            'session_timeout_minutes': min(max(_int(cfg.get('session_timeout_minutes'), DEFAULT_SESSION_TIMEOUT_MIN), 1), 1440)}
+
 def load_nodes_config():
     src = _read_path(NODES_CONFIG_FILE, 'nodes_config.json')
     if os.path.exists(src):
-        with open(src, 'r', encoding='utf-8') as f:
-            return _migrate_config(json.load(f))
+        try:
+            with open(src, 'r', encoding='utf-8') as f:
+                cfg = _sane_config(json.load(f))
+            if cfg is None:
+                raise ValueError('it holds no usable instance')
+            return cfg
+        except Exception as e:
+            # A damaged settings file must not keep the dashboard from starting:
+            # the administrator needs the web UI to put things right. The file is
+            # kept beside the new one for recovery.
+            logger.error(f"The settings file {src} cannot be used ({e}). Starting with no instances; "
+                         f"the file is kept as {src}.corrupt")
+            try: os.replace(src, src + '.corrupt')
+            except OSError: pass
     return _default_config()
 
 NETSCALER_CONFIG = load_nodes_config()
 
 def save_nodes_config(config):
-    config = _migrate_config(config)
-    with open(NODES_CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(config, f, indent=2)
+    config = _sane_config(config) or _default_config()
+    _write_json(NODES_CONFIG_FILE, config, indent=2)
     global NETSCALER_CONFIG
     NETSCALER_CONFIG = config
     db.documents_changed()
@@ -860,13 +1104,13 @@ def _nextgen_probe(cfg):
     return out
 
 def get_nitro(node_key: str, instance_id=None) -> NetScalerAPI:
-    cfg = get_instance(instance_id).get(node_key or 'primary')
-    if not cfg: raise KeyError(f"Unknown node '{node_key}'")
+    cfg = get_instance(instance_id).get(node_key or 'primary') if (node_key or 'primary') in ('primary', 'secondary') else None
+    if not isinstance(cfg, dict): raise KeyError(f"Unknown node '{node_key}'")
     return NetScalerAPI(cfg['ip'], cfg['username'], cfg['password'], cfg['port'], cfg['protocol'])
 
 def get_nextgen(node_key: str, instance_id=None) -> NextGenAPI:
-    cfg = get_instance(instance_id).get(node_key or 'primary')
-    if not cfg: raise KeyError(f"Unknown node '{node_key}'")
+    cfg = get_instance(instance_id).get(node_key or 'primary') if (node_key or 'primary') in ('primary', 'secondary') else None
+    if not isinstance(cfg, dict): raise KeyError(f"Unknown node '{node_key}'")
     return NextGenAPI(cfg['ip'], cfg['username'], cfg['password'], port=_int(os.getenv('NS_PORT_HTTPS', '443'), 443), protocol='https')
 
 # ======================================================================================
@@ -933,11 +1177,23 @@ def _get_ha_data_fast(instance_id=None):
         try:
             nit = get_nitro(nk, instance_id)
             r = nit._get('/config/hanode', custom_timeout=3)
-            if 'hanode' in r: return r
+            if isinstance(r, dict) and isinstance(r.get('hanode'), list):
+                r['hanode'] = [{k: (v if v is None or isinstance(v, (str, int, float, bool)) else str(v))
+                                for k, v in n.items()} for n in r['hanode'] if isinstance(n, dict)]
+                return r
         except Exception: pass
     return {}
 
+_ha_track_lock = threading.Lock()
+
 def track_ha_state_changes(nodes, instance_id=None):
+    # Several browser tabs poll at once: without the lock each of them saw the old
+    # state and recorded the same failover again.
+    with _ha_track_lock:
+        _track_ha_state_changes(nodes, instance_id)
+
+def _track_ha_state_changes(nodes, instance_id=None):
+    inst_key = str(get_instance(instance_id).get('id'))
     last_states = {}
     if os.path.exists(HA_STATE_FILE):
         try:
@@ -954,7 +1210,10 @@ def track_ha_state_changes(nodes, instance_id=None):
         ip = n.get('ipaddress') or n.get('ip') or n.get('nsip') or ''
         role = str(n.get('state') or n.get('hacurstate') or n.get('haStatus') or n.get('status') or '').upper()
         if ip and role:
-            prev = last_states.get(ip)
+            # Kept per instance: two deployments may use the same management
+            # addresses, and their roles must not be compared with each other.
+            key = f"{inst_key}|{ip}"
+            prev = last_states.get(key) or last_states.pop(ip, None)     # second form: files from before 1.16.3
             if prev and prev != role and 'UNKNOWN' not in role:
                 _inst = get_instance(instance_id)
                 evt = {
@@ -969,15 +1228,16 @@ def track_ha_state_changes(nodes, instance_id=None):
                 history.append(evt)
                 new_events.append(evt)
                 changed = True
-            last_states[ip] = role
+            last_states[key] = role
 
     if changed:
         save_failover_history(history)
         try: db.add_failover_events(new_events)
         except Exception as e: logger.warning(f"Could not persist failover events: {e}")
     try:
-        with open(HA_STATE_FILE, 'w', encoding='utf-8') as f: json.dump(last_states, f)
-        if json.dumps(last_states, sort_keys=True) != _states_before: db.documents_changed()
+        if json.dumps(last_states, sort_keys=True) != _states_before:     # only when something changed
+            _write_json(HA_STATE_FILE, last_states)
+            db.documents_changed()
     except Exception: pass
 
 def _roles_from_ha(instance_id=None) -> tuple[dict, dict]:
@@ -1065,6 +1325,13 @@ def login():
         username = request.form.get('username', '').strip()
         password = request.form.get('password', '')
         source = (request.form.get('auth_source') or 'local').strip().lower()
+        addr = request.remote_addr or 'unknown'
+
+        wait = _login_wait(addr)
+        if wait:
+            mins = (wait + 59) // 60
+            flash(f"Too many failed sign-in attempts. Try again in {mins} minute{'' if mins == 1 else 's'}.", 'error')
+            return _login_page(429)
 
         # Honor the chosen authentication source. LDAP only when enabled; local
         # is always available (avoids lockout even if the form says otherwise).
@@ -1080,6 +1347,7 @@ def login():
                 backend = 'local'
 
         if backend:
+            _login_succeeded(addr)
             session['logged_in'] = True
             session['user'] = username
             session['auth_backend'] = backend
@@ -1094,12 +1362,17 @@ def login():
                 save_auth_config(auth_config)
             return redirect(url_for('dashboard'))
 
-        auth_config['login_attempts'] = int(auth_config.get('login_attempts', 0)) + 1
-        save_auth_config(auth_config)
-        flash('Invalid credentials', 'error')
-    return render_template('login.html', ldap_on=ldap_enabled())
+        _login_failed(addr)
+        logger.warning(f"Failed sign-in ({source}) for {username[:64]!r} from {addr}")
+        if source != 'ldap' and auth_config.get('unreadable'):
+            flash('The stored admin login could not be read, so local sign-in is disabled. Reset it from the '
+                  'appliance console ("Reset the web admin password").', 'error')
+        else:
+            flash('Invalid credentials', 'error')
+    return _login_page()
 
-@app.route('/logout', methods=['POST', 'GET'])
+# POST only: a link on another site must not be able to sign the administrator out.
+@app.route('/logout', methods=['POST'])
 @login_required
 def logout():
     session.clear()
@@ -1118,8 +1391,12 @@ def change_password():
         if not verify_password(current_pw, auth_config.get('password_hash')):
             flash('Current password is incorrect', 'error')
             return render_template('change_password.html')
-        if not new_pw or len(new_pw) < 6:
-            flash('Password must be at least 6 characters', 'error')
+        if not new_pw or len(new_pw) < PASSWORD_MIN_LENGTH:
+            flash(f'Password must be at least {PASSWORD_MIN_LENGTH} characters', 'error')
+            return render_template('change_password.html')
+        if (new_pw == current_pw or new_pw == DEFAULT_PASSWORD
+                or new_pw.lower() in (str(auth_config.get('username') or '').lower(), 'password', '12345678')):
+            flash('Choose a new password: not the current one, the default, the user name or an obvious one', 'error')
             return render_template('change_password.html')
         if new_pw != confirm_pw:
             flash('New password and confirmation do not match', 'error')
@@ -1204,10 +1481,14 @@ def _db_documents():
     except Exception: ha = None
     return {
         'nodes': (NETSCALER_CONFIG, os.path.exists(NODES_CONFIG_FILE)),
-        'auth': (dict(auth_config), os.path.exists(AUTH_CONFIG_FILE) and not auth_config.get('is_default_password', False)),
+        'auth': (dict(auth_config), os.path.exists(AUTH_CONFIG_FILE) and bool(auth_config.get('password_hash'))
+                 and not auth_config.get('is_default_password', False) and not auth_config.get('unreadable')),
         'ldap': (dict(LDAP_CFG), os.path.exists(LDAP_CONFIG_FILE)),
         'ha_state': (ha, isinstance(ha, dict) and bool(ha)),
     }
+
+def _detect_all_api_modes_soon():
+    threading.Thread(target=_detect_all_api_modes, name='api-detect-once', daemon=True).start()
 
 def _detect_all_api_modes():
     API_MODE.clear()
@@ -1222,18 +1503,27 @@ def _db_apply_document(name, doc):
     if not isinstance(doc, dict):
         return
     if name == 'nodes':
-        save_nodes_config(doc)
+        cfg = _sane_config(doc)
+        if cfg is None:
+            logger.error("The instances stored in the external database are not usable; this dashboard's own are kept")
+            return
+        save_nodes_config(cfg)
         apply_session_timeout()
-        threading.Thread(target=_detect_all_api_modes, name='api-detect-once', daemon=True).start()
+        _detect_all_api_modes_soon()
     elif name == 'auth' and doc.get('username') and doc.get('password_hash'):
         auth_config.clear()
         auth_config.update(doc)
         save_auth_config(auth_config)
     elif name == 'ldap':
-        with open(LDAP_CONFIG_FILE, 'w', encoding='utf-8') as f: json.dump(doc, f, indent=2)
-        LDAP_CFG = load_ldap_config()
+        # only the keys this dashboard knows, each in a simple type
+        clean = {k: v for k, v in doc.items()
+                 if k in _LDAP_ENV_DEFAULTS and isinstance(v, (str, int, bool)) and len(str(v)) <= 1024}
+        if clean:
+            _write_json(LDAP_CONFIG_FILE, clean, indent=2)
+            LDAP_CFG = load_ldap_config()
     elif name == 'ha_state':
-        with open(HA_STATE_FILE, 'w', encoding='utf-8') as f: json.dump(doc, f)
+        clean = {str(k)[:200]: str(v)[:64] for k, v in doc.items() if isinstance(v, str)}
+        _write_json(HA_STATE_FILE, clean)
 
 db.register_documents(_db_documents, _db_apply_document)
 
@@ -1315,15 +1605,35 @@ def _clean_instance(inst, idx, stored_by_id):
     out = {'id': iid, 'name': name, 'mode': mode}
     for k in node_keys:
         nv = inst.get(k) if isinstance(inst.get(k), dict) else {}
+        where = f"{name}, {k} node"
         proto = str(nv.get('protocol', 'https')).lower()
-        out[k] = {
-            'ip': str(nv.get('ip', '')).strip(),
-            'username': str(nv.get('username', '')).strip(),
-            'port': _int(nv.get('port', 443), 443),
+        ip = str(nv.get('ip', '') or '').strip()
+        if ip and not re.fullmatch(r'[A-Za-z0-9._:\-\[\]]{1,253}', ip):
+            raise ValueError(f"{where}: the address must be a host name or an IP address.")
+        port = _int(nv.get('port', 443), -1)
+        if not 1 <= port <= 65535:
+            raise ValueError(f"{where}: the port must be between 1 and 65535.")
+        pw = nv.get('password')
+        if pw is not None and not isinstance(pw, str):
+            raise ValueError(f"{where}: the password must be text.")
+        node = {
+            'ip': ip,
+            'username': str(nv.get('username', '') or '').strip(),
+            'port': port,
             'protocol': proto if proto in ('http', 'https') else 'https',
-            # Blank password on save keeps the stored one for that node.
-            'password': nv.get('password') or (prev.get(k) or {}).get('password', ''),
         }
+        old = prev.get(k) if isinstance(prev.get(k), dict) else {}
+        if pw:
+            node['password'] = pw
+        elif old.get('password') and all(node[f] == old.get(f) for f in ('ip', 'username', 'port', 'protocol')):
+            node['password'] = old['password']         # blank = keep, for the same node and user only
+        elif old.get('password') and ip:
+            # Keeping it here would send the stored password to an address or
+            # under a user name it was never entered for.
+            raise ValueError(f"{where}: the address, port, protocol or user changed - enter the password again.")
+        else:
+            node['password'] = ''
+        out[k] = node
     return out
 
 @app.route('/api/settings', methods=['GET', 'POST'])
@@ -1342,26 +1652,43 @@ def api_settings():
         st = min(max(st, 1), 1440)
 
         # Accept the new instances array; fall back to migrating a legacy body.
+        # A body that says nothing about instances changes the timeout only.
         incoming = body.get('instances')
+        legacy = any(k in body for k in ('primary', 'secondary', 'mode'))
+        if incoming is None and not legacy:
+            save_nodes_config({'instances': get_instances(), 'session_timeout_minutes': st})
+            apply_session_timeout()
+            return jsonify({"success": True, "message": "Settings updated",
+                            "instances": [{'id': i['id'], 'name': i['name']} for i in get_instances()]})
         if not isinstance(incoming, list):
             incoming = _migrate_config(body).get('instances', [])
 
         stored_by_id = {str(i.get('id')): i for i in get_instances()}
         clean, used = [], set()
-        for idx, inst in enumerate(incoming):
-            if not isinstance(inst, dict):
-                continue
-            ci = _clean_instance(inst, idx, stored_by_id)
-            while ci['id'] in used:            # guarantee unique ids
-                ci['id'] = _new_instance_id()
-            used.add(ci['id'])
-            clean.append(ci)
+        try:
+            for idx, inst in enumerate(incoming):
+                if not isinstance(inst, dict):
+                    continue
+                ci = _clean_instance(inst, idx, stored_by_id)
+                while ci['id'] in used:            # guarantee unique ids
+                    ci['id'] = _new_instance_id()
+                used.add(ci['id'])
+                clean.append(ci)
+        except ValueError as e:
+            return jsonify({"success": False, "error": f"{e} Nothing was changed."}), 400
         if not clean:
-            clean = _default_config()['instances']
+            # An empty list used to replace every configured instance (and its
+            # stored passwords) with one blank default.
+            return jsonify({"success": False, "error": "At least one instance is required. Nothing was changed."}), 400
 
-        save_nodes_config({'instances': clean, 'session_timeout_minutes': st})
+        try:
+            save_nodes_config({'instances': clean, 'session_timeout_minutes': st})
+        except OSError as e:
+            logger.error(f"Settings could not be saved: {e}")
+            return jsonify({"success": False, "error": "The settings could not be written to disk "
+                            f"({e.strerror or e}). Nothing was changed."}), 500
         apply_session_timeout()
-        _detect_all_api_modes()
+        _detect_all_api_modes_soon()       # in the background: a save never waits for unreachable nodes
         return jsonify({"success": True, "message": "Settings updated",
                         "instances": [{'id': i['id'], 'name': i['name']} for i in clean]})
 
@@ -1378,7 +1705,7 @@ def _to_pct(v):
     """Best-effort percentage float from a NITRO stat value."""
     try:
         f = float(str(v).strip())
-        return round(f, 1)
+        return round(f, 1) if f == f and f not in (float('inf'), float('-inf')) else None   # no NaN / inf in JSON
     except Exception:
         return None
 
@@ -1451,11 +1778,21 @@ def _instance_health(inst):
         elif hs.get('severity') == 'bad' or hs.get('forced'):
             warnings.append(f"{who}: {hs.get('label')}")
 
+    role_trouble = False
+    if str(inst.get('mode')) == 'ha' and total == 2 and up == 2:
+        roles = [str(n.get('state') or '').upper() for n in nodes]
+        if all(roles):
+            primaries = sum(1 for r in roles if 'PRIMARY' in r)
+            if primaries > 1:
+                warnings.append("Both nodes report Primary (split brain)"); role_trouble = True
+            elif primaries == 0:
+                warnings.append("Neither node is Primary"); role_trouble = True
+
     if total == 0:
         status = 'unknown'
     elif up == 0:
         status = 'down'
-    elif up < total or any((n.get('ha_status') or {}).get('severity') == 'bad' for n in nodes):
+    elif up < total or role_trouble or any((n.get('ha_status') or {}).get('severity') == 'bad' for n in nodes):
         status = 'degraded'
     else:
         status = 'up'
@@ -1557,17 +1894,22 @@ def api_tls_cert():
     try:
         if key_pem:
             from cert_utils import save_pair
-            save_pair(cert_pem, key_pem)
+            info = save_pair(cert_pem, key_pem)
         else:
             # No key supplied: pair the cert with the key left on disk from a CSR.
             from cert_utils import save_signed_cert
-            save_signed_cert(cert_pem)
+            info = save_signed_cert(cert_pem)
     except ValueError as e:
         return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:
         logger.error(f"TLS cert replace failed: {e}")
         return jsonify({"success": False, "error": "Could not save certificate"}), 500
-    return jsonify({"success": True, "message": "Certificate saved. Restart the dashboard to apply."})
+    logger.info(f"TLS certificate replaced by {session.get('user')!r}: {info.get('subject')}, expires {info.get('expires')}")
+    msg = (f"Certificate saved and in use for new connections now. Valid for: "
+           f"{', '.join(info.get('names') or []) or info.get('subject')}; expires {info.get('expires')}.")
+    if info.get('days_left', 999) <= 30:
+        msg += f" Note: it expires in {info['days_left']} day(s)."
+    return jsonify({"success": True, "message": msg, "certificate": info})
 
 @app.route('/api/tls-ca')
 @login_required
@@ -1590,15 +1932,20 @@ def api_tls_ca():
 def api_tls_csr():
     """Generate a new key + CSR to be signed by your own/corporate CA."""
     body = request.get_json(force=True, silent=True) or {}
-    cn = (body.get('common_name') or '').strip() or None
+    cn, sans = body.get('common_name'), body.get('san')
+    if cn is not None and not isinstance(cn, str) or sans is not None and not isinstance(sans, str):
+        return jsonify({"success": False, "error": "The host name and the alternative names must be text."}), 400
+    cn = (cn or '').strip() or None
     try:
         from cert_utils import generate_csr
-        csr_pem = generate_csr(common_name=cn).decode('utf-8')
+        csr_pem = generate_csr(common_name=cn, extra_san=sans).decode('utf-8')
+    except ValueError as e:
+        return jsonify({"success": False, "error": str(e)}), 400
     except Exception as e:
         logger.error(f"CSR generation failed: {e}")
         return jsonify({"success": False, "error": "Could not generate CSR"}), 500
     return jsonify({"success": True, "csr": csr_pem,
-                    "message": "CSR generated (a new private key was written). Get it signed, then upload the signed certificate below and restart."})
+                    "message": "CSR generated (a new private key was written; an earlier unsigned request is no longer valid). Get it signed, then upload the signed certificate below."})
 
 @app.route('/api/ping')
 @login_required
@@ -1813,7 +2160,8 @@ def _normalize_session(raw, kind):
     """Map a raw NITRO vpn/aaa session dict into the dashboard's shape, including
     a `detail` block (gateway, connection protocol, resource) for the sub-row."""
     s = {str(k).lower(): v for k, v in raw.items()}
-    duration_secs = int(s.get('duration', 0) or 0)
+    try: duration_secs = max(0, int(float(str(s.get('duration') or 0).strip())))
+    except (TypeError, ValueError): duration_secs = 0
     start_dt = datetime.now().timestamp() - duration_secs
     start = datetime.fromtimestamp(start_dt, IL_TZ).strftime('%d/%m/%Y %H:%M:%S')
 
@@ -1826,7 +2174,8 @@ def _normalize_session(raw, kind):
     # Stable identifier so repeated polls of the same session map to one row.
     # NITRO exposes a per-session key; fall back to user+kind when it's absent.
     session_id = _pick(s, ['sessionkey', 'sessionid', 'sid', 'sessguid',
-                           'sessionguid', 'pcbid']) or f"{s.get('username', '')}|{kind}"
+                           'sessionguid', 'pcbid']) or '|'.join(
+                               x for x in (str(s.get('username', '')), kind, str(src_ip or '')) if x)
 
     # Connection class for the main row.
     if kind == 'aaa':
@@ -1902,17 +2251,19 @@ def _ica_gateway_map(nitro):
 # role-based auth). These are not gateway/AAA end-user activity, so they are
 # excluded from the Sessions tab.
 _MGMT_AUDIT_RE = re.compile(
-    r'CMD_EXECUTED|rba\s+authentication|\bSSHD\b|\bADM_User\b|\bnsnetsvc\b'
+    r'CMD_EXECUTED|rba\s+authentication|\bSSHD\b|\bADM_User\b|\bnsnetsvc\b|\bAPPFW\b'
     r'|\bdefault\s+(?:API|CLI|GUI|UI|SYSTEM)\b', re.I)
 
 def _system_usernames(nitro):
     """Management account names, so their login events can be filtered out."""
     try:
         d = nitro._get('/config/systemuser', custom_timeout=4) or {}
-        return {str(u.get('username', '')).strip().lower()
-                for u in (d.get('systemuser') or []) if isinstance(u, dict)}
+        return {'nsroot', 'nsrecover'} | {str(u.get('username', '')).strip().lower()
+                                          for u in (d.get('systemuser') or []) if isinstance(u, dict)}
     except Exception:
-        return set()
+        # The list could not be read (a read-only account, for example): the
+        # built-in management accounts are still never shown.
+        return {'nsroot', 'nsrecover'}
 
 def _audit_failed_locked_rows(nitro):
     """Failed logins / lockouts for **AAA / gateway users**, parsed from the
@@ -1928,13 +2279,16 @@ def _audit_failed_locked_rows(nitro):
             if _MGMT_AUDIT_RE.search(line):
                 continue                      # management plane - not an AAA session
             low = line.lower()
-            is_lock = 'lock' in low and 'user' in low
+            is_lock = bool(re.search(r'lock(?:ed)?\s*out|lockout|account\s+(?:is\s+|has\s+been\s+)?locked|user\s+\S+\s+(?:is\s+)?locked', low))
             is_fail = (('login' in low or 'logon' in low or 'authentic' in low)
                        and ('fail' in low or 'illegal' in low or 'denied' in low or 'invalid' in low))
             if not (is_lock or is_fail):
                 continue
-            m = re.search(r'user[:\s]+"?([A-Za-z0-9._\\@-]+)', line, re.I)
-            user = m.group(1) if m else '—'
+            # "User <name> - Client_ip ..." is the AAA form; the name may contain any
+            # characters. Otherwise the first word after "user".
+            m = (re.search(r'\bUser\s+(\S.*?)\s+-\s+Client_ip\b', line)
+                 or re.search(r'\buser[:\s]+"?([^\s"\',;<>]+)', line, re.I))
+            user = m.group(1).strip()[:120] if m else '—'
             if user.strip().lower() in sys_users:
                 continue                      # a management account, not an AAA user
             ipm = re.search(r'(?:remote_ip|client_ip|clientip|from|source)[:\s"]+([0-9.]+)', line, re.I)
@@ -2006,13 +2360,18 @@ def api_user_sessions():
             vpn_sessions = vpn_resp.get('vpnsession', []) if isinstance(vpn_resp, dict) else []
             aaa_sessions = aaa_resp.get('aaasession', []) if isinstance(aaa_resp, dict) else []
 
+            # One odd row must not cost the whole list (and must not send the poll
+            # to the other node as if this one had not answered).
             for raw_s in vpn_sessions:
-                all_sessions.append(_normalize_session(raw_s, 'vpn'))
+                try: all_sessions.append(_normalize_session(raw_s, 'vpn'))
+                except Exception as e: logger.info(f"Skipped a vpnsession row that could not be read: {e}")
 
             seen_users = {x['user'] for x in all_sessions}
             for raw_s in aaa_sessions:
-                if str(raw_s.get('username')) not in seen_users:
-                    all_sessions.append(_normalize_session(raw_s, 'aaa'))
+                try:
+                    if str(raw_s.get('username')) not in seen_users:
+                        all_sessions.append(_normalize_session(raw_s, 'aaa'))
+                except Exception as e: logger.info(f"Skipped an aaasession row that could not be read: {e}")
             used_node = nk
             break
         except Exception:
@@ -2249,11 +2608,14 @@ def api_unlock_user():
     except KeyError: return jsonify({"success": False, "error": f"Unknown node '{node}'"}), 400
 
     resp = nitro.unlock_user(username)
-    if isinstance(resp, dict) and resp.get("errorcode") in (0, "0", None) and not resp.get("error"):
+    done = isinstance(resp, dict) and resp.get("errorcode") in (0, "0") and not resp.get("error")
+    logger.info(f"Unlock of AAA user {username[:120]!r} on {node} requested by {session.get('user')!r}: "
+                f"{'done' if done else 'failed - ' + str((resp or {}).get('message', ''))[:200]}")
+    if done:
         return jsonify({"success": True, "message": f"User {username} unlocked successfully"})
 
     msg = str((resp or {}).get("message", "Failed to unlock user")).lower()
-    if "does not exist" in msg or "not found" in msg: return jsonify({"success": False, "error": f"User '{username}' doesn't exist on the NetScaler."}), 400
+    if "does not exist" in msg or "not found" in msg or "no such" in msg: return jsonify({"success": False, "error": f"User '{username}' doesn't exist on the NetScaler."}), 400
     elif "not authorized" in msg or "permission" in msg: return jsonify({"success": False, "error": "You don't have permission to unlock user accounts."}), 400
     elif "not locked" in msg: return jsonify({"success": False, "error": f"User '{username}' is not currently locked."}), 400
     return jsonify({"success": False, "error": msg, "raw": resp}), 400
@@ -2265,10 +2627,16 @@ def api_unlock_user():
 appliance.register(app, login_required, DATA_DIR, logger)
 
 @app.errorhandler(404)
-def _404(err): return jsonify({'error': 'Not Found'}) if request.path.startswith('/api/') else render_template('dashboard.html'), 404
+def _404(err):
+    if request.path.startswith('/api/'): return jsonify({'error': 'Not Found'}), 404
+    if not session.get('logged_in'): return redirect(url_for('login'))
+    return render_template('dashboard.html'), 404
 
 @app.errorhandler(500)
-def _500(err): return jsonify({'error': 'Internal Server Error'}) if request.path.startswith('/api/') else render_template('dashboard.html'), 500
+def _500(err):
+    if request.path.startswith('/api/'): return jsonify({'error': 'Internal Server Error'}), 500
+    if not session.get('logged_in'): return 'Internal Server Error', 500
+    return render_template('dashboard.html'), 500
 
 # ======================================================================================
 # Application Startup (Runs on Gunicorn / Flask Dev)
@@ -2288,11 +2656,10 @@ try:
 except Exception as e:
     logger.error(f"History DB init failed: {e}")
 
-for _inst in get_instances():
-    for _nk, _cfg in ((k, v) for k, v in _inst.items() if isinstance(v, dict)):
-        detect_api_mode_for_node(_nk, _cfg, _inst.get('id'))
-
-logger.info(f"API modes at startup: {API_MODE}")
+# Which API each node speaks is found out in the background (NITRO until known).
+# Doing it here made the start wait for every unreachable appliance in turn - long
+# enough, with many of them, for an upgrade's health check to give up.
+_detect_all_api_modes_soon()
 logger.info("========================================")
 logger.info("Starting NetScaler Dashboard (Production Ready via WSGI)")
 logger.info(f"Next-Gen verify SSL: {os.getenv('NEXTGEN_VERIFY_SSL', '0')}")

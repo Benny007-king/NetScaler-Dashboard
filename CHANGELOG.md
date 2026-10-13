@@ -2,9 +2,87 @@
 
 Versioning: **major.minor.patch**, starting at `1.0.0`.
 - **Patch** (small change / fix): bump the last digit — e.g. `1.0.0 → 1.0.1`.
-- **Major** (significant change / new feature): bump the middle digit and reset patch — e.g. `1.0.0 → 1.1.0`.
+- **Minor** (significant change / new feature): bump the middle digit and reset patch — e.g. `1.0.0 → 1.1.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
+
+## 1.16.3
+A release of fixes from a full QA pass (security, robustness, appliance, docs).
+
+**Security**
+- **Upgrade agent (appliance).** The agent runs as root and used to write its
+  status through a file name inside the dashboard's data directory; a link
+  planted there made root overwrite any file on the appliance. It now works from
+  inside the real directory, renames finished files into place and installs from
+  a private copy of the upload.
+- **Script injection.** A virtual server's port and state, and an HA node's
+  state, were written into the page without escaping - a NetScaler object could
+  run script in the administrator's browser. Every value from an appliance is now
+  text. The content security policy no longer allows `eval`.
+- **Credentials stay where they belong.** NITRO / Next-Gen calls never follow a
+  redirect (the credentials would have gone with it). A stored NetScaler or
+  database password is only reused for the address and user it was entered for:
+  changing the address with the password left blank now asks for it again
+  instead of sending it to the new address.
+- **Admin login.** A damaged `auth_config.json` (a crash or a full disk while it
+  was being written) used to reset the login to `admin` / `admin`; now local
+  sign-in stays closed until it is reset on purpose from the console. Five wrong
+  attempts from one address lock that address out for five minutes. Passwords
+  need 8 characters and cannot be the current, default or an obvious one.
+  Logging out needs a POST, so a link elsewhere cannot do it.
+- **LDAP allowed group.** A group given as a full DN means exactly that group;
+  before, any group with the same name in another OU or domain was accepted.
+- **Certificate upload.** An uploaded certificate is loaded with the TLS library
+  before it replaces the working one, so a half-pasted chain or a weak key can no
+  longer take HTTPS down; expired, not-yet-valid and CA certificates are refused,
+  and the previous pair is kept. The console has **New web certificate** as a way
+  back.
+
+**Robustness**
+- **Settings files are written atomically.** A full disk or a power cut can no
+  longer leave an empty file; a damaged `nodes_config.json` no longer stops the
+  dashboard from starting (it is kept as `.corrupt`).
+- **Unreachable NetScalers no longer block the dashboard.** Start-up does not
+  wait for them (40 dead nodes: 5 s instead of over 200 s, which could make an
+  upgrade roll back); a node that stopped answering is left alone for a few
+  seconds; background refreshes do not pile up. Three tabs on a dead HA pair used
+  to make sign-in time out.
+- **Failover history.** One failover is recorded once (it could be recorded five
+  times with several tabs open); state is kept per instance, so two deployments
+  using the same management addresses no longer produce endless false events.
+- **Sessions.** One unreadable row no longer drops the whole list; two sessions
+  of one user without a session key are kept apart; the audit-log parser handles
+  non-ASCII user names, ignores App Firewall lines and never shows `nsroot`.
+- **External database.** A row the server refuses (a NUL byte, for example) is
+  skipped instead of marking the database unreachable for good; history is moved
+  in steps without holding requests up (PostgreSQL: several times faster);
+  settings from another dashboard are validated before use; an older dashboard
+  no longer overwrites settings saved by a newer one; a damaged connection file
+  is reported instead of silently ignored.
+- **Built-in certificate.** It names the appliance's host name and addresses (so
+  the address shown on the console validates once the CA is installed), follows
+  `TLS_SAN` changes, and is renewed before it expires.
+- Bad values in the settings file (text where a number belongs, quotes) no
+  longer stop the start; `GUNICORN_WORKERS` is ignored (more than one worker
+  broke sign-in); an unknown instance or node in a request is an error instead of
+  silently meaning the first one; API calls without a session get 401.
+- **Unlock user** reports success only when the appliance confirms it, shows the
+  appliance's own reason otherwise, and logs who unlocked whom.
+
+**Appliance and release**
+- Console menu: leaves when its input ends (it used to spin), refuses addresses
+  that cannot work (leading zeros, loopback, a gateway outside the subnet) and
+  says when a static address did not take effect.
+- Release workflow: upgrades from the newest *older* release, fails if that
+  cannot be determined, and never publishes from a manual run. The boot test now
+  proves the static-address step and that the OVA manifest covers the disk.
+
+**Known, not changed in this release**
+- The page still needs inline scripts, and loads its styling and chart
+  libraries from public CDNs (a browser without internet access shows it
+  unstyled).
+- A response that trickles in slowly can still hold a request for as long as the
+  appliance keeps sending.
 
 ## 1.16.2
 - **SQL Server is now tested.** The external database feature was run end to end

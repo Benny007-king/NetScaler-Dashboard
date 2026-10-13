@@ -41,17 +41,31 @@ from sqlalchemy.dialects import mysql as _mysql
 logger = logging.getLogger(__name__)
 
 DATA_DIR = os.getenv("DATA_DIR", "data")
+
+
+def _env_int(name, default, minimum=1):
+    """A whole number from the environment; anything unusable (text, quotes left
+    by an env file, a value below the minimum) gives the default instead of
+    stopping the application from starting."""
+    raw = str(os.getenv(name, "") or "").strip().strip('"\'').strip()
+    try:
+        v = int(raw) if raw else default
+    except ValueError:
+        v = default
+    return default if v < minimum else v
+
+
 DB_FILE = os.getenv("DASHBOARD_DB_FILE") or os.path.join(DATA_DIR, "dashboard.db")
 DB_CONFIG_FILE = os.getenv("DB_CONFIG_FILE") or os.path.join(DATA_DIR, "db_config.json")
-RETENTION_DAYS = int(os.getenv("RETENTION_DAYS", "7") or 7)
-RETENTION_INTERVAL_SECS = int(os.getenv("RETENTION_INTERVAL_SECS", "3600") or 3600)
+RETENTION_DAYS = _env_int("RETENTION_DAYS", 7)
+RETENTION_INTERVAL_SECS = _env_int("RETENTION_INTERVAL_SECS", 3600, 10)
 # A session counts as "Active" if it was seen within this window.
-ACTIVE_WINDOW_SECS = int(os.getenv("SESSION_ACTIVE_WINDOW_SECS", "120") or 120)
+ACTIVE_WINDOW_SECS = _env_int("SESSION_ACTIVE_WINDOW_SECS", 120)
 # Tables in an external database carry a prefix: it is somebody else's server and
 # "sessions" is too common a name to claim. The built-in file keeps the old names.
 TABLE_PREFIX = os.getenv("DB_TABLE_PREFIX", "nsd_")
-TIMEOUT_SECS = int(os.getenv("DB_TIMEOUT_SECS", "10") or 10)
-RECHECK_SECS = int(os.getenv("DB_RECHECK_SECS", "20") or 20)
+TIMEOUT_SECS = _env_int("DB_TIMEOUT_SECS", 10)
+RECHECK_SECS = _env_int("DB_RECHECK_SECS", 20)
 
 TYPES = {
     "postgresql": {"label": "PostgreSQL", "driver": "postgresql+pg8000", "port": 5432},
@@ -85,6 +99,10 @@ _ext_up = False
 _ext_error = ""
 _ext_since = 0.0
 _ext_server = ""
+_ext_note = ""                       # something the administrator should know while it is connected
+_ext_counts = None                   # row counts in the external database, refreshed in the background
+_ext_counts_at = 0.0
+_counts_lock = threading.Lock()
 _docs_dirty = False
 _docs_provider = None                # () -> {name: (document, present_locally)}
 _docs_applier = None                 # (name, document) -> None
@@ -161,7 +179,12 @@ class _Backend:
         return self.engine.dialect.name == "sqlite"
 
     def fit(self, table, row: dict) -> dict:
-        """Trim strings to the column widths (SQLite never cared; real servers do)."""
+        """Make a row storable everywhere: no NUL bytes or unpaired surrogates
+        (PostgreSQL refuses the first, every driver chokes on the second), and
+        strings trimmed to the column widths (SQLite never cared; servers do)."""
+        for name, v in row.items():
+            if isinstance(v, str) and _UNSTORABLE.search(v):
+                row[name] = _UNSTORABLE.sub("", v)
         for name, width in self.widths[table.name].items():
             v = row.get(name)
             if v is None:
@@ -171,6 +194,29 @@ class _Backend:
             if len(v) > width:
                 row[name] = v[:width]
         return row
+
+
+_UNSTORABLE = re.compile(r"[\x00\ud800-\udfff]")
+_BATCH = 1000                         # rows per step when history is moved between stores
+
+
+def _is_outage(e: Exception) -> bool:
+    """True when an error means "the database is not reachable", as opposed to
+    "the database refused this statement"."""
+    if isinstance(e, (sa.exc.OperationalError, sa.exc.InterfaceError, sa.exc.TimeoutError,
+                      OSError, TimeoutError, EOFError)):
+        return True
+    return bool(getattr(e, "connection_invalidated", False))
+
+
+def _insert_rows(c, table, rows: list) -> None:
+    """Insert many rows in a few statements. One statement per row costs a round
+    trip each on some drivers - two minutes for 50,000 rows on PostgreSQL."""
+    if not rows:
+        return
+    step = max(1, 900 // max(1, len(rows[0])))        # stays below every backend's parameter limit
+    for i in range(0, len(rows), step):
+        c.execute(sa.insert(table).values(rows[i:i + step]))
 
 
 def _session_key(value) -> str:
@@ -251,21 +297,31 @@ def _add_failover(b: _Backend, rows: list) -> int:
                                      .where(t.c.timestamp.in_(chunk))):
                     have.add((row[0] or "", row[1] or "", row[2] or ""))
             new = [r for r in todo if (r["timestamp"], r["ip"], r["role_change"]) not in have]
-            if new:
-                c.execute(sa.insert(t), new)
+            _insert_rows(c, t, new)
             return len(new)
-    except sa.exc.IntegrityError:
-        # The server compares keys differently than Python does (case, padding)
-        # or another writer got there first. Go row by row and skip what exists.
-        added = 0
-        for r in todo:
-            try:
-                with b.engine.begin() as c:
-                    c.execute(sa.insert(t), [r])
-                added += 1
-            except sa.exc.IntegrityError:
-                pass
-        return added
+    except sa.exc.SQLAlchemyError as e:
+        if _is_outage(e):
+            raise
+    # The server compares keys differently than Python does (case, padding),
+    # another writer got there first, or it refuses one of the rows. Go row by
+    # row: keep what can be stored, skip what exists, drop what it will not take.
+    added, refused, last = 0, 0, None
+    for r in todo:
+        try:
+            with b.engine.begin() as c:
+                c.execute(sa.insert(t), [r])
+            added += 1
+        except sa.exc.IntegrityError:
+            pass
+        except sa.exc.SQLAlchemyError as e:
+            if _is_outage(e):
+                raise
+            refused, last = refused + 1, e
+    if refused:
+        if refused == len(todo):
+            raise last                     # nothing could be written: not a problem with one row
+        logger.warning(f"{refused} failover event(s) were refused by the database and dropped: {_explain(last)}")
+    return added
 
 
 def _get_failover(b: _Backend, days, instance) -> list:
@@ -327,13 +383,26 @@ def _merge_sessions(b: _Backend, rows: list) -> int:
                         have[row.session_id] = row
                 inserts = [r for sid, r in by_id.items() if sid not in have]
                 updates = [_refreshed(have[sid], r) for sid, r in by_id.items() if sid in have]
-                if inserts:
-                    c.execute(sa.insert(t), inserts)
+                _insert_rows(c, t, inserts)
                 if updates:
                     c.execute(_session_refresh(t), updates)
-        except sa.exc.IntegrityError:
+        except sa.exc.SQLAlchemyError as e:
+            if _is_outage(e):
+                raise
+            # A key the server sees differently, or a row it refuses: one by one,
+            # so one bad row does not cost the rest.
+            refused, last = 0, None
             for r in by_id.values():
-                _merge_one_session(b, r)
+                try:
+                    _merge_one_session(b, r)
+                except sa.exc.SQLAlchemyError as e2:
+                    if _is_outage(e2):
+                        raise
+                    refused, last = refused + 1, e2
+            if refused:
+                if refused == len(by_id):
+                    raise last
+                logger.warning(f"{refused} session row(s) were refused by the database and dropped: {_explain(last)}")
         done += len(by_id)
     return done
 
@@ -441,33 +510,44 @@ def _put_docs(b: _Backend, docs: dict, remove=()) -> int:
 
 
 def _get_docs(b: _Backend) -> dict:
+    """The settings documents in a database. Only JSON objects count: anything
+    else in a row (somebody else's data, a damaged value) is treated as absent."""
     out = {}
     with b.engine.connect() as c:
         for name, value in c.execute(sa.select(b.settings.c.name, b.settings.c.value)):
             try:
-                out[name] = json.loads(value) if value else None
+                doc = json.loads(value) if value else None
             except Exception:
-                pass
+                continue
+            if isinstance(doc, dict):
+                out[name] = doc
     return out
 
 
 def _transfer(src: _Backend, dst: _Backend, delete_src: bool) -> dict:
     """Copy all history from one backend into another (existing rows are merged,
-    never duplicated). With delete_src the copied rows are then removed."""
-    with src.engine.connect() as c:
-        fo = [dict(r._mapping) for r in c.execute(sa.select(src.failover))]
-        se = [dict(r._mapping) for r in c.execute(sa.select(src.sessions))]
-    moved = {"failover_events": len(fo), "sessions": len(se)}
-    if fo:
-        _add_failover(dst, fo)
-    if se:
-        _merge_sessions(dst, se)
-    if delete_src and (fo or se):
-        with src.engine.begin() as c:
-            if fo:
-                c.execute(sa.delete(src.failover).where(src.failover.c.id <= max(r["id"] for r in fo)))
-            if se:
-                c.execute(sa.delete(src.sessions).where(src.sessions.c.id <= max(r["id"] for r in se)))
+    never duplicated). With delete_src the copied rows are then removed.
+
+    It works in steps of _BATCH rows and takes the write lock for one step at a
+    time, so requests that record history wait for a step, not for the whole move."""
+    moved = {"failover_events": 0, "sessions": 0}
+    for table, key, put in ((src.failover, "failover_events", _add_failover),
+                            (src.sessions, "sessions", _merge_sessions)):
+        last = 0
+        while True:
+            with _write_lock:
+                with src.engine.connect() as c:
+                    rows = [dict(r._mapping) for r in c.execute(
+                        sa.select(table).where(table.c.id > last).order_by(table.c.id).limit(_BATCH))]
+                if not rows:
+                    break
+                put(dst, rows)
+                last = rows[-1]["id"]
+                if delete_src:
+                    with src.engine.begin() as c:
+                        c.execute(sa.delete(table).where(table.c.id <= last))
+                moved[key] += len(rows)
+            time.sleep(0.01)               # let a waiting request take the lock between steps
     return moved
 
 
@@ -504,6 +584,9 @@ def _normalise_url(text):
         raise ValueError("Unsupported database type in the URL. Use postgresql://, mysql://, mariadb:// or mssql://.")
     if not url.host or not url.database:
         raise ValueError("The URL needs a server and a database name.")
+    if "@" in url.host:
+        raise ValueError("The password in the URL contains an @: write it as %40 "
+                         "(and other special characters percent-encoded too).")
     return url.set(drivername=TYPES[kind]["driver"]), kind
 
 
@@ -553,13 +636,30 @@ def _make_backend(cfg: dict) -> _Backend:
         args["encryption"] = "require" if tls == "on" else "off"
     engine = sa.create_engine(url, connect_args=args, pool_pre_ping=True, pool_recycle=1800,
                               pool_size=4, max_overflow=4, pool_timeout=TIMEOUT_SECS)
+    if kind == "mysql":
+        @sa.event.listens_for(engine, "do_connect")
+        def _login_again(dialect, _record, cargs, cparams):
+            # The first password login to MySQL 8 after its restart, without TLS,
+            # fails inside PyMySQL ('NoneType' has no attribute ...); the second
+            # one works. Without this every MySQL restart costs a failed attempt.
+            try:
+                return dialect.loaded_dbapi.connect(*cargs, **cparams)
+            except AttributeError:
+                return dialect.loaded_dbapi.connect(*cargs, **cparams)
     return _Backend(engine, TABLE_PREFIX, TYPES[kind]["label"])
 
 
 def _server_name(b: _Backend) -> str:
     """Connects, and names the server it reached (e.g. "PostgreSQL 16.4")."""
-    with b.engine.connect() as c:
-        c.execute(sa.select(sa.literal(1)))
+    for attempt in (1, 2):
+        try:
+            with b.engine.connect() as c:
+                c.execute(sa.select(sa.literal(1)))
+            break
+        except AttributeError:            # PyMySQL, first caching_sha2 login without TLS
+            if attempt == 2:
+                raise
+            b.engine.dispose()
     d = b.engine.dialect
     name = {"postgresql": "PostgreSQL", "mssql": "Microsoft SQL Server"}.get(d.name)
     if not name:
@@ -617,8 +717,14 @@ def clean_config(raw: dict, stored=None) -> dict:
         if not text:
             raise ValueError("Enter the connection URL.")
         url, _ = _normalise_url(text)
-        if url.password in (None, "", "***") and stored and stored.get("type") == "url":
-            url = url.set(password=_normalise_url(stored["url"])[0].password)
+        if url.password in (None, "", "***"):
+            old = _normalise_url(stored["url"])[0] if stored and stored.get("type") == "url" else None
+            # The stored password is reused only for the server and user it was
+            # entered for - otherwise it could be sent to any address at all.
+            if old is not None and (old.host, old.port, old.username) == (url.host, url.port, url.username):
+                url = url.set(password=old.password)
+            elif url.password == "***" or old is not None:
+                raise ValueError("The server or the user changed - enter the password again.")
         return {"type": "url", "url": url.render_as_string(hide_password=False), "tls": tls, "ca_pem": ca_pem}
     if kind not in TYPES:
         raise ValueError("Choose a database type.")
@@ -638,8 +744,14 @@ def clean_config(raw: dict, stored=None) -> dict:
     if not 1 <= port <= 65535:
         raise ValueError("The port must be between 1 and 65535.")
     password = raw.get("password") or ""
-    if not password and stored and stored.get("type") == kind:
-        password = stored.get("password") or ""
+    if not isinstance(password, str):
+        raise ValueError("The password must be text.")
+    if not password and stored and stored.get("type") == kind and stored.get("password"):
+        # Reused only for the server and user it was entered for - otherwise a
+        # test against another address would hand the stored password to it.
+        if (stored.get("host"), int(stored.get("port") or 0), stored.get("username")) != (host, port, username):
+            raise ValueError("The server, port or user changed - enter the password again.")
+        password = stored["password"]
     return {"type": kind, "host": host, "port": port, "database": database,
             "username": username, "password": str(password), "tls": tls, "ca_pem": ca_pem}
 
@@ -666,14 +778,23 @@ def _env_config():
 
 
 def _load_config():
+    global _ext_error
     env = _env_config()
     if env:
         return env
     try:
         with open(DB_CONFIG_FILE, encoding="utf-8") as f:
             cfg = json.load(f)
-        return cfg if isinstance(cfg, dict) and cfg.get("type") else None
-    except (OSError, ValueError):
+        if isinstance(cfg, dict) and cfg.get("type"):
+            return cfg
+        raise ValueError("it does not describe a connection")
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as e:
+        # Not silently: otherwise history quietly goes to the built-in store and
+        # nobody knows the external database is no longer in use.
+        _ext_error = "The saved database connection could not be read - set it up again in Settings."
+        logger.error(f"{DB_CONFIG_FILE} cannot be used ({e}); the external database is NOT in use")
         return None
 
 
@@ -688,6 +809,11 @@ def _save_config(cfg) -> None:
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as f:
         json.dump(cfg, f, indent=2)
+        f.flush()
+        try:
+            os.fsync(f.fileno())
+        except OSError:
+            pass
     os.replace(tmp, DB_CONFIG_FILE)
 
 
@@ -717,12 +843,15 @@ def _mark_up(server: str) -> None:
 
 def _run(fn, *args):
     """Run a history operation on the external database, or on the built-in one
-    when there is none or it is not answering."""
+    when there is none or it is not usable."""
     ext = _ext
     if ext is not None and _ext_up:
         try:
             return fn(ext, *args)
-        except Exception as e:                        # any failure means "not usable right now"
+        except Exception as e:
+            # Unreachable, or refusing everything (a dropped table, a revoked
+            # right): either way history goes to the built-in store until it works
+            # again. A single bad row never gets here - the write functions skip it.
             _mark_down(e)
     return fn(_local, *args)
 
@@ -737,22 +866,36 @@ def _sync_docs(b: _Backend, mode: str = "auto") -> None:
                 console must not be undone by the copy in the database.
       local     this dashboard wins: write what it has, remove the rest
       database  the database wins: take every document it holds
+
+    Settings saved by a newer dashboard are left completely alone unless the
+    administrator explicitly chose "local": an older dashboard neither loads them
+    nor overwrites them.
     """
+    global _ext_note
     provider, applier = _docs_provider, _docs_applier
     if provider is None:
         return
     local = provider()
     remote = _get_docs(b)
     meta = remote.get(_META) or {}
-    too_new = _schema_of(meta) > _SCHEMA_VERSION
-    if too_new and mode == "database":
-        raise ValueError("These settings were saved by a newer dashboard (%s). Upgrade this dashboard before "
-                         "loading them." % (meta.get("app_version") or "unknown version"))
+    if _schema_of(meta) > _SCHEMA_VERSION:
+        newer = meta.get("app_version") or "unknown version"
+        if mode == "database":
+            raise ValueError("These settings were saved by a newer dashboard (%s). Upgrade this dashboard before "
+                             "loading them." % newer)
+        if mode == "auto":
+            note = ("The settings stored in the database were saved by a newer dashboard (%s). This dashboard "
+                    "leaves them alone and does not store its own there - upgrade it." % newer)
+            if _ext_note != note:
+                logger.warning(note)
+            _ext_note = note
+            return
+    _ext_note = ""
     push, remove = {}, []
     for name in DOC_NAMES:
         doc, present = local.get(name, (None, False))
         in_db = remote.get(name)
-        take = in_db is not None and applier is not None and not too_new and (
+        take = in_db is not None and applier is not None and (
             mode == "database" or (mode == "auto" and not present and name != "auth"))
         if take:
             if in_db != doc:
@@ -773,10 +916,21 @@ def _schema_of(meta) -> int:
         return 1
 
 
+def _refresh_counts(b=None) -> None:
+    """Row counts for Settings, looked up here in the background so that no web
+    request has to wait for the database."""
+    global _ext_counts, _ext_counts_at
+    b = b or _ext
+    if b is None:
+        _ext_counts = None
+        return
+    _ext_counts, _ext_counts_at = _counts(b), time.time()
+
+
 def _recover() -> bool:
     """Called while the external database is marked down: if it answers, move the
     history collected meanwhile into it and resume."""
-    global _ext_error, _docs_dirty
+    global _ext_error, _docs_dirty, _ext_note
     with _state_lock:
         ext = _ext
         if ext is None or _ext_up:
@@ -785,22 +939,32 @@ def _recover() -> bool:
             server = _server_name(ext)
             _init(ext)
             _docs_dirty = False
-            _sync_docs(ext, "auto")
+            try:
+                _sync_docs(ext, "auto")
+            except Exception as e:
+                if _is_outage(e):
+                    raise
+                # trouble with the settings copy must not keep history out of the database
+                _ext_note = "The settings copy in the database could not be updated: " + _explain(e)
+                logger.warning(_ext_note)
+            moved = _transfer(_local, ext, delete_src=True)       # in steps; new history keeps going to the spool
             with _write_lock:
-                moved = _transfer(_local, ext, delete_src=True)
+                more = _transfer(_local, ext, delete_src=True)    # what arrived meanwhile
                 _mark_up(server)
+            _refresh_counts(ext)
         except Exception as e:
             _ext_error = _explain(e)
             return False
-    if moved["sessions"] or moved["failover_events"]:
-        logger.info(f"Moved {moved['sessions']} session(s) and {moved['failover_events']} failover event(s) "
+    n_se, n_fo = moved["sessions"] + more["sessions"], moved["failover_events"] + more["failover_events"]
+    if n_se or n_fo:
+        logger.info(f"Moved {n_se} session(s) and {n_fo} failover event(s) "
                     f"from the built-in store into the external database")
     logger.info(f"External database connected: {server}")
     return True
 
 
 def _sync_loop() -> None:
-    global _docs_dirty
+    global _docs_dirty, _ext_note
     while True:
         _wake.wait(RECHECK_SECS)
         _wake.clear()
@@ -814,12 +978,23 @@ def _sync_loop() -> None:
             try:
                 with ext.engine.connect() as c:       # notice an outage even without traffic
                     c.execute(sa.select(sa.literal(1)))
-                if _docs_dirty:
-                    _docs_dirty = False
-                    _sync_docs(ext, "auto")
+                _refresh_counts(ext)
             except Exception as e:
-                _docs_dirty = True
                 _mark_down(e)
+                continue
+            if _docs_dirty:
+                _docs_dirty = False
+                try:
+                    _sync_docs(ext, "auto")
+                except Exception as e:
+                    if _is_outage(e):
+                        _docs_dirty = True
+                        _mark_down(e)
+                    else:
+                        # A problem with the settings copy is not an outage: history
+                        # keeps going to the database, and Settings shows the note.
+                        _ext_note = "The settings copy in the database could not be updated: " + _explain(e)
+                        logger.warning(_ext_note)
         except Exception as e:
             logger.warning(f"Database sync pass failed: {e}")
 
@@ -899,7 +1074,8 @@ def test_config(cfg: dict) -> dict:
             "server": server,
             "existing": {
                 "settings": any(docs.get(n) is not None for n in ("nodes", "auth", "ldap")),
-                "instances": [str(i.get("name") or i.get("id")) for i in (nodes.get("instances") or [])
+                "instances": [str(i.get("name") or i.get("id"))
+                              for i in (nodes.get("instances") if isinstance(nodes.get("instances"), list) else [])
                               if isinstance(i, dict)][:20],
                 "saved_by": meta.get("saved_by"), "saved_at": meta.get("saved_at"),
                 "saved_version": meta.get("app_version"), "newer": _schema_of(meta) > _SCHEMA_VERSION,
@@ -917,7 +1093,7 @@ def connect_external(cfg: dict, settings_from: str = "local") -> dict:
     to settings the database already holds: "local" replaces them with this
     dashboard's, "database" replaces this dashboard's settings with them.
     """
-    global _ext, _ext_cfg, _docs_dirty
+    global _ext, _ext_cfg, _docs_dirty, _ext_note
     if _env_config():
         raise ValueError("The database is set by the DATABASE_URL environment variable and cannot be changed here.")
     new = _make_backend(cfg)
@@ -927,12 +1103,19 @@ def connect_external(cfg: dict, settings_from: str = "local") -> dict:
         with _state_lock:
             _sync_docs(new, "database" if settings_from == "database" else "local")
             old = _ext
+            moved = _transfer(_local, new, delete_src=True)       # in steps, without holding requests up
             with _write_lock:
-                moved = _transfer(_local, new, delete_src=True)
+                more = _transfer(_local, new, delete_src=True)    # what arrived meanwhile
                 _ext, _ext_cfg = new, cfg
                 _mark_up(server)
-            _docs_dirty = False
+            for k in moved:
+                moved[k] += more[k]
+            _docs_dirty, _ext_note = False, ""
             _save_config(cfg)
+            try:
+                _refresh_counts(new)
+            except Exception:
+                pass
     except Exception:
         if _ext is not new:
             new.engine.dispose()
@@ -947,7 +1130,7 @@ def connect_external(cfg: dict, settings_from: str = "local") -> dict:
 def disconnect_external() -> dict:
     """Go back to the built-in store. History is copied back when the external
     database is reachable; the external database itself is left as it is."""
-    global _ext, _ext_cfg, _ext_up, _ext_error, _ext_server
+    global _ext, _ext_cfg, _ext_up, _ext_error, _ext_server, _ext_note, _ext_counts
     if _env_config():
         raise ValueError("The database is set by the DATABASE_URL environment variable and cannot be changed here.")
     with _state_lock:
@@ -955,22 +1138,25 @@ def disconnect_external() -> dict:
         if old is None:
             return {"copied": None, "reachable": None}
         copied, reachable = None, _ext_up
-        with _write_lock:
-            if _ext_up:
-                try:
-                    copied = _transfer(old, _local, delete_src=False)
-                except Exception as e:
-                    reachable = False
-                    logger.warning("History could not be copied back from the external database: " + _explain(e))
+        with _write_lock:                  # from here on new history goes to the built-in store
             _ext, _ext_cfg, _ext_up, _ext_error, _ext_server = None, None, False, "", ""
+            _ext_note, _ext_counts = "", None
         _save_config(None)
+        if reachable:
+            try:
+                copied = _transfer(old, _local, delete_src=False)
+            except Exception as e:
+                reachable = False
+                logger.warning("History could not be copied back from the external database: " + _explain(e))
         old.engine.dispose()
     logger.info("External database disconnected; using the built-in store")
     return {"copied": copied, "reachable": reachable}
 
 
 def status() -> dict:
-    """What Settings -> Database shows."""
+    """What Settings -> Database shows. It never waits for the external database:
+    its row counts come from the background loop (at most one request refreshes
+    them when they are a few seconds old)."""
     ext = _ext
     out = {
         "types": [{"id": k, "label": v["label"], "port": v["port"]} for k, v in TYPES.items()],
@@ -981,20 +1167,28 @@ def status() -> dict:
         "connected": bool(ext is not None and _ext_up),
         "server": _ext_server,
         "error": _ext_error,
+        "note": _ext_note,
         "since": datetime.fromtimestamp(_ext_since).astimezone().isoformat(timespec="seconds") if _ext_since else None,
         "counts": None, "waiting": None,
     }
     try:
         if ext is None:
             out["counts"] = _counts(_local)
-        else:
-            out["waiting"] = _counts(_local)          # collected here, not in the database yet
-            if _ext_up:
-                out["counts"] = _counts(ext)
+            return out
+        out["waiting"] = _counts(_local)              # collected here, not in the database yet
     except Exception as e:
-        if ext is not None:
-            _mark_down(e)
-            out["connected"], out["error"] = False, _ext_error
+        logger.warning(f"Built-in store could not be read: {e}")
+    if ext is not None and _ext_up:
+        if time.time() - _ext_counts_at > 3 and _counts_lock.acquire(blocking=False):
+            try:
+                _refresh_counts(ext)
+            except Exception as e:
+                _mark_down(e)
+                out["connected"], out["error"] = False, _ext_error
+            finally:
+                _counts_lock.release()
+        if out["connected"]:
+            out["counts"] = _ext_counts
     return out
 
 

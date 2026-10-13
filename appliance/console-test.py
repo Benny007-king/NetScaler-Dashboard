@@ -92,6 +92,15 @@ def main(sock_path, base):
     c.send(DNS); c.expect(r"Address is now: %s/24" % here, 180)
     c.send(); c.expect(r"%s/24\s+\(static\)" % here)
     c.expect(r"q\) Log out")
+    # The static address equals the one DHCP hands out here, so the screen alone
+    # cannot tell whether the setting took effect. Ask the network service which
+    # configuration file the interface is running on.
+    c.send("s"); c.expect(r"exit' to return")
+    c.send("networkctl status $(ls /sys/class/net | grep -E '^(en|eth)' | head -n 1) | grep -c 10-ns-static.network; echo NETFILE-DONE")
+    out = c.expect(r"\n(\d+)\nNETFILE-DONE", 60)
+    if not re.search(r"\n[1-9]\d*\nNETFILE-DONE", out):
+        sys.exit("   FAIL  the interface is not running on the static configuration file")
+    c.send("exit"); c.expect(r"q\) Log out")
     if not dashboard_version(base):
         sys.exit("   FAIL  the dashboard stopped answering after the static address was set")
     passed("a bad address is refused; a static address is applied and the dashboard stays reachable")

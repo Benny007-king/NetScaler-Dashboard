@@ -37,7 +37,7 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 - **Authentication**: local admin account and/or **LDAP/Active Directory** (`AUTH_BACKENDS=local,ldap`), with optional allowed-group enforcement.
 - **Applications / Services**: shows Next-Gen Applications when a node has them, and falls back to classic **LB vServers** otherwise; **Services and Service Groups** are listed with their real runtime state (`UP` / `DOWN` / `OUT OF SERVICE` / `PARTIAL-UP`) and bound-member counts.
 - **Tabs follow the live primary**: Applications, Failover, Sessions, Certificates and Unlock User open on the node currently holding the PRIMARY role, so they track a failover automatically.
-- **Failover History & User Sessions**: date-range filters with a pop-up picker; **Excel/PDF** export (client-side). Sessions cover both **Gateway/AAA** deployments and **LB-only** appliances: the tab is **AAA/gateway only** (management/admin logins are excluded, both by audit-plane and by system-user name) and alongside real VPN/AAA sessions it surfaces **failed login attempts** (status `Failed`, attempt time, source IP) and **locked accounts** (status `Locked`) — parsed from the appliance **audit log** for management accounts and from `aaauser` for Gateway ones — and resolves the **gateway name** from live ICA connections. Failed/Locked rows are **persisted** in the history DB (they don't vanish when the audit line scrolls out). `GET /api/session-debug` dumps per-node reachability/hostname plus the raw (redacted) NITRO session/user/audit fields to tune mapping across builds.
+- **Failover History & User Sessions**: date-range filters with a pop-up picker; **Excel/PDF** export (client-side). Sessions cover both **Gateway/AAA** deployments and **LB-only** appliances: the tab is **AAA/gateway only** (management/admin logins are excluded, both by audit-plane and by system-user name) and alongside real VPN/AAA sessions it surfaces **failed login attempts** (status `Failed`, attempt time, source IP) and **locked accounts** (status `Locked`) — parsed from the appliance **audit log** (AAA / gateway users only) and from `aaauser` — and resolves the **gateway name** from live ICA connections. Failed/Locked rows are **persisted** in the history DB (they don't vanish when the audit line scrolls out). `GET /api/session-debug` dumps per-node reachability/hostname plus the raw (redacted) NITRO session/user/audit fields to tune mapping across builds.
 - **Unlock Users**: unlock a locked AAA user (NITRO, with automatic `?action=unlock` fallback).
 - **External database (optional)**: keep session and failover history, plus a copy of the settings, in your own **PostgreSQL, MySQL / MariaDB or Microsoft SQL Server** — set up in **Settings → Database**. The dashboard keeps working when that database is unreachable and catches up by itself when it returns.
 
@@ -74,8 +74,8 @@ netscaler-dashboard/
 ```
 
 Runtime files that are **gitignored** (contain secrets/state, created at runtime):
-`nodes_config.json`, `auth_config.json`, `ha_last_state.json`, `failover_history.json`,
-`.env`, `.app_secret`, `certs/`, `*.log`.
+`nodes_config.json`, `auth_config.json`, `ldap_config.json`, `db_config.json`, `ha_last_state.json`,
+`failover_history.json`, `dashboard.db`, `.env`, `.app_secret`, `certs/`, `*.log`.
 
 ---
 
@@ -160,8 +160,10 @@ A **retention pass runs at startup and hourly**, deleting anything older than **
 Inspect it any time:
 
 ```bash
-curl -k https://<host>/api/history-stats     # size, row counts, oldest data, retention window
+curl -k -b cookies.txt https://<host>/api/history-stats     # size, row counts, oldest data, retention window
 ```
+
+Every `/api/...` endpoint needs a signed-in session (an unauthenticated call gets `401`); only `/healthz` is open.
 
 Tune with `RETENTION_DAYS`, `RETENTION_INTERVAL_SECS`, `DASHBOARD_DB_FILE` (see `.env.example`). The DB is gitignored.
 
@@ -248,7 +250,6 @@ preflight.bat             :: Windows
 ```
 
 It installs nothing and changes nothing; it exits non-zero if a required dependency is missing.
-Per-OS download links are also on the [documentation site](https://net-scaler-dashboard-web.vercel.app/docs.html#deps).
 
 ### Docker (recommended)
 
@@ -308,9 +309,11 @@ python app.py            # serves HTTPS on :443 by default
 
 On first boot the app generates a **local CA** (`certs/ca.crt` / `certs/ca.key`) and issues a server cert signed by it. Three ways to get trusted HTTPS, all under **Settings → TLS Certificate**:
 
-1. **Install the local CA** — click *Download CA Certificate* and add it to each client's trust store (Windows: *Trusted Root Certification Authorities*; browsers may have their own store). The default server cert then validates cleanly. Add extra hostnames/IPs to the cert via `TLS_SAN`.
-2. **Upload your own** cert + key (PEM), then restart.
-3. **Generate a CSR** — click *Generate CSR*, have it signed by your corporate CA, then upload the signed certificate (leave the key field blank — the matching key stays on disk). Restart to apply.
+1. **Install the local CA** — click *Download CA Certificate* and add it to each client's trust store (Windows: *Trusted Root Certification Authorities*; browsers may have their own store). The built-in certificate names this host: its host name and every address it has (so the address shown on the appliance console validates), plus anything in `TLS_SAN`. It is issued again by itself at the next start when those change, and before it expires.
+2. **Upload your own** cert + key (PEM). It is checked first — a pair the server could not actually serve (half-pasted chain, weak key, expired, a CA certificate) is refused — and then used for new connections straight away; the previous pair is kept as `*.prev`.
+3. **Generate a CSR** — enter the host name (and any extra names), click *Generate CSR*, have it signed by your corporate CA, then upload the signed certificate (leave the key field blank — the matching key stays on disk).
+
+If HTTPS ever stops working, the appliance console has **New web certificate**, which goes back to a fresh certificate from the local CA.
 
 ## Running behind a reverse proxy
 
@@ -320,7 +323,7 @@ On first boot the app generates a **local CA** (`certs/ca.crt` / `certs/ca.key`)
 docker compose -f docker-compose.yml -f deploy/docker-compose.proxy.yml up -d --build
 ```
 
-This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it honors `X-Forwarded-Proto` for secure cookies/redirects) and publishes 443/80 from nginx. `gunicorn.conf.py` binds plain HTTP when `APP_SSL=0`, so nginx alone terminates TLS. Put a cert/key in `./certs` (a prior default run generates one, or drop your own).
+This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it honors `X-Forwarded-Proto` for redirects, and marks the session cookie `Secure`) and publishes 443/80 from nginx. `gunicorn.conf.py` binds plain HTTP when `APP_SSL=0`, so nginx alone terminates TLS. Put a cert/key in `./certs` (a prior default run generates one, or drop your own).
 
 ## Versioning
 
@@ -330,7 +333,11 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 
 - HTTPS-only on 443; CA-signed cert out of the box, replaceable from Settings.
 - Response headers: HSTS (on HTTPS), CSP (scoped to the CDNs used), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `Permissions-Policy`.
-- Secrets live in gitignored files (`nodes_config.json`, `.env`, `.app_secret`, `certs/`); never commit them.
+- Secrets live in gitignored files (`nodes_config.json`, `ldap_config.json`, `db_config.json`, `auth_config.json`, `.env`, `.app_secret`, `certs/`); never commit them.
+- Sign-in: the admin password is at least 8 characters and stored as a salted hash; five wrong attempts from one address lock that address out for five minutes (`LOGIN_MAX_FAILURES`, `LOGIN_LOCKOUT_SECS`). A damaged login file closes local sign-in instead of falling back to the default password — reset it from the appliance console.
+- NetScaler credentials are only ever sent to the configured node: redirects are not followed, and a stored password is not reused when a node's address or user is changed.
+- The upgrade agent on the appliance (root) never writes through a name inside the dashboard's data directory and works on a private copy of the uploaded file.
+- The Content-Security-Policy still allows inline scripts (the UI uses inline handlers) and the UI loads its styling and chart libraries from public CDNs — see *Third-party components*.
 - The local admin password is stored as a salted, deliberately slow hash (scrypt via Werkzeug; PBKDF2-SHA256 if scrypt is unavailable) and checked in constant time. Hashes from 1.16.0 and earlier are upgraded on the next sign-in.
 - Session cookies are HttpOnly + SameSite=Lax + Secure. The session secret is random and persisted to `.app_secret`.
 - Restrict access to NetScaler management networks (firewall / allowlist).
@@ -347,6 +354,14 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 
 ---
 
+## Third-party components
+
+The appliance image contains Debian, Docker and the Python packages in `requirements.txt` (Flask, SQLAlchemy, requests, cryptography, ldap3, gunicorn, pg8000, PyMySQL, and pymssql with its bundled FreeTDS), each under its own licence. The disk image is written with VMware's open-vmdk.
+
+The web UI loads these from public CDNs in the administrator's browser: Tailwind CSS (cdn.tailwindcss.com), Chart.js (cdn.jsdelivr.net), SheetJS and jsPDF with AutoTable (cdnjs.cloudflare.com) and Google Fonts. **A browser without internet access shows the dashboard unstyled and without charts or Excel/PDF export.**
+
+NetScaler and Citrix are trademarks of Cloud Software Group, Inc. This is an independent project; it is not affiliated with, endorsed by or supported by Cloud Software Group.
+
 ## License
 
-Private / Internal. All rights reserved by the repository owner.
+MIT — see [LICENSE](LICENSE).

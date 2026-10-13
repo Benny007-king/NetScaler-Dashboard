@@ -124,7 +124,7 @@ netstat -ano -p tcp 2>nul | findstr /r /c:":%~1 .*LISTENING" >nul 2>&1
 if errorlevel 1 (
   echo   [ OK ] Port %~1 - free
 ) else (
-  echo   [WARN] Port %~1 - already in use, free it or change APP_PORT in .env
+  echo   [WARN] Port %~1 - already in use, free it or set HOST_PORT in .env to publish on another port
   set /a WARN+=1
 )
 exit /b 0

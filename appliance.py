@@ -91,7 +91,7 @@ def inspect_bundle(path: str) -> dict:
         if manifest.get("format") != BUNDLE_FORMAT:
             raise BundleError("This upgrade file uses a format this version cannot install. "
                               "Upgrade to an intermediate release first.")
-        if not _VERSION.match(str(manifest.get("version", ""))):
+        if not _VERSION.fullmatch(str(manifest.get("version", ""))):      # fullmatch: no trailing newline
             raise BundleError("The upgrade file does not state a valid version.")
 
         parts = [manifest.get("image")] + ([manifest["host"]] if manifest.get("host") else [])
@@ -99,7 +99,7 @@ def inspect_bundle(path: str) -> dict:
             if not isinstance(part, dict):
                 raise BundleError("The upgrade file's manifest is incomplete.")
             name, want = str(part.get("file", "")), str(part.get("sha256", "")).lower()
-            if not _SAFE_NAME.match(name) or name not in members:
+            if not _SAFE_NAME.fullmatch(name) or name not in members:
                 raise BundleError("The upgrade file is missing a component - please download it again.")
             if _sha256_of(tar.extractfile(members[name])) != want:
                 raise BundleError("The upgrade file is corrupted (checksum mismatch) - please download it again.")

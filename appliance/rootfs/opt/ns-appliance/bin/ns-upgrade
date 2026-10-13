@@ -10,16 +10,23 @@
 #                                                           \-> roll back on failure
 #
 # Progress is written to status.json, which the dashboard reads back for the UI.
+#
+# The data directory is written by the dashboard container, so every name in it
+# may have been replaced by a link to somewhere else on this host. The agent
+# therefore steps into the real upgrade directory once and uses names relative to
+# it (a link swapped in for the directory later is not followed), never writes
+# through a name the container controls (files are finished in a root-only
+# directory and renamed into place), and works on a private copy of the bundle.
 set -uo pipefail
 
 NAME=netscaler-dashboard
 PRODUCT=netscaler-dashboard
 DATA=/var/lib/ns-dashboard/data
 UP=$DATA/upgrade
-BUNDLE=$UP/incoming.nsu
-REQUEST=$UP/request
-STATUS=$UP/status.json
-WORK=/var/lib/ns-dashboard/upgrade-work
+WORK=/var/lib/ns-dashboard/upgrade-work       # root only; same filesystem as $UP
+STAGE=/var/lib/ns-dashboard/upgrade-stage     # root only; status files are written here first
+BUNDLE=$WORK/bundle.nsu                       # the private copy of incoming.nsu
+IN_UP=0                                       # 1 once the working directory is the real $UP
 ENV_FILE=/etc/ns-appliance/dashboard.env
 HEALTH_TIMEOUT=150
 
@@ -28,16 +35,32 @@ TO=""
 
 log() { echo "ns-upgrade: $*"; }
 
-status() {   # status <state> <message>
-  local tmp="$STATUS.tmp"
-  mkdir -p "$UP"
-  jq -n --arg s "$1" --arg m "$2" --arg f "$FROM" --arg t "$TO" \
-        --arg u "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-        '{state:$s, message:$m, from:$f, to:$t, updated:$u}' > "$tmp" && mv -f "$tmp" "$STATUS"
-  log "[$1] $2"
+enter_upgrade_dir() {   # make the real upgrade directory the working directory
+  [ -d "$UP" ] && [ ! -L "$UP" ] && cd "$UP" 2>/dev/null && [ "$(pwd -P)" = "$UP" ] && IN_UP=1
 }
 
-cleanup() { rm -rf "$WORK" "$BUNDLE" "$BUNDLE.part"; }
+status() {   # status <state> <message>
+  log "[$1] $2"
+  [ "$IN_UP" = 1 ] || return 0
+  local tmp
+  mkdir -p "$STAGE" && chmod 700 "$STAGE" && tmp=$(mktemp "$STAGE/status.XXXXXX") || return 0
+  if jq -n --arg s "$1" --arg m "$2" --arg f "$FROM" --arg t "$TO" \
+        --arg u "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+        '{state:$s, message:$m, from:$f, to:$t, updated:$u}' > "$tmp" && chmod 644 "$tmp"; then
+    # A directory planted under this name would make the rename fail forever.
+    if [ -d status.json ] && [ ! -L status.json ]; then rm -rf -- status.json; fi
+    # rename(2) replaces whatever has this name - a link is replaced, never followed.
+    mv -fT -- "$tmp" status.json 2>/dev/null || rm -f -- "$tmp"
+  else
+    rm -f -- "$tmp"
+  fi
+}
+
+cleanup() {
+  rm -rf "$WORK"
+  # Relative names inside the real upgrade directory; rm never follows a link.
+  if [ "$IN_UP" = 1 ]; then rm -rf -- incoming.nsu incoming.nsu.part status.json.tmp; fi
+}
 
 fail() {     # nothing has been switched yet - the running version is untouched
   status failed "$1"
@@ -78,15 +101,22 @@ main() {
   exec 9>/run/ns-upgrade.lock
   flock -n 9 || { log "another upgrade is running"; exit 0; }
 
-  [ -e "$REQUEST" ] || exit 0
-  rm -f "$REQUEST"                       # consume it, or the path unit fires again
+  enter_upgrade_dir || { log "$UP is missing or is not a real directory - nothing done"; exit 1; }
+  [ -e request ] || [ -L request ] || exit 0
+  rm -rf -- request                      # consume it, or the path unit fires again
 
   FROM=$(image_version current)
-  regular_file "$BUNDLE" || fail "The upgrade file was not found on the appliance."
 
   # ---- verify ---------------------------------------------------------------
   status verifying "Checking the upgrade file..."
-  rm -rf "$WORK" && mkdir -p "$WORK"
+  rm -rf "$WORK" && mkdir -p "$WORK" && chmod 700 "$WORK" \
+    || fail "The appliance could not prepare the upgrade (no working space)."
+  # Everything below reads only this private copy, so the file cannot be swapped
+  # between the checks and the installation. cp -P never opens a link's target.
+  regular_file incoming.nsu \
+    && timeout 600 cp -P --no-preserve=mode,ownership -- incoming.nsu "$BUNDLE" 2>/dev/null \
+    && regular_file "$BUNDLE" \
+    || fail "The upgrade file was not found on the appliance."
 
   tar -xf "$BUNDLE" -C "$WORK" --no-same-owner --no-same-permissions manifest.json 2>/dev/null \
     && regular_file "$WORK/manifest.json" \
@@ -119,6 +149,7 @@ main() {
   local part
   for part in "$img_file:$img_sha" ${host_file:+"$host_file:$host_sha"}; do
     local f="${part%%:*}" want="${part##*:}"
+    want=${want,,}                         # the dashboard accepts either case
     tar -xf "$BUNDLE" -C "$WORK" --no-same-owner --no-same-permissions "$f" 2>/dev/null \
       && regular_file "$WORK/$f" \
       || fail "The upgrade file is incomplete - please download it again."

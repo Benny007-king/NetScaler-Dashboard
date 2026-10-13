@@ -42,6 +42,14 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
 
+      - name: Unit tests (login, certificates, LDAP group rule, storage, upgrade agent)
+        run: |
+          docker build -q --build-arg APP_VERSION="$(cat VERSION)" -t nsd-ci-test . >/dev/null
+          for t in test_auth test_certs test_ldap_group test_storage; do
+            docker run --rm -v "$PWD:/app:ro" -w /tmp nsd-ci-test python "/app/tests/$t.py"
+          done
+          docker run --rm -v "$PWD:/src:ro" debian:13 bash /src/appliance/test-upgrade-agent.sh
+
       - name: Build the appliance (OVA) and the upgrade bundle (.nsu)
         run: bash appliance/build.sh
 
@@ -54,14 +62,24 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          prev=$(gh release list --limit 1 --exclude-drafts --exclude-pre-releases --json tagName -q '.[0].tagName' || true)
-          if [ -z "$prev" ] || [ "$prev" = "v$(tr -d ' \t\r\n' < VERSION)" ]; then
-            echo "No earlier release to upgrade from - skipping."
+          v=$(tr -d ' \t\r\n' < VERSION)
+          # The newest release OLDER than this version (not simply the latest one:
+          # a maintenance release for an older line must not try to "upgrade" a
+          # newer appliance). A failing listing fails the step - it must never
+          # look like "there is no earlier release".
+          tags=$(gh release list --limit 200 --exclude-drafts --exclude-pre-releases --json tagName -q '.[].tagName')
+          prev=$(printf '%s\n' $tags "v$v" | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V -u \
+                 | awk -v me="v$v" '$0 == me { print last; exit } { last = $0 }')
+          if [ -z "$prev" ]; then
+            echo "::notice::No release older than v$v exists - nothing to upgrade from."
             exit 0
           fi
           mkdir -p previous
           gh release download "$prev" --pattern 'netscaler-dashboard-appliance-*.ova' --dir previous
-          FROM_OVA=$(ls previous/*.ova | head -n 1) bash appliance/smoke-test.sh
+          ova=$(ls previous/*.ova 2>/dev/null | head -n 1)
+          [ -n "$ova" ] || { echo "::error::Release $prev has no appliance (.ova) to upgrade from."; exit 1; }
+          echo "Upgrading $prev to v$v"
+          FROM_OVA=$ova bash appliance/smoke-test.sh
 
       - name: Write the release notes
         run: |
@@ -79,7 +97,8 @@ jobs:
           cat release-notes.md
 
       - name: Publish the GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        # only when a tag is pushed - "Run workflow" never publishes, even on a tag
+        if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

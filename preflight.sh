@@ -96,17 +96,18 @@ fi
 # ---- environment (warnings only) -------------------------------------------
 for p in 443 80; do
   BUSY=""
-  if command -v lsof >/dev/null 2>&1; then
-    lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 && BUSY=1
-  elif command -v ss >/dev/null 2>&1; then
+  # ss first: lsof run by an ordinary user does not see another user's listener
+  if command -v ss >/dev/null 2>&1; then
     ss -ltn 2>/dev/null | grep -q ":$p " && BUSY=1
+  elif command -v lsof >/dev/null 2>&1; then
+    lsof -nP -iTCP:"$p" -sTCP:LISTEN >/dev/null 2>&1 && BUSY=1
   elif command -v netstat >/dev/null 2>&1; then
     netstat -an 2>/dev/null | grep -qE "[:.]$p .*LISTEN" && BUSY=1
   else
     continue
   fi
   if [ -n "$BUSY" ]; then
-    warn "Port $p" "already in use - free it or change APP_PORT in .env"
+    warn "Port $p" "already in use - free it, or set HOST_PORT in .env to publish on another port"
   else
     ok "Port $p" "free"
   fi

@@ -284,8 +284,8 @@
                 </button>
             </form>
 
-            <!-- Default Credentials Info (local auth only) -->
-            {% if not ldap_on %}
+            <!-- Default credentials: shown only while they still work -->
+            {% if show_default_hint %}
             <div class="mt-6 p-4 bg-blue-500 bg-opacity-10 border border-blue-500 border-opacity-30 rounded-xl">
                 <div class="flex items-start">
                     <svg class="w-5 h-5 text-blue-400 mt-0.5 mr-3" fill="currentColor" viewBox="0 0 20 20">
@@ -312,7 +312,7 @@
             <div class="flex items-center justify-center space-x-4 text-blue-200 text-sm">
                 <div class="flex items-center space-x-2">
                     <div class="w-2 h-2 bg-green-400 rounded-full pulse-animation"></div>
-                    <span>NetScaler Dashboard v1.6.0</span>
+                    <span title="An independent project - not affiliated with or endorsed by Cloud Software Group, the owner of the NetScaler and Citrix trademarks.">NetScaler Dashboard{% if app_version %} v{{ app_version }}{% endif %} &middot; independent project</span>
                 </div>
                 <span>•</span>
                 <span>Secure Access</span>

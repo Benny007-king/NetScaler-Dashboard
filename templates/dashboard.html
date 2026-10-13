@@ -221,6 +221,10 @@
             <h3 class="text-lg font-semibold text-amber-400 mb-2">TLS Certificate</h3>
             <p class="text-xs text-slate-400 mb-4">The dashboard serves HTTPS on 443 with a certificate signed by a local CA generated on first boot. <strong>Install the CA</strong> on client machines for warning-free HTTPS, or replace the certificate with your own below.</p>
 
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
+              <div><label for="csrName" class="block text-xs text-slate-400 mb-1">Host name for a signing request (CSR)</label><input type="text" id="csrName" placeholder="dashboard.example.com" autocomplete="off" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div><label for="csrSan" class="block text-xs text-slate-400 mb-1">Additional names or IP addresses (comma separated, optional)</label><input type="text" id="csrSan" placeholder="dashboard, 192.0.2.50" autocomplete="off" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+            </div>
             <div class="flex flex-wrap gap-2 mb-4">
               <a href="/api/tls-ca" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm border border-slate-600 transition-colors">⬇ Download CA Certificate</a>
               <button onclick="genCsr()" id="genCsrBtn" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm border border-slate-600 transition-colors">Generate CSR</button>
@@ -230,7 +234,7 @@
               <textarea id="csrText" rows="4" readonly class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-green-300 text-xs font-mono"></textarea>
             </div>
 
-            <p class="text-xs text-slate-400 mb-2">Replace certificate (paste PEM), then restart to apply:</p>
+            <p class="text-xs text-slate-400 mb-2">Replace certificate (paste PEM). It is checked first and then used for new connections straight away:</p>
             <div class="grid grid-cols-1 gap-3">
               <div><label class="block text-xs text-slate-400 mb-1">Certificate (PEM)</label><textarea id="setTlsCert" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs font-mono" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
               <div><label class="block text-xs text-slate-400 mb-1">Private Key (PEM) — leave blank if the cert was signed from a generated CSR</label><textarea id="setTlsKey" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs font-mono" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></div>
@@ -285,9 +289,9 @@
     <button onclick="openSettings()" class="bg-slate-700 hover:bg-slate-600 text-white p-2 rounded-lg transition-all ml-1" title="Settings">
       <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"></path><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"></path></svg>
     </button>
-    <a href="/logout" class="bg-red-500/10 hover:bg-red-500/20 text-red-400 p-2 rounded-lg transition-all border border-red-500/20" title="Logout">
+    <form method="post" action="/logout" class="inline-flex m-0"><button type="submit" class="bg-red-500/10 hover:bg-red-500/20 text-red-400 p-2 rounded-lg transition-all border border-red-500/20" title="Logout" aria-label="Log out">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1"></path></svg>
-    </a>
+    </button></form>
   </div>
 </header>
 
@@ -625,6 +629,7 @@ function exportToPDF(tableId, filename) {
 // --- API WRAPPER ---
 async function getJSON(url, opts) {
     opts = opts || {};
+    const plainUrl = url;
     // Scope every API call to the selected instance (ignored by global endpoints).
     if (state.instance && url.startsWith('/api/')) {
         url += (url.includes('?') ? '&' : '?') + 'instance=' + encodeURIComponent(state.instance);
@@ -637,7 +642,18 @@ async function getJSON(url, opts) {
             return { ok: false, status: 401, expired: true, data: {} };
         }
         const text = await res.text();
-        return { ok: res.ok, status: res.status, data: text ? JSON.parse(text) : {} };
+        const data = text ? JSON.parse(text) : {};
+        // The selected instance was removed (in another tab, or by loading other
+        // settings): forget it, answer this call without it, and refresh the list.
+        if (res.status === 404 && data.code === 'unknown_instance' && state.instance) {
+            state.instance = '';
+            if (!state.reloadingInstances) {
+                state.reloadingInstances = true;
+                setTimeout(async () => { try { await loadInstances(); forceRefresh(); } finally { state.reloadingInstances = false; } }, 0);
+            }
+            return getJSON(plainUrl, opts);
+        }
+        return { ok: res.ok, status: res.status, data };
     } catch (e) {
         return { ok: false, data: { raw: String(e) } };
     }
@@ -735,6 +751,12 @@ function readInstances() {
 
 async function openSettings() {
     const r = await getJSON('/api/settings');
+    if (r.expired) return;
+    if (!r.ok) {
+        // Opening an empty dialog here would let "Save" overwrite the real settings.
+        alert('The settings could not be loaded' + (r.data && r.data.error ? ': ' + r.data.error : '.') + ' Please try again.');
+        return;
+    }
     $('instanceList').innerHTML = '';
     if (r.ok) {
         $('setSessionTimeout').value = r.data.session_timeout_minutes || 15;
@@ -787,10 +809,12 @@ function renderDatabaseStatus(d) {
         badge.textContent = 'Built-in'; badge.className = 'badge badge-info';
         line.className = 'text-xs mb-3 text-slate-400';
         line.textContent = `Stored on this dashboard: ${dbCounts(d.counts)}, kept for ${d.retention_days} days.`;
+        if (d.error) { line.className = 'text-xs mb-3 text-amber-300'; line.textContent = d.error + ' ' + line.textContent; }
     } else if (d.connected) {
         badge.textContent = 'Connected'; badge.className = 'badge badge-success';
         line.className = 'text-xs mb-3 text-green-400';
-        line.textContent = `Connected to ${d.server || 'the database'} — it holds ${dbCounts(d.counts)}, kept for ${d.retention_days} days.`;
+        line.textContent = `Connected to ${d.server || 'the database'}` + (d.counts ? ` — it holds ${dbCounts(d.counts)}, kept for ${d.retention_days} days.` : '.');
+        if (d.note) { line.className = 'text-xs mb-3 text-amber-300'; line.textContent += ' ' + d.note; }
     } else {
         const w = d.waiting || { sessions: 0, failover_events: 0 };
         badge.textContent = 'Unreachable'; badge.className = 'badge badge-danger';
@@ -992,7 +1016,8 @@ async function testLdap() {
 async function genCsr() {
     const btn = $('genCsrBtn');
     btn.disabled = true; btn.textContent = 'Generating...';
-    const r = await getJSON('/api/tls-csr', { method: 'POST', body: JSON.stringify({}) });
+    const r = await getJSON('/api/tls-csr', { method: 'POST', body: JSON.stringify({
+        common_name: $('csrName').value.trim(), san: $('csrSan').value.trim() }) });
     btn.disabled = false; btn.textContent = 'Generate CSR';
     if (r.ok && r.data.success) {
         $('csrText').value = r.data.csr;
@@ -1027,6 +1052,12 @@ async function saveSettings() {
         session_timeout_minutes: parseInt($('setSessionTimeout').value) || 15,
         instances: readInstances()
     };
+    if (!payload.instances.length) {
+        btn.textContent = 'Save & Apply';
+        btn.disabled = false;
+        alert('At least one instance is required.');
+        return;
+    }
 
     const r = await getJSON('/api/settings', {
         method: 'POST',
@@ -1296,7 +1327,7 @@ async function fetchCaps() {
             const m = (state.apiModes[key] || 'nitro').toUpperCase();
             const why = (state.apiDetect[key] || {}).reason || '';
             const cls = m === 'NEXTGEN' ? 'text-green-400' : 'text-blue-400';
-            return `<span class="${cls} font-bold mx-1" title="${escapeHtml(why)}">${escapeHtml(nd.name || key)}: ${m}</span>`;
+            return `<span class="${cls} font-bold mx-1" title="${escapeHtml(why)}">${escapeHtml(nd.name || key)}: ${escapeHtml(m)}</span>`;
         });
         $('capsLine').innerHTML = `Mode: <span class="text-white font-bold uppercase mr-2">${escapeHtml(state.mode)}</span> | Capabilities: ${parts.join(' | ') || '—'}`;
         updateAppsTabAvailability();
@@ -1343,7 +1374,7 @@ function wallNodeRow(n) {
     const ip = escapeHtml(n.ip || '—');
     const state = n.state ? `<span class="badge ${haStateBadge(n.state)}">${escapeHtml(n.state.toUpperCase())}</span>` : '';
     const load = (n.cpu !== null && n.cpu !== undefined)
-        ? `<span class="font-mono text-slate-400 text-[11px] whitespace-nowrap">cpu ${n.cpu}% · mem ${n.mem === null || n.mem === undefined ? '—' : n.mem}%</span>`
+        ? `<span class="font-mono text-slate-400 text-[11px] whitespace-nowrap">cpu ${escapeHtml(String(n.cpu))}% · mem ${n.mem === null || n.mem === undefined ? '—' : escapeHtml(String(n.mem))}%</span>`
         : `<span class="text-slate-600 text-[11px]">${escapeHtml(n.error || 'no data')}</span>`;
     const forced = (n.ha_status && n.ha_status.forced)
         ? `<span class="badge badge-warning" title="Failover suppressed">\u26A0 ${escapeHtml(n.ha_status.code)}</span>` : '';
@@ -1377,6 +1408,17 @@ function wallCard(it) {
         <div>${(it.nodes || []).map(wallNodeRow).join('') || '<div class="text-xs text-slate-500">No nodes configured</div>'}</div>
         ${warn}
     </div>`;
+}
+
+// A background refresh is skipped while the previous one is still waiting for
+// an answer. Without this, a NetScaler that has stopped answering collects a new
+// set of pending requests every few seconds from every open tab, until the
+// dashboard has no thread left to serve the login page.
+const pollBusy = {};
+async function pollOnce(key, fn) {
+    if (pollBusy[key]) return;
+    pollBusy[key] = true;
+    try { await fn(); } finally { pollBusy[key] = false; }
 }
 
 async function loadWall(background) {
@@ -1495,7 +1537,7 @@ async function loadOverview(background) {
                 return `<tr class="border-b border-slate-800/50"><td class="text-slate-500">${i + 1}</td>` +
                     `<td class="text-white">${escapeHtml(n.name || '')}</td>` +
                     `<td class="font-mono text-slate-300">${escapeHtml(n.ipaddress || n.ip || '')}</td>` +
-                    `<td><span class="badge ${haStateBadge(s)}">${s}</span></td>` +
+                    `<td><span class="badge ${haStateBadge(s)}">${escapeHtml(s)}</span></td>` +
                     `<td>${haStatusCell(n.ha_status)}</td>` +
                     `<td class="text-slate-500 text-xs">${escapeHtml(n.hasync || '')}</td></tr>`;
             }).join('');
@@ -1519,7 +1561,7 @@ async function loadApplications() {
         const vip = item.vip || item.ipv46 || item.ipaddress || '';
         const state = (item.state || item.curstate || '').toUpperCase();
         const badge = svcStateBadge(state);
-        return `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500 font-mono">${i + 1}</td><td class="text-white font-medium">${escapeHtml(name)}</td><td class="text-blue-300 font-mono text-xs">${escapeHtml(vip)}</td><td class="text-slate-400 font-mono text-xs">${item.port || ''}</td><td><span class="badge ${badge}">${state}</span></td></tr>`;
+        return `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500 font-mono">${i + 1}</td><td class="text-white font-medium">${escapeHtml(name)}</td><td class="text-blue-300 font-mono text-xs">${escapeHtml(vip)}</td><td class="text-slate-400 font-mono text-xs">${escapeHtml(item.port == null ? '' : String(item.port))}</td><td><span class="badge ${badge}">${escapeHtml(state)}</span></td></tr>`;
     }).join('') : '<tr><td colspan="5" class="text-center py-4 text-slate-500">No items found</td></tr>';
     $('appsTable').innerHTML = rows;
 }
@@ -1919,10 +1961,10 @@ function startAutoRefresh() {
     if (state.interval) clearInterval(state.interval);
     const active = document.querySelector('.tab-btn.active').dataset.tab;
     if (active === 'overview') {
-        state.interval = setInterval(() => loadOverview(true), state.refreshMs);
+        state.interval = setInterval(() => pollOnce('overview', () => loadOverview(true)), state.refreshMs);
     } else if (active === 'wall') {
         // One pass hits every node of every instance - poll it less aggressively.
-        state.interval = setInterval(() => loadWall(true), state.wallRefreshMs);
+        state.interval = setInterval(() => pollOnce('wall', () => loadWall(true)), state.wallRefreshMs);
     }
 }
 

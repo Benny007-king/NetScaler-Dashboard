@@ -7,13 +7,21 @@ import os
 
 from cert_utils import CERT_FILE, KEY_FILE, ensure_signed
 
-bind = f"0.0.0.0:{os.getenv('APP_PORT', '443')}"
+bind = f"0.0.0.0:{os.getenv('APP_PORT', '443').strip().strip(chr(34) + chr(39)) or '443'}"
 # A single threaded worker keeps in-memory state (auth/nodes/LDAP config, API mode)
 # consistent — multiple worker processes each cache their own copy, so a password
 # change or settings save on one worker isn't seen by the others. Threads give
 # ample concurrency for this I/O-bound internal dashboard.
-workers = int(os.getenv("GUNICORN_WORKERS", "1"))
-threads = int(os.getenv("GUNICORN_THREADS", "8"))
+# So it is not a setting: with two workers a changed admin password kept working
+# in the other one, and was even written back to disk.
+workers = 1
+if os.getenv("GUNICORN_WORKERS", "1").strip().strip('"\'') not in ("", "1"):
+    print("WARNING: GUNICORN_WORKERS is ignored - the dashboard always runs one worker "
+          "(use GUNICORN_THREADS for more concurrency)", flush=True)
+try:
+    threads = max(2, int(os.getenv("GUNICORN_THREADS", "8").strip().strip('"\'') or 8))
+except ValueError:
+    threads = 8
 
 # Serve TLS directly unless APP_SSL=0 (e.g. when a reverse proxy terminates TLS).
 _use_ssl = os.getenv("APP_SSL", "1").lower() in ("1", "true", "yes")

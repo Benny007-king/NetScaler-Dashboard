@@ -57,6 +57,9 @@ while read -r line; do
   f=$(sed -E 's/^SHA256\((.*)\)= .*$/\1/' <<<"$line"); want=${line##*= }
   [ "$(sha256sum "$WORK/ova/$f" | cut -d' ' -f1)" = "$want" ] || die "manifest checksum mismatch for $f"
 done < "$WORK"/ova/*.mf
+# ...and it has to cover the descriptor and the disk, or the loop above proved nothing
+grep -q '^SHA256(.*\.ovf)= ' "$WORK"/ova/*.mf && grep -q '^SHA256(.*\.vmdk)= ' "$WORK"/ova/*.mf \
+  || die "the manifest does not list both the descriptor and the disk"
 ( cd "$DIST" && sha256sum -c SHA256SUMS >/dev/null ) || die "SHA256SUMS does not match the artefacts"
 qemu-img info "$WORK"/ova/*.vmdk | grep -q 'streamOptimized' || die "the disk is not a streamOptimized VMDK"
 pass "descriptor first, manifest and SHA256SUMS verified, disk is streamOptimized VMDK"
@@ -100,7 +103,10 @@ step "3. First sign-in"
 api() { curl -ks -b "$JAR" -c "$JAR" "$@"; }
 [ "$(api -o /dev/null -w '%{http_code}' "$BASE/api/appliance/status")" != 200 ] || die "the API answered without a login"
 api -o /dev/null -d username=admin -d password=admin -d auth_source=local "$BASE/login"
-[ "$(api -o /dev/null -w '%{http_code}' "$BASE/api/appliance/status")" = 302 ] || die "the default password was not forced to change"
+case "$(api -o /dev/null -w '%{http_code}' "$BASE/api/appliance/status")" in
+  403|302) ;;      # 403 from 1.16.3 on; releases before that redirect to the change-password page
+  *) die "the default password was not forced to change" ;;
+esac
 api -o /dev/null -d current_password=admin -d new_password=Smoke-Test-123 -d confirm_password=Smoke-Test-123 "$BASE/change-password"
 st=$(api "$BASE/api/appliance/status")
 jq -e --arg v "$BOOT_VERSION" '.appliance == true and .version == $v and .appliance_version == $v' <<<"$st" >/dev/null \

@@ -48,6 +48,18 @@ dist/
 **/dist/
 **/*.ova
 **/*.nsu
+# ...and no secrets or runtime state from a nested checkout either
+**/.env
+**/.env.local
+**/data/
+**/certs/
+**/auth_config.json
+**/nodes_config.json
+**/ldap_config.json
+**/db_config.json
+**/.app_secret
+**/dashboard.db*
+**/*.log
 
 # Tests run from a checkout, not from the image
 tests/

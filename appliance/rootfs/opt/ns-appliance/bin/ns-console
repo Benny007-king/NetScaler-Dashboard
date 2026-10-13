@@ -15,15 +15,29 @@ rm -f "$FIRST_LOGIN_HINT"
 
 bold=$(tput bold 2>/dev/null || true); dim=$(tput dim 2>/dev/null || true); rst=$(tput sgr0 2>/dev/null || true)
 
-pause() { echo; read -r -p "Press Enter to continue..." _; }
-ask()   { local a; read -r -p "$1" a; echo "$a"; }
-confirm() { case "$(ask "$1 [y/N] ")" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac; }
+# When the input ends (a closed session, a pipe that ran dry) the menu leaves;
+# it used to redraw itself in a tight loop for ever.
+pause() { echo; read -r -p "Press Enter to continue..." _ || exit 0; }
+ask()   { local a; read -r -p "$1" a || return 1; echo "$a"; }
+confirm() { local a; a=$(ask "$1 [y/N] ") || exit 0; case "$a" in y|Y|yes|YES) return 0 ;; *) return 1 ;; esac; }
 
 primary_if() { ip -o link show 2>/dev/null | awk -F': ' '$2 ~ /^(en|eth)/ {print $2; exit}'; }
 ipv4_of()    { ip -4 -o addr show dev "$1" scope global 2>/dev/null | awk '{print $4; exit}'; }
-valid_ip()   { [[ "$1" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]] || return 1; local o; IFS=. read -ra o <<<"$1"; for x in "${o[@]}"; do [ "$x" -le 255 ] || return 1; done; }
+# A dotted address a host can really have: no leading zeros (systemd-networkd
+# refuses them), and not 0.x, loopback, multicast or reserved.
+valid_ip() {
+  local oct='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])'
+  [[ "$1" =~ ^$oct\.$oct\.$oct\.$oct$ ]] || return 1
+  local first=${1%%.*}
+  [ "$first" -ge 1 ] && [ "$first" -le 223 ] && [ "$first" -ne 127 ]
+}
+ip_int() { local a b c d; IFS=. read -r a b c d <<<"$1"; echo $(( (a << 24) | (b << 16) | (c << 8) | d )); }
+same_net() {   # same_net <address> <prefix> <other address>
+  local mask=$(( (0xffffffff << (32 - $2)) & 0xffffffff ))
+  [ $(( $(ip_int "$1") & mask )) -eq $(( $(ip_int "$3") & mask )) ]
+}
 # valid_ip runs its own regex match, so the captures are copied out first.
-valid_cidr() { local a p; [[ "$1" =~ ^(.+)/([0-9]{1,2})$ ]] || return 1; a=${BASH_REMATCH[1]}; p=${BASH_REMATCH[2]}; valid_ip "$a" && [ "$p" -ge 1 ] && [ "$p" -le 32 ]; }
+valid_cidr() { local a p; [[ "$1" =~ ^(.+)/([1-9][0-9]?)$ ]] || return 1; a=${BASH_REMATCH[1]}; p=${BASH_REMATCH[2]}; valid_ip "$a" && [ "$p" -ge 8 ] && [ "$p" -le 32 ]; }
 
 header() {
   clear 2>/dev/null || true
@@ -47,24 +61,29 @@ header() {
 }
 
 configure_network() {
-  local ifc choice addr gw dns
+  local ifc choice addr gw dns want=""
   ifc=$(primary_if)
   [ -n "$ifc" ] || { echo "No network interface was found."; pause; return; }
   echo; echo "Interface: $ifc"
   echo "  1) DHCP (automatic)"
   echo "  2) Static address"
-  choice=$(ask "Choose [1-2, Enter to cancel]: ")
+  choice=$(ask "Choose [1-2, Enter to cancel]: ") || exit 0
   case "$choice" in
     1)
       rm -f "$STATIC_NET"
       ;;
     2)
-      addr=$(ask "IP address with prefix (e.g. 192.168.10.20/24): ")
+      addr=$(ask "IP address with prefix (e.g. 192.0.2.20/24): ") || exit 0
       valid_cidr "$addr" || { echo "That is not a valid address/prefix."; pause; return; }
-      gw=$(ask "Default gateway (Enter for none): ")
-      [ -z "$gw" ] || valid_ip "$gw" || { echo "That is not a valid gateway."; pause; return; }
-      dns=$(ask "DNS servers, space separated (Enter for none): ")
+      gw=$(ask "Default gateway (Enter for none): ") || exit 0
+      if [ -n "$gw" ]; then
+        valid_ip "$gw" || { echo "That is not a valid gateway."; pause; return; }
+        [ "$gw" != "${addr%/*}" ] || { echo "The gateway cannot be the appliance's own address."; pause; return; }
+        same_net "${addr%/*}" "${addr#*/}" "$gw" || { echo "The gateway is not inside ${addr}'s network."; pause; return; }
+      fi
+      dns=$(ask "DNS servers, space separated (Enter for none): ") || exit 0
       for d in $dns; do valid_ip "$d" || { echo "'$d' is not a valid DNS server."; pause; return; }; done
+      want=$addr
       {
         echo "# Written by ns-console. Takes precedence over 20-ns-dhcp.network."
         echo "[Match]"; echo "Name=$ifc"; echo
@@ -82,11 +101,14 @@ configure_network() {
   echo "Applying..."; sleep 2
   addr=""
   for _ in $(seq 15); do addr=$(ipv4_of "$ifc"); [ -n "$addr" ] && break; sleep 1; done
-  if [ -n "$addr" ]; then
+  if [ -n "$addr" ] && { [ -z "$want" ] || [ "$addr" = "$want" ]; }; then
     echo "Address is now: $addr"
   elif [ "$(cat "/sys/class/net/$ifc/carrier" 2>/dev/null)" != 1 ]; then
     echo "Saved, but the network adapter has no link, so no address is active yet."
     echo "Check that the virtual machine's network adapter is connected."
+  elif [ -n "$want" ]; then
+    echo "Saved, but $want is not active on $ifc${addr:+ (it has $addr)}."
+    echo "Check the address, or choose DHCP to go back."
   else
     echo "No address yet - no DHCP server has answered. It is applied as soon as one does."
   fi
@@ -94,7 +116,7 @@ configure_network() {
 }
 
 set_hostname() {
-  local h; h=$(ask "New hostname: ")
+  local h; h=$(ask "New hostname: ") || exit 0
   [[ "$h" =~ ^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$ ]] || { echo "Use letters, digits and hyphens only."; pause; return; }
   hostnamectl set-hostname "$h"
   sed -i "s/^127\.0\.1\.1.*/127.0.1.1 $h/" /etc/hosts
@@ -109,6 +131,15 @@ reset_web_admin() {
   rm -f "$DATA/auth_config.json"
   systemctl restart ns-dashboard
   echo "Done - sign in as admin / admin; you will be asked to choose a new password."; pause
+}
+
+new_certificate() {
+  echo; echo "This replaces the web certificate - including one you uploaded - with a new"
+  echo "one issued by the appliance's own CA. Use it when HTTPS no longer works."
+  confirm "Create a new certificate?" || return
+  rm -f "$DATA/certs/server.crt" "$DATA/certs/server.key" "$DATA/certs/server.key.pending"
+  systemctl restart ns-dashboard
+  echo "Done - the dashboard is restarting with a new certificate."; pause
 }
 
 toggle_ssh() {
@@ -133,9 +164,11 @@ while true; do
   3) Restart the dashboard                 8) Reboot
   4) Reset the web admin password          9) Shut down
   5) Enable / disable SSH                  s) Root shell
-  p) Change the console password           q) Log out
+  p) Change the console password           c) New web certificate
+                                           q) Log out
 MENU
-  case "$(ask "> ")" in
+  choice=$(ask "> ") || exit 0
+  case "$choice" in
     1) configure_network ;;
     2) set_hostname ;;
     3) systemctl restart ns-dashboard && echo "Restarted."; pause ;;
@@ -146,6 +179,7 @@ MENU
     8) confirm "Reboot the appliance now?" && systemctl reboot ;;
     9) confirm "Shut the appliance down now?" && systemctl poweroff ;;
     p|P) passwd nsadmin; pause ;;
+    c|C) new_certificate ;;
     s|S) echo "Type 'exit' to return to the menu."; NS_CONSOLE=1 bash --login ;;
     q|Q) exit 0 ;;
   esac
