@@ -187,30 +187,33 @@ add responder policy Session_Cookie_Hijack_Block_Responder_Policy "AAA.USER.NAME
     {
         "id": "waf",
         "group": "Appliance hardening",
-        "title": "Web App Firewall on Auth, VPN and Portal",
-        "summary": "A WAF profile inspects the Gateway's authentication pages, VPN traffic and portal.",
+        "title": "Built-in WAF protection for Auth, VPN and Portal",
+        "summary": "NetScaler's built-in Web App Firewall protection covers the Gateway's authentication, VPN and portal endpoints.",
         "about": (
-            "A Web App Firewall policy bound to the Gateway virtual server (or globally) inspects requests "
-            "for SQL injection, cross-site scripting, buffer overflows and signature matches before they reach "
-            "the authentication pages (/nf/auth, /cgi), the VPN (/vpn, /vpns) and the portal (/logon, "
-            "StoreFront behind a load-balancing or content-switching virtual server). The dashboard shows "
-            "which of the three are covered and by which policy, and every violation in the activity below."),
+            "`set aaa parameter -wafProtection` switches on the Web App Firewall protection NetScaler builds in for "
+            "its own Gateway endpoints, without a WAF profile of your own: AUTH for the authentication pages, VPN "
+            "for the VPN endpoints and PORTAL for the portal pages. The dashboard checks that all three are listed."),
         "notes": [
-            "Start with the actions in log-only mode (LOG STATS, no BLOCK), watch the violations here for a "
-            "while, then turn blocking on - a basic profile can block parts of the Gateway's own pages.",
-            "CEF logging gives the dashboard every field of a violation (method, signature category, "
-            "severity).",
+            "DEFAULT leaves the choice to the build, and DISABLED turns the protection off.",
+            "Only this setting of the command matters for this item; -maxAAAUsers has its own item.",
         ],
         "variants": [{"label": "All versions", "commands": [
-            ("Profile and policy (log only to start with)", r'''add appfw profile Gateway_WAF_Profile -defaults basic
-set appfw profile Gateway_WAF_Profile -startURLAction LOG STATS -denyURLAction LOG STATS -bufferOverflowAction LOG STATS -cookieConsistencyAction LOG STATS -SQLInjectionAction LOG STATS -crossSiteScriptingAction LOG STATS -fieldFormatAction LOG STATS -CSRFtagAction LOG STATS
-add appfw policy Gateway_WAF_Policy true Gateway_WAF_Profile
-set appfw settings -CEFLogging ON'''),
-            ("Bind to the Gateway (Auth + VPN)", r'''bind vpn vserver <GATEWAY_VSERVER> -policy Gateway_WAF_Policy -priority 100 -gotoPriorityExpression END -type REQUEST'''),
-            ("...or globally, if the Gateway virtual server does not take it on this build", r'''bind appfw global Gateway_WAF_Policy 100 END -type REQ_DEFAULT'''),
-            ("Portal behind a load-balancing virtual server (StoreFront)", r'''bind lb vserver <PORTAL_VSERVER> -policyName Gateway_WAF_Policy -priority 100 -gotoPriorityExpression END'''),
-        ]}],
+            ("Setting", r"set aaa parameter -wafProtection AUTH VPN PORTAL")]}],
         "detect": "waf",
+    },
+    {
+        "id": "max_aaa_users",
+        "group": "Appliance hardening",
+        "title": "Maximum concurrent AAA users",
+        "summary": "The Gateway's limit on users logged on at the same time is set to the maximum.",
+        "about": (
+            "maxAAAUsers caps how many users can be logged on to the Gateway (VPN / AAA) at the same time. When the "
+            "cap is reached, further users are refused at login although the licence would allow them. Set to the "
+            "maximum, 4294967295, the licence is the only limit."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [
+            ("Setting", r"set aaa parameter -maxAAAUsers 4294967295")]}],
+        "detect": "max_aaa_users",
     },
     {
         "id": "csp_header",
@@ -266,27 +269,19 @@ add rewrite policy Gateway_CSP_Header_Policy "HTTP.RES.HEADER(\"Content-Security
         "detect": "cookie_v1",
     },
     {
-        "id": "tcp_protection",
+        "id": "tcp_isn",
         "group": "Appliance hardening",
-        "title": "TCP SYN-flood and spoofing protection",
-        "summary": "SYN cookies, spoofed-SYN drop and RFC 5961 checks on the default TCP profile.",
+        "title": "Enhanced TCP ISN generation",
+        "summary": "The initial sequence numbers in the appliance's SYN-ACKs vary more, so they cannot be guessed.",
         "about": (
-            "SYN cookies keep the appliance answering during a SYN flood without holding state for half-open "
-            "connections; spoofed-SYN drop discards SYNs that arrive on an established connection; RFC 5961 "
-            "compliance rejects blind RST/SYN/data injection into existing connections."),
-        "notes": [
-            "SYN cookies and spoofed-SYN drop are on by default - this mostly finds a profile where somebody "
-            "turned them off.",
-            "RFC 5961 compliance exists from NetScaler 14.1-4 and is off by default.",
-            "A TCP profile bound to a virtual server overrides the default profile for it.",
-        ],
-        "variants": [
-            {"label": "NetScaler 14.1", "match": r"^14\.", "commands": [
-                ("Default TCP profile", r'''set ns tcpProfile nstcp_default_profile -SYNCOOKIE ENABLED -spoofSynDrop ENABLED -rfc5961compliance ENABLED''')]},
-            {"label": "NetScaler 13.1", "match": r"^13\.", "commands": [
-                ("Default TCP profile", r'''set ns tcpProfile nstcp_default_profile -SYNCOOKIE ENABLED -spoofSynDrop ENABLED''')]},
-        ],
-        "detect": "tcp",
+            "Every TCP connection starts from an initial sequence number (ISN) chosen by each side. With enhanced "
+            "ISN generation the NetScaler varies the ISN in the SYN-ACKs it sends more widely, which makes it far "
+            "harder for an attacker to predict it and inject spoofed packets into, or reset, a connection they "
+            "cannot see."),
+        "notes": ["Off by default."],
+        "variants": [{"label": "All versions", "commands": [
+            ("Setting", r"set ns tcpparam -enhancedISNgeneration ENABLED")]}],
+        "detect": "tcp_isn",
     },
     {
         "id": "mgmt_secure",

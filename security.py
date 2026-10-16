@@ -91,7 +91,7 @@ _FACT_SOURCES = (
     ("selector", "/config/streamselector", "streamselector"),
     ("aaa_param", "/config/aaaparameter", "aaaparameter"),
     ("ns_param", "/config/nsparam", "nsparam"),
-    ("tcp_profile", "/config/nstcpprofile/nstcp_default_profile", "nstcpprofile"),
+    ("tcp_param", "/config/nstcpparam", "nstcpparam"),
     ("nsip", "/config/nsip", "nsip"),
     ("vpn_vserver", "/config/vpnvserver", "vpnvserver"),
     ("lb_vserver", "/config/lbvserver?attrs=name,ipv46,port,servicetype", "lbvserver"),
@@ -315,57 +315,48 @@ def detect_malicious_ip(check, facts, ctx):
     return _detect_responder(check, facts, extra)
 
 
-_SCOPE_PATHS = {
-    "Auth": ("/nf/auth", "/cgi/", "/saml", "/oauth", "/p/u/"),
-    "VPN": ("/vpn/", "/vpns/", "/cvpn/", "/epa/"),
-    "Portal": ("/logon/", "/citrix/", "/portal/"),
-}
+def _waf_list(v):
+    if isinstance(v, list):
+        return [str(x).strip().upper() for x in v if str(x).strip()]
+    return [x.upper() for x in re.split(r"[\s,]+", str(v or "")) if x]
 
 
 def detect_waf(check, facts, ctx):
-    u = _unknown(facts, "appfw")
+    u = _unknown(facts, "aaa_param")
     if u:
         return u
+    p = _one(facts, "aaa_param")
+    if "wafprotection" not in p:
+        return _result("unknown", ["This build does not report the built-in WAF protection (aaa parameter wafProtection)."])
+    have = _waf_list(p.get("wafprotection"))
+    ev = ["aaa parameter wafProtection = " + (" ".join(have) or "(empty)")]
+    scopes = {s: s.upper() in have for s in ("AUTH", "VPN", "PORTAL")}
+    # WAF policies of your own, for their hit counters
     binds = _bindings(facts.get("appfw_bind")) if "appfw_bind" in facts else {}
-    policies = []
-    for p in facts.get("appfw") or []:
-        if not isinstance(p, dict):
-            continue
-        name = str(p.get("name") or "")
-        policies.append({"name": name, "rule": str(p.get("rule") or ""), "profile": str(p.get("profilename") or ""),
-                         "hits": _int(p.get("hits")), "undefhits": _int(p.get("undefhits")),
-                         "bound": binds.get(name, []), "by": "name"})
-    scopes = {s: [] for s in _SCOPE_PATHS}
-    for p in policies:
-        rule = _norm(p["rule"])
-        everything = rule in ("", "true", "ns_true")
-        for b in p["bound"]:
-            w = b["where"]
-            if w.startswith("vpnvserver") or "global" in w:
-                for scope, paths in _SCOPE_PATHS.items():
-                    if everything or any(x in rule for x in paths):
-                        scopes[scope].append(f"{p['name']} on {b['to']}")
-            elif w.startswith(("lbvserver", "csvserver")):
-                scopes["Portal"].append(f"{p['name']} on {b['to']}")
-        if not p["bound"] and p["hits"]:
-            for scope in scopes:
-                if everything:
-                    scopes[scope].append(f"{p['name']} (has hits)")
-    covered = [s for s, v in scopes.items() if v]
-    ev = [f"{s}: " + (", ".join(sorted(set(v))) if v else "not covered") for s, v in scopes.items()]
-    if not policies:
-        ev = ["No Web App Firewall policy on this node."]
-    elif not any(p["bound"] for p in policies):
-        ev.append("WAF policies exist but none is bound.")
-    if _feature_on(facts, "appfw") is False:
-        ev.append("The Web App Firewall feature is not enabled.")
-        covered = []
-    cef = facts.get("appfw_settings")
-    cef = cef[0] if isinstance(cef, list) and cef else cef
-    if isinstance(cef, dict) and "ceflogging" in cef and not _yes(cef.get("ceflogging")):
-        ev.append("CEF logging is off: violations are logged with fewer fields.")
-    status = "configured" if len(covered) == 3 else ("partial" if covered or policies else "missing")
-    return _result(status, ev, policies=policies, scopes={s: bool(v) for s, v in scopes.items()})
+    policies = [{"name": str(x.get("name") or ""), "rule": str(x.get("rule") or ""), "hits": _int(x.get("hits")),
+                 "undefhits": _int(x.get("undefhits")), "bound": binds.get(str(x.get("name") or ""), []), "by": "name"}
+                for x in facts.get("appfw") or [] if isinstance(x, dict) and x.get("name")]
+    if all(scopes.values()):
+        return _result("configured", ev, scopes=scopes, policies=policies)
+    if "DISABLED" in have:
+        return _result("missing", ev + ["The built-in WAF protection is switched off."], scopes=scopes, policies=policies)
+    if "DEFAULT" in have and not any(scopes.values()):
+        return _result("partial", ev + ["DEFAULT leaves the choice to the build - list AUTH VPN PORTAL to be sure all three are covered."],
+                       scopes=scopes, policies=policies)
+    missing = [k for k, on in scopes.items() if not on]
+    return _result("partial" if any(scopes.values()) else "missing", ev + ["Not covered: " + ", ".join(missing)],
+                   scopes=scopes, policies=policies)
+
+
+def detect_max_aaa_users(check, facts, ctx):
+    u = _unknown(facts, "aaa_param")
+    if u:
+        return u
+    p = _one(facts, "aaa_param")
+    if "maxaaausers" not in p:
+        return _result("unknown", ["The appliance did not report maxAAAUsers."])
+    v = _int(p.get("maxaaausers"))
+    return _result("configured" if v >= 4294967295 else "missing", [f"aaa parameter maxAAAUsers = {p.get('maxaaausers')}"])
 
 
 def detect_csp(check, facts, ctx):
@@ -422,23 +413,15 @@ def detect_cookie_v1(check, facts, ctx):
     return _result("configured" if v.strip() == "1" else "missing", [f"ns param cookieversion = {v}"])
 
 
-def detect_tcp(check, facts, ctx):
-    u = _unknown(facts, "tcp_profile")
+def detect_tcp_isn(check, facts, ctx):
+    u = _unknown(facts, "tcp_param")
     if u:
         return u
-    p = _one(facts, "tcp_profile")
-    if not p:
-        return _result("unknown", ["nstcp_default_profile was not returned."])
-    ev, ok = [], True
-    for field, label in (("syncookie", "SYN cookies"), ("spoofsyndrop", "spoofed-SYN drop"),
-                         ("rfc5961compliance", "RFC 5961 compliance")):
-        if field in p:
-            on = _yes(p.get(field))
-            ev.append(f"{label}: {p.get(field)}")
-            ok = ok and on
-        elif field == "rfc5961compliance":
-            ev.append("RFC 5961 compliance: not available on this build")
-    return _result("configured" if ok else "partial" if _yes(p.get("syncookie")) else "missing", ev)
+    p = _one(facts, "tcp_param")
+    if "enhancedisngeneration" not in p:
+        return _result("unknown", ["This build does not have the enhancedISNgeneration TCP setting."])
+    v = str(p.get("enhancedisngeneration"))
+    return _result("configured" if _yes(v) else "missing", [f"ns tcpparam enhancedISNgeneration = {v}"])
 
 
 def detect_mgmt_secure(check, facts, ctx):
@@ -490,7 +473,8 @@ def detect_syslog(check, facts, ctx):
 DETECTORS = {
     "responder": detect_responder, "login_audit": detect_login_audit, "brute_force": detect_brute_force,
     "malicious_ip": detect_malicious_ip, "waf": detect_waf, "csp": detect_csp, "httponly": detect_httponly,
-    "cookie_v1": detect_cookie_v1, "tcp": detect_tcp, "mgmt_secure": detect_mgmt_secure, "syslog": detect_syslog,
+    "cookie_v1": detect_cookie_v1, "tcp_isn": detect_tcp_isn, "mgmt_secure": detect_mgmt_secure,
+    "syslog": detect_syslog, "max_aaa_users": detect_max_aaa_users,
 }
 
 

@@ -6,6 +6,18 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.18.1
+- **Security checklist, as meant.** The TCP item is now **enhanced ISN
+  generation** (`set ns tcpparam -enhancedISNgeneration ENABLED`) instead of SYN
+  cookies and spoofing protection. The WAF item is NetScaler's **built-in WAF
+  protection** for the Gateway (`set aaa parameter -wafProtection AUTH VPN
+  PORTAL`): all three listed is *In place*, some is *Partly*, DEFAULT or DISABLED
+  is pointed out. New item: **maximum concurrent AAA users** at the maximum
+  (`-maxAAAUsers 4294967295`), so the licence and not this setting limits how many
+  users can log on. Fourteen items in all.
+- The storage tests now also pass on **Microsoft SQL Server 2022**, security
+  events included.
+
 ## 1.18.0
 **Security tab (new)**
 - **Hardening checklist.** Thirteen items for a NetScaler Gateway: the six
