@@ -38,8 +38,9 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 - **HTTPS on 443** with a cert signed by a **local CA** generated on first boot. Install the CA for warning-free HTTPS, upload your own PEM cert/key, or generate a CSR for your corporate CA — all from **Settings → TLS Certificate**.
 - **Authentication**: local admin account and/or **LDAP/Active Directory** (`AUTH_BACKENDS=local,ldap`), with optional allowed-group enforcement.
 - **Applications / Services**: shows Next-Gen Applications when a node has them, and falls back to classic **LB vServers** otherwise; **Services and Service Groups** are listed with their real runtime state (`UP` / `DOWN` / `OUT OF SERVICE` / `PARTIAL-UP`) and bound-member counts.
-- **Tabs follow the live primary**: Applications, Failover, Sessions, Certificates and Unlock User open on the node currently holding the PRIMARY role, so they track a failover automatically.
-- **Failover History & User Sessions**: date-range filters with a pop-up picker; **Excel/PDF** export (client-side). Sessions cover both **Gateway/AAA** deployments and **LB-only** appliances: the tab is **AAA/gateway only** (management/admin logins are excluded, both by audit-plane and by system-user name) and alongside real VPN/AAA sessions it surfaces **failed login attempts** (status `Failed`, attempt time, source IP) and **locked accounts** (status `Locked`) — parsed from the appliance **audit log** (AAA / gateway users only) and from `aaauser` — and resolves the **gateway name** from live ICA connections. Failed/Locked rows are **persisted** in the history DB (they don't vanish when the audit line scrolls out). `GET /api/session-debug` dumps per-node reachability/hostname plus the raw (redacted) NITRO session/user/audit fields to tune mapping across builds.
+- **Tabs follow the live primary**: Applications, Failover, Sessions, Security, Certificates and Unlock User open on the node currently holding the PRIMARY role, so they track a failover automatically.
+- **Failover History & User Sessions**: date-range filters with a pop-up picker (a session is shown when it overlaps the range); **Excel/PDF** export (client-side). The Sessions tab is about **Gateway / AAA end users** only - management logins and system accounts never appear. Live sessions come from NITRO `aaasession` (one row per user, address and virtual server; the Gateway named from its virtual server address; group, intranet IP, destinations) and the live ICA connections (application server by name, TCP or EDT). The Gateway's own log lines - received by [syslog](#security-tab) or read from the audit log - add the real **login and logout time**, duration and logout method, the Gateway and AAA **session ids**, the **client type** (ICA proxy, clientless, full VPN), **OS** and **Workspace app or browser** (from the login audit policy on the Security tab), the Gateway FQDN, user agent, bytes, and each **published application** with its server, start and end. Sessions that ended before the dashboard saw them appear from their log lines. **Failed sign-ins** (status `Failed`, attempt time, source IP, failure reason) and **locked accounts** (`Locked`) are kept for the retention period. `GET /api/session-debug` dumps per-node reachability and the raw (redacted) NITRO session and audit fields.
+- **Security tab**: a hardening checklist for the Gateway - login audit logging, brute-force rate limiter, session cookie hijack prevention, IP reputation, EPA Referer check, SAML hardening, WAF on Auth/VPN/Portal, CSP header, HttpOnly cookies, cookie version 1, TCP SYN/spoofing protection, secure-only management, syslog to the dashboard - each detected on the node, markable **Done** / **Not relevant**, with an explanation and the commands for the node's version. Below it, the **activity**: WAF violations and policy hits over time, the hit counters of the checklist's policies, top source addresses and URLs, and every event with all its fields. See [Security tab](#security-tab).
 - **Unlock Users**: unlock a locked AAA user (NITRO, with automatic `?action=unlock` fallback).
 - **External database (optional)**: keep session and failover history, plus a copy of the settings, in your own **PostgreSQL, MySQL / MariaDB or Microsoft SQL Server** — set up in **Settings → Database**. The dashboard keeps working when that database is unreachable and catches up by itself when it returns.
 
@@ -52,6 +53,9 @@ netscaler-dashboard/
 ├── app.py                     # Flask app + NITRO/Next-Gen clients + API routes
 ├── appliance.py               # Version/health endpoints + upgrade-bundle upload
 ├── db.py                      # History + settings store: built-in SQLite or an external database
+├── security.py                # Security tab: checklist detection, log-line parsing, syslog receiver
+├── security_catalog.py        # The checklist entries: explanation, commands, how each is detected
+├── tests/test_security.py     # Checklist, log lines, syslog, sessions - against tests/fake_netscaler.py
 ├── tests/test_storage.py      # Storage tests, run against real database servers
 ├── tests/test_auth.py         # Login tests: default admin, forced change, hashes from earlier releases
 ├── tests/test_offline.py      # No page loads from another host; bundled files match their checksums; time zone
@@ -170,6 +174,17 @@ curl -k -b cookies.txt https://<host>/api/history-stats     # size, row counts, 
 Every `/api/...` endpoint needs a signed-in session (an unauthenticated call gets `401`); only `/healthz` is open.
 
 Tune with `RETENTION_DAYS`, `RETENTION_INTERVAL_SECS`, `DASHBOARD_DB_FILE` (see `.env.example`). The DB is gitignored.
+
+### Security tab
+
+**Checklist.** Each entry is looked for on the selected node over NITRO (read-only): by its usual policy name or, when renamed, by what its rule does. The badge says what was found - *In place*, *Partly* (for example a policy that is not bound, a feature that is off, a log action that does not exist), *Not found*, or *Could not check* (the NITRO user may not read that object, or the build does not have it). Mark an entry **Done** or **Not relevant** yourself; marks are kept per instance (`security_checklist.json`, also copied to an external database). Clicking an entry shows what it does, what to watch out for, and the commands for the node's version, filled in with the instance's Gateway virtual server, the node address and this dashboard's address. The entries live in `security_catalog.py`.
+
+**Activity.** Hit counters come from the NetScaler (they are the appliance's own totals; the trend is sampled every `SECURITY_POLL_SECS` while the dashboard runs). Event details - WAF violations, brute-force blocks, hijack resets, failed logins, and the Gateway session lines the Sessions tab uses - come from the appliance's log:
+
+- **Syslog (recommended)**: point a syslog server at the dashboard (the checklist entry *Send logs to this dashboard* has the commands). It listens on **UDP and TCP 514** (`SYSLOG_PORT`) and accepts messages only from the address of a node configured in Settings; if the NetScaler sends from another address (a SNIP), add it with `SYSLOG_EXTRA_SENDERS=address=instance id`. Senders that were refused are listed on the tab. `set appfw settings -CEFLogging ON` gives every field of a WAF violation.
+- **Without syslog** the dashboard reads the appliance's last 256 audit lines every minute; violations that scroll past in between are not seen.
+
+Events are kept like the other history: `RETENTION_DAYS`, at most `SECURITY_MAX_EVENTS` (default 200,000), in the external database when one is connected.
 
 ### External database
 
@@ -297,7 +312,11 @@ python app.py            # serves HTTPS on :443 by default
 - `GET  /api/system-stats?node=primary|secondary`
 - `GET  /api/ha-status` — HA nodes (or cluster members in cluster mode)
 - `GET  /api/lb-vservers?node=...` / `GET /api/services?node=...` (NITRO)
-- `GET  /api/failover-history` · `GET /api/user-sessions?node=...`
+- `GET  /api/failover-history` · `GET /api/user-sessions?node=...` · `GET /api/session-ica?user=...`
+- `GET  /api/security/checklist?node=...` — the checklist with what was found on the node (`fresh=1` reads it again)
+- `POST /api/security/mark` — `{ "id": "epa_referer", "state": "done" | "irrelevant" | "" }`
+- `GET  /api/security/activity?range=1h|24h|7d` — counts, charts, policy hit counters, syslog receiver state
+- `GET  /api/security/events?range=...&kind=...&q=...` — the events, newest first
 - `POST /api/unlock-user` — `{ "node": "primary", "username": "user1" }`
 - `GET/POST /api/settings` — read/update nodes + mode
 - `GET  /api/database` — where data is stored, connection state, row counts

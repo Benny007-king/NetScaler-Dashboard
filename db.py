@@ -59,6 +59,9 @@ DB_FILE = os.getenv("DASHBOARD_DB_FILE") or os.path.join(DATA_DIR, "dashboard.db
 DB_CONFIG_FILE = os.getenv("DB_CONFIG_FILE") or os.path.join(DATA_DIR, "db_config.json")
 RETENTION_DAYS = _env_int("RETENTION_DAYS", 7)
 RETENTION_INTERVAL_SECS = _env_int("RETENTION_INTERVAL_SECS", 3600, 10)
+# Security events (WAF violations, policy hits) can arrive by the thousand during
+# an attack; beyond this many the oldest are removed at the next retention pass.
+SECURITY_MAX_EVENTS = _env_int("SECURITY_MAX_EVENTS", 200000, 1000)
 # A session counts as "Active" if it was seen within this window.
 ACTIVE_WINDOW_SECS = _env_int("SESSION_ACTIVE_WINDOW_SECS", 120)
 # Tables in an external database carry a prefix: it is somebody else's server and
@@ -79,7 +82,7 @@ _URL_SCHEMES = {
     "mssql": "mssql", "sqlserver": "mssql",
 }
 # Settings documents mirrored into the external database.
-DOC_NAMES = ("nodes", "auth", "ldap", "ha_state")
+DOC_NAMES = ("nodes", "auth", "ldap", "ha_state", "security")
 _META = "meta"
 # Format of the settings documents. Raised when a dashboard starts writing
 # something older dashboards cannot read; a dashboard refuses to load settings
@@ -111,7 +114,7 @@ _sync_thread_started = False
 
 # ====================================================================== schema
 class _Backend:
-    """An engine plus the three tables, named for that engine."""
+    """An engine plus the tables, named for that engine."""
 
     def __init__(self, engine, prefix: str, label: str):
         self.engine = engine
@@ -162,6 +165,30 @@ class _Backend:
             sa.UniqueConstraint("instance", "node", "session_id", name=prefix + "uq_session"),
             sa.Index(prefix + "idx_sess_last", "last_seen"),
             **opts)
+        # One row per security event (WAF violation, policy log line). ev_key is a
+        # hash of where it came from and its sequence number, so the same event
+        # received by syslog and read again from the audit log is stored once.
+        self.security = sa.Table(
+            prefix + "security_events", md,
+            sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+            sa.Column("instance", key(64)),
+            sa.Column("node", key(64)),
+            sa.Column("ts_epoch", sa.Double, nullable=False),
+            sa.Column("kind", sa.Unicode(32)),
+            sa.Column("etype", sa.Unicode(96)),
+            sa.Column("client_ip", sa.Unicode(64)),
+            sa.Column("url", big),
+            sa.Column("profile", sa.Unicode(255)),
+            sa.Column("action", sa.Unicode(64)),
+            sa.Column("username", sa.Unicode(255)),
+            sa.Column("session", sa.Unicode(255)),
+            sa.Column("message", big),
+            sa.Column("detail", big),
+            sa.Column("raw", big),
+            sa.Column("ev_key", key(64), nullable=False),
+            sa.UniqueConstraint("instance", "ev_key", name=prefix + "uq_security"),
+            sa.Index(prefix + "idx_sec_ts", "ts_epoch"),
+            **opts)
         self.settings = sa.Table(
             prefix + "settings", md,
             sa.Column("name", sa.Unicode(64), primary_key=True),
@@ -172,7 +199,7 @@ class _Backend:
         # Declared width of every short text column, per table.
         self.widths = {t.name: {c.name: c.type.length for c in t.columns
                                 if isinstance(c.type, sa.Unicode) and c.type.length}
-                       for t in (self.failover, self.sessions, self.settings)}
+                       for t in (self.failover, self.sessions, self.security, self.settings)}
 
     @property
     def is_sqlite(self) -> bool:
@@ -324,6 +351,101 @@ def _add_failover(b: _Backend, rows: list) -> int:
     return added
 
 
+_SEC_COLS = ("instance", "node", "ts_epoch", "kind", "etype", "client_ip", "url", "profile", "action",
+             "username", "session", "message", "detail", "raw", "ev_key")
+
+
+def _add_security(b: _Backend, rows: list) -> int:
+    """Insert security events that are not stored yet. Returns rows added."""
+    t = b.security
+    todo, seen = [], set()
+    for r in rows:
+        r = b.fit(t, {k: r.get(k) for k in _SEC_COLS})
+        r["instance"] = str(r["instance"] if r["instance"] is not None else "default")
+        r["ev_key"] = str(r["ev_key"] or "")
+        if not r["ev_key"] or r["ts_epoch"] is None:
+            continue
+        key = (r["instance"], r["ev_key"])
+        if key not in seen:
+            seen.add(key)
+            todo.append(r)
+    if not todo:
+        return 0
+    try:
+        with b.engine.begin() as c:
+            have = set()
+            for inst in {r["instance"] for r in todo}:
+                for chunk in _chunks([r["ev_key"] for r in todo if r["instance"] == inst]):
+                    for row in c.execute(sa.select(t.c.ev_key).where(t.c.instance == inst, t.c.ev_key.in_(chunk))):
+                        have.add((inst, row[0]))
+            new = [r for r in todo if (r["instance"], r["ev_key"]) not in have]
+            _insert_rows(c, t, new)
+            return len(new)
+    except sa.exc.SQLAlchemyError as e:
+        if _is_outage(e):
+            raise
+    added, refused, last = 0, 0, None
+    for r in todo:
+        try:
+            with b.engine.begin() as c:
+                c.execute(sa.insert(t), [r])
+            added += 1
+        except sa.exc.IntegrityError:
+            pass
+        except sa.exc.SQLAlchemyError as e:
+            if _is_outage(e):
+                raise
+            refused, last = refused + 1, e
+    if refused:
+        if refused == len(todo):
+            raise last
+        logger.warning(f"{refused} security event(s) were refused by the database and dropped: {_explain(last)}")
+    return added
+
+
+def _get_security(b: _Backend, instance, since, until, kinds, text, limit) -> list:
+    t = b.security
+    q = sa.select(t.c.node, t.c.ts_epoch, t.c.kind, t.c.etype, t.c.client_ip, t.c.url, t.c.profile, t.c.action,
+                  t.c.username, t.c.session, t.c.message, t.c.detail, t.c.raw)
+    if instance is not None:
+        q = q.where(t.c.instance == str(instance))
+    if since:
+        q = q.where(t.c.ts_epoch >= since)
+    if until:
+        q = q.where(t.c.ts_epoch <= until)
+    if kinds:
+        q = q.where(t.c.kind.in_(list(kinds)))
+    if text:
+        like = "%" + text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
+        q = q.where(sa.or_(*(col.like(like, escape="\\") for col in
+                             (t.c.client_ip, t.c.url, t.c.etype, t.c.message, t.c.username, t.c.profile))))
+    out = []
+    with b.engine.connect() as c:
+        for r in c.execute(q.order_by(t.c.ts_epoch.desc()).limit(limit)):
+            try:
+                detail = json.loads(r.detail) if r.detail else {}
+            except Exception:
+                detail = {}
+            out.append({"node": r.node, "ts": r.ts_epoch, "kind": r.kind, "etype": r.etype,
+                        "client_ip": r.client_ip, "url": r.url, "profile": r.profile, "action": r.action,
+                        "username": r.username, "session": r.session, "message": r.message,
+                        "detail": detail if isinstance(detail, dict) else {}, "raw": r.raw})
+    return out
+
+
+def _trim_security(b: _Backend, keep: int) -> int:
+    """Remove the oldest events beyond `keep`."""
+    t = b.security
+    with b.engine.begin() as c:
+        n = c.execute(sa.select(sa.func.count()).select_from(t)).scalar() or 0
+        if n <= keep:
+            return 0
+        cut = c.execute(sa.select(t.c.ts_epoch).order_by(t.c.ts_epoch.desc()).offset(keep).limit(1)).scalar()
+        if cut is None:
+            return 0
+        return max(c.execute(sa.delete(t).where(t.c.ts_epoch <= cut)).rowcount or 0, 0)
+
+
 def _get_failover(b: _Backend, days, instance) -> list:
     t = b.failover
     q = sa.select(t.c.timestamp, t.c.type, t.c.reason, t.c.role_change, t.c.ip)
@@ -425,7 +547,7 @@ def _merge_one_session(b: _Backend, r: dict) -> None:
 
 def _get_sessions(b: _Backend, days, instance) -> list:
     t = b.sessions
-    q = sa.select(t.c.node, t.c.username, t.c.type, t.c.ip, t.c.gateway, t.c.start_time,
+    q = sa.select(t.c.node, t.c.session_id, t.c.username, t.c.type, t.c.ip, t.c.gateway, t.c.start_time,
                   t.c.duration, t.c.detail, t.c.status, t.c.first_seen, t.c.last_seen)
     if days:
         q = q.where(t.c.last_seen >= time.time() - days * 86400)
@@ -450,7 +572,8 @@ def _get_sessions(b: _Backend, days, instance) -> list:
                 "user": r.username, "type": r.type, "ip": r.ip,
                 "gateway": r.gateway, "start": r.start_time,
                 "duration": r.duration, "node": r.node, "detail": detail,
-                "status": status, "end": end,
+                "status": status, "end": end, "session_id": r.session_id,
+                "first_seen": r.first_seen, "last_seen": r.last_seen,
             })
     return out
 
@@ -459,7 +582,9 @@ def _purge(b: _Backend, cutoff: float) -> tuple:
     with b.engine.begin() as c:
         fo = c.execute(sa.delete(b.failover).where(b.failover.c.ts_epoch < cutoff)).rowcount
         se = c.execute(sa.delete(b.sessions).where(b.sessions.c.last_seen < cutoff)).rowcount
-    return max(fo or 0, 0), max(se or 0, 0)
+        sec = c.execute(sa.delete(b.security).where(b.security.c.ts_epoch < cutoff)).rowcount
+    sec = max(sec or 0, 0) + _trim_security(b, SECURITY_MAX_EVENTS)
+    return max(fo or 0, 0), max(se or 0, 0), sec
 
 
 def _purge_types(b: _Backend, types: tuple) -> int:
@@ -472,11 +597,12 @@ def _counts(b: _Backend) -> dict:
     with b.engine.connect() as c:
         fo = c.execute(sa.select(sa.func.count(), sa.func.min(b.failover.c.ts_epoch)).select_from(b.failover)).first()
         se = c.execute(sa.select(sa.func.count(), sa.func.min(b.sessions.c.last_seen)).select_from(b.sessions)).first()
+        sec = c.execute(sa.select(sa.func.count()).select_from(b.security)).first()
 
     def _iso(v):
         return datetime.fromtimestamp(v).isoformat() if v else None
     return {"failover_events": fo[0], "failover_oldest": _iso(fo[1]),
-            "sessions": se[0], "sessions_oldest": _iso(se[1])}
+            "sessions": se[0], "sessions_oldest": _iso(se[1]), "security_events": sec[0]}
 
 
 def _put_docs(b: _Backend, docs: dict, remove=()) -> int:
@@ -530,9 +656,10 @@ def _transfer(src: _Backend, dst: _Backend, delete_src: bool) -> dict:
 
     It works in steps of _BATCH rows and takes the write lock for one step at a
     time, so requests that record history wait for a step, not for the whole move."""
-    moved = {"failover_events": 0, "sessions": 0}
+    moved = {"failover_events": 0, "sessions": 0, "security_events": 0}
     for table, key, put in ((src.failover, "failover_events", _add_failover),
-                            (src.sessions, "sessions", _merge_sessions)):
+                            (src.sessions, "sessions", _merge_sessions),
+                            (src.security, "security_events", _add_security)):
         last = 0
         while True:
             with _write_lock:
@@ -1052,7 +1179,7 @@ def test_config(cfg: dict) -> dict:
     try:
         server = _server_name(b)
         insp = sa.inspect(b.engine)
-        created = [t for t in (b.failover, b.sessions, b.settings) if not insp.has_table(t.name)]
+        created = [t for t in (b.failover, b.sessions, b.security, b.settings) if not insp.has_table(t.name)]
         _init(b)
         try:
             probe = "__probe_%s__" % os.urandom(4).hex()
@@ -1214,6 +1341,21 @@ def get_failover_events(days=None, instance=None) -> list:
     return _run(_get_failover, days, instance)
 
 
+def add_security_events(rows) -> int:
+    """Store security events (see security.make_row), ignoring ones already stored."""
+    rows = [r for r in (rows or []) if isinstance(r, dict)]
+    if not rows:
+        return 0
+    with _write_lock:
+        return _run(_add_security, rows)
+
+
+def get_security_events(instance=None, since=None, until=None, kinds=None, text=None, limit=500) -> list:
+    """Stored security events, newest first."""
+    limit = max(1, min(int(limit or 500), 100000))
+    return _run(_get_security, instance, since, until, tuple(kinds or ()), (text or "").strip()[:200], limit)
+
+
 def upsert_sessions(node: str, sessions, instance: str = "default") -> int:
     """Record/refresh observed sessions for an instance. Returns number processed."""
     now = time.time()
@@ -1241,17 +1383,18 @@ def purge(days=None) -> dict:
     days = days or RETENTION_DAYS
     cutoff = time.time() - days * 86400
     with _write_lock:
-        fo, se = _purge(_local, cutoff)
+        fo, se, sec = _purge(_local, cutoff)
         ext = _ext
         if ext is not None and _ext_up:
             try:
                 more = _purge(ext, cutoff)
-                fo, se = fo + more[0], se + more[1]
+                fo, se, sec = fo + more[0], se + more[1], sec + more[2]
             except Exception as e:
                 _mark_down(e)
-    if fo or se:
-        logger.info(f"Retention: removed {fo} failover event(s) and {se} session(s) older than {days} day(s)")
-    return {"failover_removed": fo, "sessions_removed": se, "days": days}
+    if fo or se or sec:
+        logger.info(f"Retention: removed {fo} failover event(s), {se} session(s) and {sec} security event(s) "
+                    f"older than {days} day(s) (or beyond {SECURITY_MAX_EVENTS} security events)")
+    return {"failover_removed": fo, "sessions_removed": se, "security_removed": sec, "days": days}
 
 
 def purge_types(types) -> int:

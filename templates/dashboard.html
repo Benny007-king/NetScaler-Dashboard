@@ -68,6 +68,19 @@
     .badge-danger { background: rgba(239, 68, 68, 0.15); color: #f87171; border-color: rgba(239, 68, 68, 0.2); }
     .badge-warning { background: rgba(245, 158, 11, 0.15); color: #fbbf24; border-color: rgba(245, 158, 11, 0.2); }
     .badge-info { background: rgba(59, 130, 246, 0.15); color: #60a5fa; border-color: rgba(59, 130, 246, 0.2); }
+    .badge-muted { background: rgba(148, 163, 184, 0.12); color: #94a3b8; border-color: rgba(148, 163, 184, 0.2); }
+    .sec-row { transition: border-color .15s, background .15s; }
+    .sec-row:hover { border-color: rgba(148, 163, 184, .45); background: rgba(15, 23, 42, .65); }
+    .sec-row:focus-visible { outline: 2px solid #60a5fa; outline-offset: 2px; }
+    .sec-dot { width: 2.25rem; height: 2.25rem; border-radius: 9999px; display: inline-flex; align-items: center; justify-content: center; font-weight: 700; font-size: .9rem; }
+    .mark-btn { font-size: .72rem; padding: .3rem .65rem; border-radius: .5rem; border: 1px solid #334155; color: #cbd5e1; background: rgba(15,23,42,.6); white-space: nowrap; }
+    .mark-btn:hover { border-color: #64748b; color: #fff; }
+    .mark-btn.on-done { background: rgba(16,185,129,.18); border-color: rgba(16,185,129,.5); color: #6ee7b7; }
+    .mark-btn.on-irrelevant { background: rgba(148,163,184,.18); border-color: rgba(148,163,184,.5); color: #e2e8f0; }
+    .cmd-block { white-space: pre-wrap; word-break: break-all; }
+    .cmd-ph { color: #fbbf24; background: rgba(245,158,11,.12); border-radius: .25rem; padding: 0 .15rem; }
+    .kpi { background: rgba(15, 23, 42, .55); border: 1px solid rgba(51, 65, 85, .6); border-radius: .9rem; padding: .9rem 1rem; }
+    .range-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
     .status-dot { width: 10px; height: 10px; border-radius: 9999px; display: inline-block; flex-shrink: 0; }
     .dot-up { background: #34d399; box-shadow: 0 0 8px rgba(52,211,153,.7); }
     .dot-degraded { background: #fbbf24; box-shadow: 0 0 8px rgba(251,191,36,.7); }
@@ -93,6 +106,20 @@
   </style>
 </head>
 <body class="p-4 md:p-8">
+
+<div id="secModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-[110] flex items-center justify-center fade-in" role="dialog" aria-modal="true" aria-labelledby="secModalTitle" onclick="if(event.target===this)closeCheck()">
+  <div class="glass-panel p-6 rounded-2xl w-full max-w-4xl max-h-[90vh] overflow-y-auto">
+    <div class="flex justify-between items-start gap-4 mb-4 border-b border-slate-700 pb-4">
+      <div>
+        <div id="secModalGroup" class="text-[11px] uppercase tracking-wider text-slate-500"></div>
+        <h2 id="secModalTitle" class="text-xl font-bold text-white"></h2>
+        <div id="secModalBadges" class="flex flex-wrap gap-2 mt-2"></div>
+      </div>
+      <button onclick="closeCheck()" class="text-slate-400 hover:text-white text-lg" aria-label="Close">✕</button>
+    </div>
+    <div id="secModalBody" class="space-y-5 text-sm text-slate-300"></div>
+  </div>
+</div>
 
 <div id="settingsModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center fade-in">
   <div class="glass-panel p-6 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
@@ -307,6 +334,7 @@
     <button onclick="setActiveTab('applications')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="applications">Applications</button>
     <button onclick="setActiveTab('failover')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="failover">Failover</button>
     <button onclick="setActiveTab('sessions')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="sessions">Sessions</button>
+    <button onclick="setActiveTab('security')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="security">Security</button>
     <button onclick="setActiveTab('certificates')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="certificates">Certificates</button>
     <button onclick="setActiveTab('unlock')" class="tab-btn px-6 py-3 text-sm font-medium text-slate-400 hover:text-white rounded-t-lg" data-tab="unlock">Unlock User</button>
   </div>
@@ -460,11 +488,11 @@
         </div>
         <div class="grid gap-1">
             <label class="text-xs text-slate-400 ml-1">Type</label>
-            <select id="sessType" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3"><option value="">All</option><option value="web">Web</option><option value="vpn">VPN</option></select>
+            <select id="sessType" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3"><option value="">All</option><option value="workspace">Web / Workspace</option><option value="clientless">Clientless VPN</option><option value="full tunnel">VPN (Full Tunnel)</option><option value="aaa">Web (AAA)</option></select>
         </div>
         <div class="grid gap-1">
             <label class="text-xs text-slate-400 ml-1">Status</label>
-            <select id="sessStatus" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3"><option value="">All</option><option value="active">Active</option><option value="terminated">Terminated</option></select>
+            <select id="sessStatus" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3"><option value="">All</option><option value="active">Active</option><option value="terminated">Terminated</option><option value="unknown">Unknown</option><option value="failed">Failed</option><option value="locked">Locked</option></select>
         </div>
         <div class="flex gap-2">
             <button id="sessSearch" onclick="loadSessions()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-medium">Search</button>
@@ -478,6 +506,79 @@
           <tbody id="sessTable" class="text-slate-300"><tr><td colspan="10" class="text-center py-8 text-slate-500">Set filters and click Search...</td></tr></tbody>
         </table>
       </div>
+    </div>
+  </section>
+
+  <section class="panel hidden fade-in" id="panel-security">
+    <div class="glass-panel rounded-2xl p-6 mb-6">
+      <div class="flex flex-wrap items-start justify-between gap-4 mb-5">
+        <div>
+          <h2 class="text-lg font-semibold text-white">Hardening checklist</h2>
+          <p id="secMeta" class="text-xs text-slate-400 mt-1">Reading the appliance…</p>
+        </div>
+        <div class="flex items-center gap-5">
+          <div class="min-w-[12rem]">
+            <div class="flex items-baseline justify-between text-xs text-slate-400 mb-1"><span>In place</span><span id="secScoreText" class="text-white font-semibold">—</span></div>
+            <div class="h-2 rounded-full bg-slate-800 overflow-hidden"><div id="secScoreBar" class="h-full bg-emerald-500 transition-all" style="width:0%"></div></div>
+          </div>
+          <button onclick="loadSecurity(true)" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg border border-slate-600">Check again</button>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-2 text-[11px] text-slate-400 mb-4">
+        <span class="badge badge-success">In place</span><span class="badge badge-warning">Partly</span><span class="badge badge-danger">Not found</span><span class="badge badge-muted">Could not check</span>
+        <span class="ml-1 self-center">Detected on the selected node. Mark an item <b class="text-slate-300">Done</b> or <b class="text-slate-300">Not relevant</b> yourself; click it for what it does and the commands.</span>
+      </div>
+      <div id="secChecklist" class="space-y-6"><div class="text-slate-500 text-sm py-6 text-center">Loading…</div></div>
+    </div>
+
+    <div class="glass-panel rounded-2xl p-6">
+      <div class="flex flex-wrap items-start justify-between gap-4 mb-5">
+        <div>
+          <h2 class="text-lg font-semibold text-white">Activity</h2>
+          <p id="secRecv" class="text-xs text-slate-400 mt-1"></p>
+        </div>
+        <div class="flex gap-1" role="group" aria-label="Time range">
+          <button class="range-btn text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300" data-range="1h" onclick="setSecRange('1h')">1 hour</button>
+          <button class="range-btn text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 active" data-range="24h" onclick="setSecRange('24h')">24 hours</button>
+          <button class="range-btn text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300" data-range="7d" onclick="setSecRange('7d')">7 days</button>
+        </div>
+      </div>
+      <div id="secKpis" class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-7 gap-3 mb-6"></div>
+      <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
+        <div class="kpi xl:col-span-2"><div class="text-xs uppercase tracking-wider text-slate-400 mb-2">Events over time</div><div class="h-56"><canvas id="secTimeline"></canvas></div></div>
+        <div class="kpi"><div class="text-xs uppercase tracking-wider text-slate-400 mb-2">WAF violations by check</div><div class="h-56"><canvas id="secByType"></canvas></div></div>
+      </div>
+      <div class="grid grid-cols-1 xl:grid-cols-3 gap-4 mb-6">
+        <div class="kpi xl:col-span-2">
+          <div class="text-xs uppercase tracking-wider text-slate-400 mb-2">Policy hits (counters on the NetScaler)</div>
+          <div class="table-container"><table><thead><tr><th>Policy</th><th>Checklist item</th><th>Bound to</th><th class="text-right">Hits</th><th class="text-right" id="secRecentHead">Last 24 h</th><th>Trend</th></tr></thead>
+          <tbody id="secHits" class="text-slate-300"></tbody></table></div>
+        </div>
+        <div class="kpi">
+          <div class="text-xs uppercase tracking-wider text-slate-400 mb-2">Top source addresses</div>
+          <div id="secTopIps" class="space-y-1 text-sm mb-4"></div>
+          <div class="text-xs uppercase tracking-wider text-slate-400 mb-2">Most targeted URLs</div>
+          <div id="secTopUrls" class="space-y-1 text-sm"></div>
+        </div>
+      </div>
+      <div class="flex flex-wrap gap-3 mb-3 p-3 bg-slate-900/50 rounded-xl border border-slate-700/50 items-end">
+        <div class="grid gap-1"><label for="secKind" class="text-xs text-slate-400 ml-1">Kind</label>
+          <select id="secKind" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3"><option value="">All security events</option></select></div>
+        <div class="grid gap-1 flex-grow"><label for="secQ" class="text-xs text-slate-400 ml-1">Search</label>
+          <input id="secQ" type="text" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3 w-full" placeholder="address, URL, check, user, message" onkeydown="if(event.key==='Enter')loadSecEvents()" /></div>
+        <div class="flex gap-2">
+          <button onclick="loadSecEvents()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-medium">Search</button>
+          <button onclick="exportToExcel('secEvTable', 'Security_Events')" class="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg border border-green-600">Excel</button>
+          <button onclick="exportToPDF('secEvTable', 'Security_Events')" class="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg border border-red-600">PDF</button>
+        </div>
+      </div>
+      <div class="table-container">
+        <table>
+          <thead><tr><th class="w-8"></th><th>Time</th><th>Kind</th><th>Type</th><th>Source IP</th><th>URL / target</th><th>Profile</th><th>Action</th><th>Message</th></tr></thead>
+          <tbody id="secEvTable" class="text-slate-300"><tr><td colspan="9" class="text-center py-8 text-slate-500">Loading…</td></tr></tbody>
+        </table>
+      </div>
+      <p id="secEvMore" class="text-xs text-slate-500 mt-2"></p>
     </div>
   </section>
 
@@ -1199,7 +1300,7 @@ function setActiveTab(name) {
 
     // These tabs are about the live/active appliance, so follow whichever node
     // currently holds the PRIMARY role rather than whatever was last selected.
-    if (state.primaryNode && ['applications', 'failover', 'sessions', 'certificates', 'unlock'].includes(name)) {
+    if (state.primaryNode && ['applications', 'failover', 'sessions', 'security', 'certificates', 'unlock'].includes(name)) {
         state.node = state.primaryNode;
         const nsel = $('nodeSelect');
         if (nsel && nsel.value !== state.node) nsel.value = state.node;
@@ -1212,6 +1313,7 @@ function setActiveTab(name) {
     if (name === 'applications') { loadApplications(); loadServices(); }
     if (name === 'failover') loadFailover();
     if (name === 'sessions') loadSessions();
+    if (name === 'security') loadSecurity();
     if (name === 'certificates') loadCertificates();
     
     startAutoRefresh();
@@ -1608,7 +1710,7 @@ async function loadFailover() {
     const arr = r.ok ? (r.data.events || []) : [];
     
     const fromTime = $('failFrom').value ? new Date($('failFrom').value).getTime() : 0;
-    const toTime = $('failTo').value ? new Date($('failTo').value).getTime() : Infinity;
+    const toTime = rangeEnd('failTo');
     const filterType = $('failType').value.toLowerCase();
     
     const filteredArr = arr.filter(e => {
@@ -1628,14 +1730,18 @@ async function loadSessions() {
     const arr = r.ok ? (r.data.sessions || []) : [];
     
     const fromTime = $('sessFrom').value ? new Date($('sessFrom').value).getTime() : 0;
-    const toTime = $('sessTo').value ? new Date($('sessTo').value).getTime() : Infinity;
+    const toTime = rangeEnd('sessTo');
     const fUser = $('sessUser').value.toLowerCase();
     const fType = $('sessType').value.toLowerCase();
     const fStatus = $('sessStatus').value.toLowerCase();
 
     const filteredArr = arr.filter(s => {
+        // in the range when the session overlaps it: an active session that began
+        // before "From" is still shown
         const t = parseDateFlexible(s.start);
-        const inTime = isNaN(t) ? true : (t >= fromTime && t <= toTime);
+        const e = s.end === 'Active' ? Date.now() : parseDateFlexible(s.end);
+        const until = isNaN(e) ? t : e;
+        const inTime = isNaN(t) ? true : (t <= toTime && until >= fromTime);
         const inUser = fUser ? (s.user || '').toLowerCase().includes(fUser) : true;
         const inType = fType ? (s.type || '').toLowerCase().includes(fType) : true;
         const inStatus = fStatus ? (s.status || '').toLowerCase().includes(fStatus) : true;
@@ -1668,6 +1774,18 @@ async function loadSessions() {
     $('sessTable').innerHTML = rows;
 }
 
+const SESS_FIELDS = [
+    ['gateway', 'Gateway'], ['gateway_address', 'Gateway address'], ['gateway_fqdn', 'Gateway FQDN'],
+    ['kind', 'Connection kind'], ['client_type', 'Gateway client type'], ['access_type', 'Access type'],
+    ['client_os', 'Client OS'], ['protocol', 'Protocol'], ['resource', 'End resource'],
+    ['source_ip', 'Source IP'], ['intranet_ip', 'Intranet IP'], ['mapped_ip', 'Mapped IP'], ['groups', 'Groups'],
+    ['login_time', 'Login time'], ['logout_time', 'Logout time'], ['logout_method', 'Logout method'],
+    ['gateway_session_id', 'Gateway session ID'], ['aaa_session_id', 'AAA session ID'],
+    ['connections', 'Open connections'], ['tcp_connections', 'TCP connections (session)'],
+    ['http_resources', 'Web resources opened'], ['bytes_sent', 'Bytes sent'], ['bytes_received', 'Bytes received'],
+    ['failure_reason', 'Failure reason'], ['source', 'Recorded from'],
+];
+
 async function toggleSession(i) {
     const row = $('sessDetail' + i);
     const caret = document.querySelector(`[data-caret="${i}"]`);
@@ -1679,40 +1797,349 @@ async function toggleSession(i) {
 
     const s = (window._sessData || [])[i] || {};
     const d = s.detail || {};
-    const cell = (label, val) => `<div><div class="text-[10px] uppercase tracking-wider text-slate-500">${label}</div><div class="text-sm text-slate-200">${escapeHtml(val || '—')}</div></div>`;
-    let html = `<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">
-        ${cell('Gateway', d.gateway)}
-        ${cell('Connection Kind', d.kind)}
-        ${cell('Protocol', d.protocol)}
-        ${cell('End Resource', d.resource)}
-        ${cell('Source IP', d.source_ip || s.ip)}
-        ${cell('Intranet IP', d.intranet_ip)}
-        ${cell('Client OS', d.client_os)}
-        ${cell('Start', formatILTime(s.start))}
-    </div>
-    <div id="icaBox${i}" class="text-xs text-slate-400">Loading live connection detail…</div>`;
+    const shown = v => v !== undefined && v !== null && String(v).trim() !== '' && v !== '—';
+    const cell = (label, val, wide) => `<div class="${wide ? 'col-span-2 md:col-span-4' : ''}"><div class="text-[10px] uppercase tracking-wider text-slate-500">${escapeHtml(label)}</div><div class="text-sm text-slate-200 break-words">${escapeHtml(val)}</div></div>`;
+    let cells = SESS_FIELDS.filter(([k]) => shown(d[k])).map(([k, label]) => cell(label, d[k]));
+    if (!cells.length) cells = [cell('Source IP', s.ip)];
+    let html = `<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mb-3">${cells.join('')}
+        ${shown(d.user_agent) ? cell('User agent', d.user_agent, true) : ''}
+        ${shown(d.log_line) ? cell('Log line', d.log_line, true) : ''}
+        ${shown(d.note) ? `<div class="col-span-2 md:col-span-4 text-xs text-amber-300">${escapeHtml(d.note)}</div>` : ''}</div>`;
+    const apps = Array.isArray(d.applications) ? d.applications : [];
+    if (apps.length) {
+        html += `<div class="text-slate-400 mb-1 mt-3 text-xs font-semibold">Applications in this session</div>
+        <table class="w-full text-xs mb-3"><thead><tr><th>Application</th><th>Server</th><th>Address</th><th>Start</th><th>End</th><th>Duration</th></tr></thead><tbody>
+        ${apps.map(a => `<tr><td class="text-white">${escapeHtml(a.app)}</td><td>${escapeHtml(a.server)}</td><td class="font-mono">${escapeHtml(a.dest)}</td><td>${escapeHtml(a.start)}</td><td>${escapeHtml(a.end || (s.status === 'Active' ? 'Running' : '—'))}</td><td>${escapeHtml(a.duration)}</td></tr>`).join('')}
+        </tbody></table>`;
+    }
+    if (Array.isArray(d.destinations) && d.destinations.length) {
+        html += `<div class="text-xs text-slate-400 mb-3"><span class="font-semibold">Destinations:</span> <span class="font-mono">${d.destinations.map(escapeHtml).join(', ')}</span></div>`;
+    }
+    html += `<div id="icaBox${i}" class="text-xs text-slate-400">${s.status === 'Active' ? 'Loading live connections…' : ''}</div>`;
     $('sessDetailBody' + i).innerHTML = html;
+    if (s.status !== 'Active') return;
 
-    // Live ICA/RDP connections for this user (only exist while the session is active).
+    // Live ICA connections for this user (they exist only while the session is active).
     const r = await getJSON(`/api/session-ica?node=${state.node}&user=${encodeURIComponent(s.user || '')}`);
     const box = $('icaBox' + i);
     if (!box) return;
     const conns = (r.ok && r.data.connections) || [];
     if (!conns.length) {
-        box.innerHTML = s.status === 'Active'
-            ? '<span class="text-slate-500">No ICA/RDP connection detail reported for this user.</span>'
-            : '<span class="text-slate-500">Session is no longer active — live connection detail unavailable.</span>';
+        box.innerHTML = '<span class="text-slate-500">No live ICA connection is open for this user.</span>';
         return;
     }
-    box.innerHTML = `<div class="text-slate-400 mb-2 font-semibold">Live connections</div>
-        <table class="w-full text-xs"><thead><tr><th>Gateway</th><th>Protocol</th><th>Resource</th><th>Server</th><th>Client IP</th><th>Device</th></tr></thead>
+    box.innerHTML = `<div class="text-slate-400 mb-1 font-semibold">Live ICA connections</div>
+        <table class="w-full text-xs"><thead><tr><th>Server</th><th>Address</th><th>Protocol</th><th>Client</th><th>Domain</th></tr></thead>
         <tbody>${conns.map(c => `<tr>
-            <td>${escapeHtml(c.gateway)}</td>
+            <td class="text-white">${escapeHtml(c.server)}</td>
+            <td class="font-mono">${escapeHtml(c.dest)}</td>
             <td><span class="badge badge-success">${escapeHtml(c.protocol)}</span></td>
-            <td class="text-white">${escapeHtml(c.resource)}</td>
-            <td class="font-mono">${escapeHtml(c.server)}</td>
-            <td class="font-mono text-blue-300">${escapeHtml(c.client_ip)}</td>
-            <td>${escapeHtml(c.device)}</td></tr>`).join('')}</tbody></table>`;
+            <td class="font-mono text-blue-300">${escapeHtml(c.client)}</td>
+            <td>${escapeHtml(c.domain || '—')}</td></tr>`).join('')}</tbody></table>`;
+}
+
+// --- SECURITY ---
+const SEC = { data: null, range: '24h', charts: {}, events: [], gw: '', portal: '' };
+const SEC_STATUS = {
+    configured: { label: 'In place', badge: 'badge-success', dot: 'bg-emerald-500/20 text-emerald-300', icon: '✓' },
+    partial:    { label: 'Partly', badge: 'badge-warning', dot: 'bg-amber-500/20 text-amber-300', icon: '!' },
+    missing:    { label: 'Not found', badge: 'badge-danger', dot: 'bg-red-500/20 text-red-300', icon: '✕' },
+    unknown:    { label: 'Could not check', badge: 'badge-muted', dot: 'bg-slate-500/20 text-slate-300', icon: '?' },
+};
+const SEC_KIND_COLORS = { waf: '#f87171', bot: '#fb923c', brute_force: '#fbbf24', cookie_hijack: '#a78bfa', login_failed: '#60a5fa', lockout: '#f472b6' };
+
+function secMd(text) {   // `code` in the notes
+    return escapeHtml(text).replace(/`([^`]+)`/g, '<code class="font-mono text-[12px] text-sky-300 bg-slate-950/60 px-1 rounded">$1</code>');
+}
+function secDone(c) { return c.mark?.state === 'done' || (c.status === 'configured' && c.mark?.state !== 'irrelevant'); }
+
+async function loadSecurity(fresh) {
+    const r = await getJSON(`/api/security/checklist?${qs({ node: state.node, fresh: fresh ? '1' : '' })}`);
+    if (!r.ok) {
+        $('secChecklist').innerHTML = `<div class="text-red-400 text-sm py-6 text-center">${escapeHtml(r.data.error || 'The checklist could not be read.')}</div>`;
+        $('secMeta').textContent = '';
+    } else {
+        SEC.data = r.data;
+        if (!r.data.vservers.includes(SEC.gw)) SEC.gw = r.data.vservers[0] || '';
+        if (!r.data.portal_vservers.includes(SEC.portal)) SEC.portal = r.data.portal_vservers[0] || '';
+        renderChecklist();
+    }
+    loadSecActivity();
+    loadSecEvents();
+}
+
+function renderChecklist() {
+    const d = SEC.data;
+    const when = d.read_at ? new Date(d.read_at * 1000).toLocaleTimeString('en-GB', { timeZone: APP_TZ, hour12: false }) : '';
+    $('secMeta').textContent = `Node ${d.node_ip}${d.version ? ' · NetScaler ' + d.version : ''}${when ? ' · read at ' + when : ''}`;
+    const relevant = d.checks.filter(c => c.mark?.state !== 'irrelevant');
+    const done = relevant.filter(secDone).length;
+    $('secScoreText').textContent = `${done} of ${relevant.length}`;
+    $('secScoreBar').style.width = relevant.length ? `${Math.round(done * 100 / relevant.length)}%` : '0%';
+    const groups = [];
+    d.checks.forEach((c, i) => {
+        let g = groups.find(x => x.name === c.group);
+        if (!g) groups.push(g = { name: c.group, items: [] });
+        g.items.push([c, i]);
+    });
+    $('secChecklist').innerHTML = groups.map(g => `
+        <div>
+          <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">${escapeHtml(g.name)}</div>
+          <div class="space-y-2">${g.items.map(([c, i]) => secRow(c, i)).join('')}</div>
+        </div>`).join('');
+}
+
+function secRow(c, i) {
+    const st = SEC_STATUS[c.status] || SEC_STATUS.unknown;
+    const mark = c.mark?.state || '';
+    const dim = mark === 'irrelevant' ? 'opacity-60' : '';
+    const dot = mark === 'done' && c.status !== 'configured' ? 'bg-emerald-500/20 text-emerald-300' : st.dot;
+    const icon = mark === 'irrelevant' ? '–' : (mark === 'done' ? '✓' : st.icon);
+    const evidence = (c.evidence || [])[0] || '';
+    return `<div class="sec-row ${dim} flex flex-wrap md:flex-nowrap items-center gap-4 p-3 rounded-xl bg-slate-900/40 border border-slate-700/50 cursor-pointer" tabindex="0" role="button" aria-label="${escapeHtml(c.title)}: details" onclick="openCheck(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openCheck(${i})}">
+        <span class="sec-dot ${dot} shrink-0" aria-hidden="true">${icon}</span>
+        <div class="flex-1 min-w-[14rem]">
+          <div class="text-white font-medium">${escapeHtml(c.title)}${c.optional ? ' <span class="text-[10px] text-slate-500 font-normal ml-1">only if you use it</span>' : ''}</div>
+          <div class="text-xs text-slate-400">${escapeHtml(c.summary)}</div>
+          ${evidence ? `<div class="text-[11px] text-slate-500 mt-1 truncate max-w-[52rem]" title="${escapeHtml(evidence)}">${escapeHtml(evidence)}</div>` : ''}
+        </div>
+        <div class="flex items-center gap-2 shrink-0" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">
+          <span class="badge ${st.badge}" title="Detected on the appliance">${st.label}</span>
+          <button class="mark-btn ${mark === 'done' ? 'on-done' : ''}" aria-pressed="${mark === 'done'}" onclick="setMark(${i}, '${mark === 'done' ? '' : 'done'}')">Done</button>
+          <button class="mark-btn ${mark === 'irrelevant' ? 'on-irrelevant' : ''}" aria-pressed="${mark === 'irrelevant'}" onclick="setMark(${i}, '${mark === 'irrelevant' ? '' : 'irrelevant'}')">Not relevant</button>
+        </div>
+      </div>`;
+}
+
+async function setMark(i, value) {
+    const c = SEC.data?.checks?.[i];
+    if (!c) return;
+    const r = await getJSON('/api/security/mark', { method: 'POST', body: JSON.stringify({ id: c.id, state: value }) });
+    if (!r.ok) { alert(r.data.error || 'The mark could not be saved.'); return; }
+    c.mark = r.data.mark || null;
+    renderChecklist();
+    if (!$('secModal').classList.contains('hidden') && SEC.open === i) openCheck(i);
+}
+
+function secFill(text, html) {
+    const d = SEC.data || {};
+    const vals = { GATEWAY_VSERVER: SEC.gw, PORTAL_VSERVER: SEC.portal, NSIP: d.node_ip, DASHBOARD_ADDRESS: d.dashboard_address };
+    if (!html) return text.replace(/<([A-Z_]+)>/g, (m, k) => vals[k] || m);
+    return escapeHtml(text).replace(/&lt;([A-Z_]+)&gt;/g, (m, k) => `<span class="cmd-ph" title="${k}">${escapeHtml(vals[k] || '<' + k + '>')}</span>`);
+}
+
+function openCheck(i) {
+    const c = SEC.data?.checks?.[i];
+    if (!c) return;
+    SEC.open = i;
+    const st = SEC_STATUS[c.status] || SEC_STATUS.unknown;
+    const mark = c.mark?.state || '';
+    $('secModalGroup').textContent = c.group;
+    $('secModalTitle').textContent = c.title;
+    $('secModalBadges').innerHTML = `<span class="badge ${st.badge}">Detected: ${st.label}</span>` +
+        (mark ? `<span class="badge ${mark === 'done' ? 'badge-success' : 'badge-muted'}">Marked ${mark === 'done' ? 'done' : 'not relevant'}${c.mark.by ? ' by ' + escapeHtml(c.mark.by) : ''}${c.mark.at ? ' · ' + escapeHtml(formatILTime(c.mark.at)) : ''}</span>` : '');
+    const v = c.variants[SEC.variant?.[c.id] ?? c.variant] || c.variants[0] || { commands: [] };
+    const d = SEC.data;
+    const uses = t => c.variants.some(x => x.commands.some(k => k.text.includes(t)));
+    const pickers = [];
+    if (uses('<GATEWAY_VSERVER>')) pickers.push(secPicker('Gateway virtual server', 'gw', d.vservers));
+    if (uses('<PORTAL_VSERVER>')) pickers.push(secPicker('Portal virtual server', 'portal', d.portal_vservers));
+    const policies = (c.policies || []);
+    $('secModalBody').innerHTML = `
+        <p class="leading-relaxed">${secMd(c.about)}</p>
+        ${c.notes?.length ? `<div><div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Good to know</div><ul class="list-disc pl-5 space-y-1 text-slate-300">${c.notes.map(n => `<li>${secMd(n)}</li>`).join('')}</ul></div>` : ''}
+        <div><div class="text-xs uppercase tracking-wider text-slate-500 mb-1">Found on ${escapeHtml(d.node_ip)}</div>
+          <ul class="space-y-1 text-slate-300">${(c.evidence || []).map(e => `<li class="flex gap-2"><span class="text-slate-500">•</span><span>${escapeHtml(e)}</span></li>`).join('') || '<li class="text-slate-500">Nothing.</li>'}</ul>
+          ${policies.length ? `<div class="table-container mt-2"><table class="text-xs"><thead><tr><th>Policy</th><th>Bound to</th><th class="text-right">Hits</th></tr></thead><tbody>${policies.map(p => `<tr><td class="font-mono text-white">${escapeHtml(p.name)}</td><td>${escapeHtml((p.bound || []).map(b => b.to + (b.type ? ' (' + b.type + ')' : '') + (b.priority != null && b.priority !== '' ? ' #' + b.priority : '')).join(', ') || 'not bound')}</td><td class="text-right">${Number(p.hits || 0).toLocaleString()}</td></tr>`).join('')}</tbody></table></div>` : ''}
+        </div>
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-3 mb-2">
+            <div class="text-xs uppercase tracking-wider text-slate-500">Commands</div>
+            <div class="flex flex-wrap items-center gap-3">
+              ${c.variants.length > 1 ? `<div class="flex gap-1" role="tablist">${c.variants.map((x, k) => `<button role="tab" aria-selected="${x === v}" class="range-btn text-xs px-3 py-1 rounded-lg border border-slate-600 text-slate-300 ${x === v ? 'active' : ''}" onclick="secVariant(${i}, ${k})">${escapeHtml(x.label)}</button>`).join('')}</div>` : ''}
+              ${pickers.join('')}
+            </div>
+          </div>
+          <div class="space-y-3">${v.commands.map((k, n) => `
+            <div>
+              <div class="flex items-center justify-between mb-1"><div class="text-xs text-slate-400">${escapeHtml(k.title)}</div>
+                <button class="mark-btn" onclick="secCopy(${i}, ${n}, this)">Copy</button></div>
+              <pre class="cmd-block font-mono text-[12px] leading-relaxed text-slate-200 bg-slate-950/80 border border-slate-700/60 rounded-lg p-3 max-h-72 overflow-auto">${secFill(k.text, true)}</pre>
+            </div>`).join('')}</div>
+        </div>
+        <div class="flex flex-wrap gap-2 pt-2 border-t border-slate-700">
+          <button class="mark-btn ${mark === 'done' ? 'on-done' : ''}" onclick="setMark(${i}, '${mark === 'done' ? '' : 'done'}')">${mark === 'done' ? 'Marked done - undo' : 'Mark as done'}</button>
+          <button class="mark-btn ${mark === 'irrelevant' ? 'on-irrelevant' : ''}" onclick="setMark(${i}, '${mark === 'irrelevant' ? '' : 'irrelevant'}')">${mark === 'irrelevant' ? 'Marked not relevant - undo' : 'Not relevant here'}</button>
+        </div>`;
+    $('secModal').classList.remove('hidden');
+}
+
+function secPicker(label, key, list) {
+    if (!list || !list.length) return `<span class="text-xs text-slate-500">${escapeHtml(label)}: none on this node</span>`;
+    if (list.length === 1) return `<span class="text-xs text-slate-400">${escapeHtml(label)}: <span class="text-white font-mono">${escapeHtml(list[0])}</span></span>`;
+    return `<label class="text-xs text-slate-400">${escapeHtml(label)}
+        <select class="ml-1 bg-slate-800 border border-slate-700 text-white text-xs rounded-lg py-1 px-2" onchange="SEC['${key}']=this.value; openCheck(SEC.open)">
+        ${list.map(x => `<option ${x === SEC[key] ? 'selected' : ''}>${escapeHtml(x)}</option>`).join('')}</select></label>`;
+}
+
+function secVariant(i, k) {
+    const c = SEC.data.checks[i];
+    SEC.variant = SEC.variant || {};
+    SEC.variant[c.id] = k;
+    openCheck(i);
+}
+
+async function secCopy(i, n, btn) {
+    const c = SEC.data.checks[i];
+    const v = c.variants[SEC.variant?.[c.id] ?? c.variant] || c.variants[0];
+    const text = secFill(v.commands[n].text, false);
+    try {
+        await navigator.clipboard.writeText(text);
+    } catch (e) {
+        const ta = document.createElement('textarea');
+        ta.value = text; document.body.appendChild(ta); ta.select();
+        try { document.execCommand('copy'); } finally { ta.remove(); }
+    }
+    const old = btn.textContent;
+    btn.textContent = 'Copied';
+    setTimeout(() => { btn.textContent = old; }, 1500);
+}
+
+function closeCheck() { $('secModal').classList.add('hidden'); }
+document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('secModal').classList.contains('hidden')) closeCheck(); });
+
+function setSecRange(r) {
+    SEC.range = r;
+    document.querySelectorAll('.range-btn[data-range]').forEach(b => b.classList.toggle('active', b.dataset.range === r));
+    loadSecActivity();
+    loadSecEvents();
+}
+
+function secAgo(ts) {
+    const s = Math.max(0, Math.round(Date.now() / 1000 - ts));
+    if (s < 90) return `${s} s ago`;
+    if (s < 5400) return `${Math.round(s / 60)} min ago`;
+    return `${Math.round(s / 3600)} h ago`;
+}
+
+async function loadSecActivity() {
+    const r = await getJSON(`/api/security/activity?${qs({ node: state.node, range: SEC.range })}`);
+    if (!r.ok) { $('secKpis').innerHTML = `<div class="col-span-full text-red-400 text-sm">${escapeHtml(r.data.error || 'Activity could not be read.')}</div>`; return; }
+    const a = r.data;
+    SEC.kinds = a.kinds;
+    const sel = $('secKind');
+    if (sel.options.length <= 1) {
+        ['waf', 'bot', 'brute_force', 'cookie_hijack', 'login_failed', 'lockout'].forEach(k => {
+            const o = document.createElement('option'); o.value = k; o.textContent = a.kinds[k] || k; sel.appendChild(o);
+        });
+    }
+    const k = a.kpi;
+    const tile = (label, value, tone, hint) => `<div class="kpi"><div class="text-[11px] uppercase tracking-wider text-slate-400">${label}</div><div class="text-2xl font-semibold mt-1 ${tone}">${Number(value || 0).toLocaleString()}</div>${hint ? `<div class="text-[11px] text-slate-500 mt-0.5">${hint}</div>` : ''}</div>`;
+    $('secKpis').innerHTML = [
+        tile('WAF violations', k.waf, k.waf ? 'text-red-300' : 'text-white'),
+        tile('Blocked by WAF', k.waf_blocked, 'text-white'),
+        tile('Brute-force blocks', k.brute_force, k.brute_force ? 'text-amber-300' : 'text-white'),
+        tile('Hijack resets', k.cookie_hijack, k.cookie_hijack ? 'text-violet-300' : 'text-white'),
+        tile('Failed logins', k.login_failed, 'text-white'),
+        tile('Accounts locked', k.lockout, k.lockout ? 'text-pink-300' : 'text-white'),
+        tile('Source addresses', k.attackers, 'text-white', 'in these events'),
+    ].join('');
+    // where the events come from
+    const rc = a.receiver, from = Object.entries(rc.from_this_instance || {});
+    const listening = Object.entries(rc.listening || {}).filter(([, on]) => on).map(([p]) => p.toUpperCase()).join('/');
+    let recv = listening ? `Syslog receiver on ${listening} ${rc.port}. ` : `Syslog receiver not listening${rc.error ? ' (' + rc.error + ')' : ''}. `;
+    recv += from.length ? `Last log from this instance ${secAgo(Math.max(...from.map(([, v]) => v.last)))}.`
+                        : `Nothing received from this instance yet - see "Send logs to this dashboard" above; until then the last 256 audit lines are read every ${a.poll_secs || 60} s.`;
+    if ((rc.rejected || []).length) recv += ` Refused from ${rc.rejected.slice(0, 3).map(x => x.sender).join(', ')} (not a configured node address).`;
+    if (rc.queue_dropped) recv += ` ${rc.queue_dropped} event(s) dropped because they arrived faster than they could be stored.`;
+    $('secRecv').textContent = recv;
+    renderSecCharts(a);
+    // policy hits
+    $('secRecentHead').textContent = { '1h': 'Last hour', '24h': 'Last 24 h', '7d': 'Last 7 days' }[SEC.range];
+    $('secHits').innerHTML = a.hits.length ? a.hits.map(h => `<tr>
+        <td class="font-mono text-[11px] text-white break-all">${escapeHtml(h.policy)}</td>
+        <td class="text-xs">${escapeHtml(h.title)}</td>
+        <td class="text-xs text-slate-400">${escapeHtml(h.bound)}</td>
+        <td class="text-right font-semibold">${Number(h.hits || 0).toLocaleString()}</td>
+        <td class="text-right">${h.trend && h.trend.length ? Number(h.recent || 0).toLocaleString() : '<span class="text-slate-500" title="Counted from the samples taken while the dashboard runs">—</span>'}</td>
+        <td>${secSpark(h.trend || [])}</td></tr>`).join('')
+        : `<tr><td colspan="6" class="text-center py-6 text-slate-500">${escapeHtml(a.hits_error || 'None of the checklist policies is on this node yet.')}</td></tr>`;
+    const list = (arr, mono) => arr.length ? arr.map(x => `<div class="flex justify-between gap-3"><span class="${mono ? 'font-mono text-blue-300' : 'text-slate-300'} truncate" title="${escapeHtml(x.name)}">${escapeHtml(x.name)}</span><span class="text-slate-400 shrink-0">${x.count}</span></div>`).join('') : '<div class="text-slate-500 text-xs">None in this range.</div>';
+    $('secTopIps').innerHTML = list(a.summary.top_ips, true);
+    $('secTopUrls').innerHTML = list(a.summary.top_urls, false);
+}
+
+function secSpark(pts) {
+    if (!pts.length) return '';
+    const vals = pts.map(p => p[1]), max = Math.max(1, ...vals), w = 120, h = 24;
+    const step = pts.length > 1 ? w / (pts.length - 1) : w;
+    const line = vals.map((v, n) => `${(n * step).toFixed(1)},${(h - 2 - (v / max) * (h - 4)).toFixed(1)}`).join(' ');
+    return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}" aria-hidden="true"><polyline fill="none" stroke="#60a5fa" stroke-width="1.5" points="${line}"/></svg>`;
+}
+
+function renderSecCharts(a) {
+    Object.values(SEC.charts).forEach(ch => { try { ch.destroy(); } catch (e) {} });
+    SEC.charts = {};
+    const t = a.summary.timeline, kinds = ['waf', 'bot', 'brute_force', 'cookie_hijack', 'login_failed', 'lockout'];
+    const fmt = ts => new Date(ts * 1000).toLocaleString('en-GB', SEC.range === '7d'
+        ? { timeZone: APP_TZ, day: '2-digit', month: '2-digit', hour: '2-digit', hour12: false }
+        : { timeZone: APP_TZ, hour: '2-digit', minute: '2-digit', hour12: false });
+    try {
+        SEC.charts.t = new Chart($('secTimeline'), {
+            type: 'bar',
+            data: { labels: t.map(x => fmt(x.t)), datasets: kinds.filter(k => t.some(x => x[k])).map(k => ({
+                label: (a.kinds || {})[k] || k, data: t.map(x => x[k] || 0), backgroundColor: SEC_KIND_COLORS[k], stack: 's', borderRadius: 3 })) },
+            options: { responsive: true, maintainAspectRatio: false, animation: false,
+                plugins: { legend: { position: 'bottom', labels: { boxWidth: 10 } } },
+                scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } } }
+        });
+        const bt = a.summary.by_type;
+        SEC.charts.b = new Chart($('secByType'), {
+            type: 'bar',
+            data: { labels: bt.map(x => x.name.replace(/^APPFW_/, '')), datasets: [{ data: bt.map(x => x.count), backgroundColor: '#f87171', borderRadius: 3 }] },
+            options: { indexAxis: 'y', responsive: true, maintainAspectRatio: false, animation: false,
+                plugins: { legend: { display: false } }, scales: { x: { beginAtZero: true, ticks: { precision: 0 } }, y: { grid: { display: false } } } }
+        });
+    } catch (e) { console.error('Security charts failed', e); }
+}
+
+async function loadSecEvents() {
+    const r = await getJSON(`/api/security/events?${qs({ range: SEC.range, kind: $('secKind').value, q: $('secQ').value.trim() })}`);
+    if (!r.ok) { $('secEvTable').innerHTML = `<tr><td colspan="9" class="text-center py-8 text-red-400">${escapeHtml(r.data.error || 'Events could not be read.')}</td></tr>`; return; }
+    SEC.events = r.data.events || [];
+    const actBadge = a => /block|drop|reset|refused/i.test(a || '') && !/not/i.test(a || '') ? 'badge-danger' : 'badge-warning';
+    $('secEvTable').innerHTML = SEC.events.length ? SEC.events.map((e, i) => `
+        <tr class="cursor-pointer hover:bg-white/5" onclick="toggleSecEvent(${i})">
+          <td><svg class="w-4 h-4 transition-transform text-slate-400" data-seccaret="${i}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg></td>
+          <td class="text-xs whitespace-nowrap">${escapeHtml(e.time)}</td>
+          <td class="whitespace-nowrap"><span class="text-xs" style="color:${SEC_KIND_COLORS[e.kind] || '#cbd5e1'}">${escapeHtml(e.kind_label)}</span></td>
+          <td class="text-xs font-mono">${escapeHtml((e.etype || '').replace(/^APPFW_/, ''))}</td>
+          <td class="font-mono text-xs text-blue-300">${escapeHtml(e.client_ip || '—')}</td>
+          <td class="text-xs max-w-[18rem] truncate" title="${escapeHtml(e.url)}">${escapeHtml(e.url || '—')}</td>
+          <td class="text-xs">${escapeHtml(e.profile || '—')}</td>
+          <td class="whitespace-nowrap">${e.action ? `<span class="badge ${actBadge(e.action)} whitespace-nowrap">${escapeHtml(e.action)}</span>` : '—'}</td>
+          <td class="text-xs max-w-[20rem] truncate" title="${escapeHtml(e.message)}">${escapeHtml(e.message || '—')}</td>
+        </tr>
+        <tr id="secEv${i}" class="hidden"><td colspan="9" class="bg-slate-900/60 p-4"></td></tr>`).join('')
+        : `<tr><td colspan="9" class="text-center py-8 text-slate-500">No security events in this range.</td></tr>`;
+    $('secEvMore').textContent = r.data.more ? `Showing the newest ${r.data.limit}; narrow the search to see older ones.` : '';
+}
+
+function toggleSecEvent(i) {
+    const row = $('secEv' + i), caret = document.querySelector(`[data-seccaret="${i}"]`);
+    if (!row) return;
+    const opening = row.classList.contains('hidden');
+    row.classList.toggle('hidden');
+    if (caret) caret.style.transform = opening ? 'rotate(90deg)' : '';
+    if (!opening) return;
+    const e = SEC.events[i];
+    const labels = { username: 'User', session: 'Session', node: 'Received from' };
+    const base = Object.entries({ username: e.username, session: e.session, node: e.node }).filter(([, v]) => v);
+    const extra = Object.entries(e.detail || {}).filter(([, v]) => v !== '' && v != null);
+    const cell = (k, v) => `<div><div class="text-[10px] uppercase tracking-wider text-slate-500">${escapeHtml(labels[k] || k.replace(/_/g, ' '))}</div><div class="text-xs text-slate-200 break-all">${escapeHtml(v)}</div></div>`;
+    row.firstElementChild.innerHTML = `<div class="grid grid-cols-2 md:grid-cols-4 gap-3 mb-3">${base.concat(extra).map(([k, v]) => cell(k, v)).join('')}</div>
+        <div class="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Full log line</div>
+        <pre class="cmd-block font-mono text-[11px] text-slate-300 bg-slate-950/80 border border-slate-700/60 rounded-lg p-3">${escapeHtml(e.raw || e.message)}</pre>`;
 }
 
 // --- CERTIFICATES ---
@@ -1855,13 +2282,27 @@ function setInitialDateFields() {
     
     ['failTo', 'sessTo'].forEach(id => {
         const h = $(id), d = $(id + 'Display');
-        if (h && d) { h.value = now.toISOString(); d.value = formatDisplay(now); }
+        if (h && d) { h.value = now.toISOString(); d.value = formatDisplay(now); h.dataset.auto = '1'; }
     });
     
     ['failFrom', 'sessFrom'].forEach(id => {
         const h = $(id), d = $(id + 'Display');
         if (h && d) { h.value = yesterday.toISOString(); d.value = formatDisplay(yesterday); }
     });
+}
+
+// "To" still on its default means "until now": move it to now at every search, so
+// a session that started after the page was opened is not filtered out.
+function rangeEnd(id) {
+    const h = $(id), d = $(id + 'Display');
+    if (!h || !h.value) return Infinity;
+    if (h.dataset.auto === '1') {
+        const now = new Date();
+        h.value = now.toISOString();
+        if (d) d.value = formatDisplay(now);
+        return Infinity;
+    }
+    return new Date(h.value).getTime();
 }
 
 function formatDisplay(d) {
@@ -1930,6 +2371,7 @@ $('dpApply').onclick = () => {
     if (!dp.selected) dp.selected = new Date();
     dp.selected.setHours(Number(dp.hour.value), Number(dp.min.value));
     dp.target.value = dp.selected.toISOString();
+    delete dp.target.dataset.auto;
     dp.display.value = formatDisplay(dp.selected);
     dp.el.classList.add('hidden');
 };
@@ -1943,14 +2385,14 @@ $('dpApply').onclick = () => {
 // Quick ranges
 document.querySelectorAll('.dp-quick button').forEach(btn => {
     btn.onclick = () => {
-        if (btn.dataset.clear) { dp.target.value = ''; dp.display.value = ''; dp.el.classList.add('hidden'); return; }
+        if (btn.dataset.clear) { dp.target.value = ''; dp.display.value = ''; delete dp.target.dataset.auto; dp.el.classList.add('hidden'); return; }
         const now = new Date(); let from;
         if (btn.dataset.range === '24h') from = new Date(now - 86400000);
         if (btn.dataset.range === '7d') from = new Date(now - 7 * 86400000);
         if (btn.dataset.range === 'today') from = new Date(now.setHours(0, 0, 0, 0));
         
         if (dp.target.id.endsWith('From')) { dp.target.value = from.toISOString(); dp.display.value = formatDisplay(from); }
-        if (dp.target.id.endsWith('To')) { dp.target.value = new Date().toISOString(); dp.display.value = formatDisplay(new Date()); }
+        if (dp.target.id.endsWith('To')) { dp.target.value = new Date().toISOString(); dp.display.value = formatDisplay(new Date()); dp.target.dataset.auto = '1'; }
         dp.el.classList.add('hidden');
     }
 });
@@ -1965,6 +2407,9 @@ function startAutoRefresh() {
     const active = document.querySelector('.tab-btn.active').dataset.tab;
     if (active === 'overview') {
         state.interval = setInterval(() => pollOnce('overview', () => loadOverview(true)), state.refreshMs);
+    } else if (active === 'security') {
+        // counters and charts only: the events table keeps what the user opened
+        state.interval = setInterval(() => pollOnce('security', () => loadSecActivity()), 30000);
     } else if (active === 'wall') {
         // One pass hits every node of every instance - poll it less aggressively.
         state.interval = setInterval(() => pollOnce('wall', () => loadWall(true)), state.wallRefreshMs);

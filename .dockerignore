@@ -26,6 +26,7 @@ nodes_config.json
 ldap_config.json
 failover_history.json
 ha_last_state.json
+security_checklist.json
 dashboard.db
 dashboard.db-wal
 dashboard.db-shm
@@ -57,6 +58,7 @@ dist/
 **/nodes_config.json
 **/ldap_config.json
 **/db_config.json
+**/security_checklist.json
 **/.app_secret
 **/dashboard.db*
 **/*.log

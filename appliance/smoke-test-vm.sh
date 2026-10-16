@@ -10,6 +10,8 @@
 #   5. uploading the .nsu performs a real upgrade through the host agent
 #   6. an external database (a PostgreSQL server in this container): connect over
 #      TLS, settings copied, an outage, recovery
+#   6b. security events: syslog (UDP and TCP 514) from a configured node is received
+#      and stored; one from any other address is refused
 #   7. uploading a release that cannot start is rolled back automatically
 #   8. the console menu: first login, static address, time zone, back to DHCP (console-test.py)
 #
@@ -72,7 +74,7 @@ accel="tcg,thread=multi"; [ -w /dev/kvm ] && accel=kvm
 echo "   accelerator: $accel"
 qemu-system-x86_64 -machine q35 -accel "$accel" -cpu max -smp 4 -m 2048 \
   -drive "file=$WORK/disk.qcow2,if=none,id=d0,format=qcow2" -device ide-hd,drive=d0,bus=ide.0 \
-  -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:8443-:443" -device e1000,netdev=n0 \
+  -netdev "user,id=n0,hostfwd=tcp:127.0.0.1:8443-:443,hostfwd=udp:127.0.0.1:5514-:514,hostfwd=tcp:127.0.0.1:5514-:514" -device e1000,netdev=n0 \
   -chardev "socket,id=ser0,path=$WORK/serial.sock,server=on,wait=off,logfile=$WORK/serial.log" -serial chardev:ser0 \
   -display none -daemonize -pidfile "$WORK/qemu.pid"
 
@@ -181,6 +183,41 @@ dbwait false 120 || die "the dashboard did not notice the database going away"
 pg_ctlcluster "$PGV" main start
 dbwait true 180 || die "the dashboard did not reconnect to the database"
 pass "survives the database going away and reconnects by itself"
+
+# ------------------------------------------------------- 6b. security events
+step "6b. Security events by syslog"
+# Messages forwarded into the VM by QEMU arrive from 10.0.2.2, so that is the
+# "NetScaler" here: a node with that address is configured first.
+inst='{"instances":[{"name":"Smoke","mode":"standalone","primary":{"ip":"10.0.2.2","username":"nsapi","password":"smoke-unused","port":80,"protocol":"http"}}]}'
+[ "$(dbpost /api/settings "$inst")" = 200 ] || die "could not configure the test instance: $(cat "$WORK/resp.json")"
+iid=$(jq -r '.instances[0].id' "$WORK/resp.json")
+[ -n "$iid" ] && [ "$iid" != null ] || die "no instance id in: $(cat "$WORK/resp.json")"
+now=$(date -u +%m/%d/%Y:%H:%M:%S)
+printf '<134> %s GMT ns-smoke 0-PPE-0 : default APPFW APPFW_SQL 701 0 :  203.0.113.9 701-PPE0 - smoke_profile https://gw.example.com/nf/auth/doAuthentication.do SQL Keyword check failed for field login <blocked>' "$now" > /dev/udp/127.0.0.1/5514
+line=$(printf '<134> %s GMT ns-smoke 0-PPE-0 : default RESPONDER Message 702 0 :  "Max login attempts detected from 203.0.113.50 to gw.example.com /nf/auth/doAuthentication.do Possible brute force login attack"' "$now")
+printf '%s\n' "$line" > /dev/tcp/127.0.0.1/5514
+got=""
+for _ in $(seq 30); do
+  got=$(api "$BASE/api/security/events?instance=$iid&range=1h" | jq -r '[.events[].etype] | sort | join(",")' 2>/dev/null || true)
+  [ "$got" = "APPFW_SQL,BRUTE_FORCE_BLOCK" ] && break
+  sleep 2
+done
+[ "$got" = "APPFW_SQL,BRUTE_FORCE_BLOCK" ] || die "the syslog messages were not received and stored (got '$got')"
+[ "$(pg "SELECT count(*) FROM nsd_security_events WHERE etype IN ('APPFW_SQL','BRUTE_FORCE_BLOCK')" nsd)" = 2 ] \
+  || die "the security events are not in the external database"
+act=$(api "$BASE/api/security/activity?instance=$iid&range=1h")
+jq -e '.kpi.waf == 1 and .kpi.waf_blocked == 1 and .kpi.brute_force == 1 and (.receiver.listening.udp and .receiver.listening.tcp)' <<<"$act" >/dev/null \
+  || die "unexpected activity summary: $act"
+pass "a WAF violation (UDP) and a brute-force block (TCP) received on port 514 and stored in the external database"
+# the same address is now removed from the instance: its messages must be refused
+[ "$(dbpost /api/settings '{"instances":[{"id":"'"$iid"'","name":"Smoke","mode":"standalone","primary":{"ip":"192.0.2.250","username":"nsapi","password":"smoke-unused","port":80,"protocol":"http"}}]}')" = 200 ] \
+  || die "could not change the test instance"
+printf '<134> %s GMT ns-smoke 0-PPE-0 : default APPFW APPFW_XSS 703 0 :  203.0.113.9 703-PPE0 - smoke_profile https://gw.example.com/x Cross-site script check failed <blocked>' "$now" > /dev/udp/127.0.0.1/5514
+sleep 4
+[ "$(pg "SELECT count(*) FROM nsd_security_events WHERE etype = 'APPFW_XSS'" nsd)" = 0 ] || die "a message from an address that is not a node was stored"
+api "$BASE/api/security/activity?instance=$iid&range=1h" | jq -e '.receiver.rejected | map(.sender) | index("10.0.2.2") != null' >/dev/null \
+  || die "the refused sender is not listed"
+pass "a message from an address that is not a configured node is refused and listed"
 
 # ----------------------------------------------------------------- 7. rollback
 step "7. A release that cannot start"

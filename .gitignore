@@ -39,3 +39,5 @@ venv/
 dist/
 *.ova
 *.nsu
+# Security tab: the checklist marks (runtime state, lives in DATA_DIR)
+security_checklist.json

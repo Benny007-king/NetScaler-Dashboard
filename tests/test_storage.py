@@ -61,6 +61,35 @@ def sess(sid, user="alice", ip="192.0.2.10", gateway="gw1", duration="00:01:00",
     return s
 
 
+def sec(key, kind="waf", inst="a", ts=None, **kw):
+    r = {"instance": inst, "node": "192.0.2.11", "ts_epoch": ts or time.time(), "kind": kind, "etype": "APPFW_SQL",
+         "client_ip": "203.0.113.9", "url": "https://gw.example.com/nf/auth/doAuthentication.do", "profile": "p",
+         "action": "blocked", "username": "", "session": "", "message": "SQL Keyword check failed",
+         "detail": json.dumps({"field": "login"}), "raw": "raw line", "ev_key": key}
+    r.update(kw)
+    return r
+
+
+def security_suite(db):
+    rows = [sec("k1"), sec("k2", kind="brute_force", client_ip="203.0.113.50", message="100% sure_thing"),
+            sec("k3", username=HEBREW, kind="login_failed", message="Invalid credentials " + HEBREW),
+            sec("k4", url="https://gw.example.com/" + "a" * 5000, message="x\x00y"),       # long URL, NUL byte
+            sec("k1", inst="b")]                                                           # same key, other instance
+    check(db.add_security_events(rows + [sec("k1")]) == 5, "5 security events stored, the duplicate ignored")
+    check(db.add_security_events(rows) == 0, "storing them again adds nothing")
+    ev = db.get_security_events(instance="a", since=time.time() - 3600)
+    check(len(ev) == 4, f"events per instance, got {len(ev)}")
+    check(next(e for e in ev if e["username"] == HEBREW)["message"].endswith(HEBREW), "Unicode round-trips")
+    check(next(e for e in ev if e["etype"] and e["url"].endswith("a" * 100))["message"] == "xy", "a NUL byte is removed, the long URL kept")
+    check(ev[0]["detail"] == {"field": "login"} or any(e["detail"] == {"field": "login"} for e in ev), "detail JSON round-trips")
+    check(len(db.get_security_events(instance="a", kinds=["brute_force"])) == 1, "filter by kind")
+    check(len(db.get_security_events(instance="a", text="100%")) == 1 and len(db.get_security_events(instance="a", text="%")) == 1
+          and len(db.get_security_events(instance="a", text="e_t")) == 1, "a search for % or _ matches them literally")
+    check(len(db.get_security_events(instance="a", text="203.0.113.50")) == 1, "search by address")
+    check(len(db.get_security_events(instance="a", since=time.time() + 60)) == 0, "since filter")
+    check(db.stats()["security_events"] == 5, "stats count security events")
+
+
 def history_suite(db, label):
     # --- sessions
     n = db.upsert_sessions("primary", [sess("s1"), sess("s2", user=HEBREW), sess(LONG_ID, user="long"),
@@ -102,6 +131,7 @@ def history_suite(db, label):
 
     st = db.stats()
     check(st["sessions"] == 7 and st["failover_events"] == 3, f"stats count rows: {st}")
+    security_suite(db)
 
     # --- retention and cleanup
     check(db.purge_types(("AAA login x",)) == 0, "purge_types leaves other types alone")
@@ -109,9 +139,11 @@ def history_suite(db, label):
     check(db.purge_types(("Mgmt login", "Management")) == 1, "purge_types removes the matching type")
     time.sleep(0.3)
     res = db.purge(days=1e-6)                     # everything older than ~0.1 s
-    check(res["sessions_removed"] == 7 and res["failover_removed"] == 3, f"purge removes old rows: {res}")
-    check(db.get_sessions(days=7) == [] and db.get_failover_events() == [], "nothing left after purge")
-    print(f"   ok  {label}: sessions, failover, filters, retention")
+    check(res["sessions_removed"] == 7 and res["failover_removed"] == 3 and res["security_removed"] == 5,
+          f"purge removes old rows: {res}")
+    check(db.get_sessions(days=7) == [] and db.get_failover_events() == [] and db.get_security_events() == [],
+          "nothing left after purge")
+    print(f"   ok  {label}: sessions, failover, security events, filters, retention")
 
 
 def builtin_suite(tmp):
@@ -164,7 +196,7 @@ def legacy_suite(tmp):
 
 def wipe(db, cfg):
     b = db._make_backend(cfg)
-    for t in (b.settings, b.sessions, b.failover):
+    for t in (b.settings, b.sessions, b.failover, b.security):
         t.drop(b.engine, checkfirst=True)
     b.engine.dispose()
 
@@ -172,7 +204,7 @@ def wipe(db, cfg):
 def tables(db, cfg):
     import sqlalchemy as sa
     b = db._make_backend(cfg)
-    names = [t.name for t in (b.failover, b.sessions, b.settings) if sa.inspect(b.engine).has_table(t.name)]
+    names = [t.name for t in (b.failover, b.sessions, b.security, b.settings) if sa.inspect(b.engine).has_table(t.name)]
     b.engine.dispose()
     return names
 
@@ -220,7 +252,7 @@ def external_suite(tmp, url):
     # connect: history moves over, settings are copied
     r = db.connect_external(cfg, "local")
     label = r["server"]
-    check(r["moved"] == {"failover_events": 1, "sessions": 2}, f"existing history is moved: {r}")
+    check(r["moved"] == {"failover_events": 1, "sessions": 2, "security_events": 0}, f"existing history is moved: {r}")
     st = db.status()
     check(st["backend"] == "external" and st["connected"] and st["counts"]["sessions"] == 2, f"status after connect: {st}")
     check(st["waiting"]["sessions"] == 0 and st["waiting"]["failover_events"] == 0, "nothing left in the built-in store")
@@ -244,7 +276,7 @@ def external_suite(tmp, url):
     # test against a database that now holds data
     t = db.test_config(cfg)
     check(t["existing"]["settings"] and t["existing"]["instances"] == ["Prod " + HEBREW], f"test reports the existing settings: {t}")
-    check(len(tables(db, cfg)) == 3, "a test never drops tables that were already there")
+    check(len(tables(db, cfg)) == 4, "a test never drops tables that were already there")
 
     # disconnect: history comes back, the database keeps its copy
     db.upsert_sessions("primary", [sess("keep1")], instance="a")
@@ -297,14 +329,18 @@ def external_suite(tmp, url):
     good = db._ext
     db._ext = db._make_backend(db.clean_config({"type": "url", "url": dead_url(url)}))
     db.upsert_sessions("primary", [sess("outage1")], instance="a")
+    db.add_security_events([sec("outage-ev")])
     st = db.status()
-    check(not st["connected"] and st["error"] and st["waiting"]["sessions"] == 1, f"outage: history waits locally: {st}")
+    check(not st["connected"] and st["error"] and st["waiting"]["sessions"] == 1 and st["waiting"]["security_events"] == 1,
+          f"outage: history and security events wait locally: {st}")
     check([r["user"] for r in db.get_sessions(days=7, instance="a")] == ["alice"], "and is still readable")
     db._ext = good                                  # "the database is back"
     db._wake.set()
     wait_for(lambda: db.status()["connected"], "recovery")
     st = db.status()
-    check(st["waiting"]["sessions"] == 0 and st["counts"]["sessions"] == 2, f"after recovery the waiting history is in the database: {st}")
+    check(st["waiting"]["sessions"] == 0 and st["counts"]["sessions"] == 2 and st["waiting"]["security_events"] == 0
+          and st["counts"]["security_events"] >= 1, f"after recovery the waiting history is in the database: {st}")
+    check(any(e["ts"] for e in db.get_security_events(instance="a")), "and the security events are read from it")
 
     db.disconnect_external()
 

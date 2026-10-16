@@ -6,6 +6,69 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.18.0
+**Security tab (new)**
+- **Hardening checklist.** Thirteen items for a NetScaler Gateway: the six
+  Gateway policies (login audit logging for 13.1 and 14.1, brute-force rate
+  limiter, session cookie hijack prevention, IP reputation drop, EPA Referer
+  check, SAML hardening) and seven appliance settings (Web App Firewall on Auth,
+  VPN and Portal, a Content-Security-Policy header, HttpOnly authentication
+  cookies, cookie version 1, TCP SYN-flood / spoofing / RFC 5961 protection,
+  secure-only management access, and syslog to this dashboard).
+- Each item is **detected on the selected node** over NITRO, read-only - a policy
+  renamed by the administrator is still recognised by its rule - and shows what
+  was found: where it is bound, its hit count, what is missing (a policy that is
+  not bound, a feature that is off, a log action that does not exist).
+- Items can be marked **Done** or **Not relevant** (for SAML or EPA when they are
+  not used); the marks are kept per instance, with who set them, and copied to
+  the external database with the other settings.
+- Clicking an item shows what it does, what to watch out for, and the commands,
+  for the node's NetScaler version, filled in with the instance's Gateway virtual
+  server, the node address and this dashboard's address, with a copy button.
+- Corrections to the supplied commands: the rate limiter's selector was created
+  under another name than the limit identifier refers to; the 13.1 login logging
+  needs the two responder policies too; user-defined audit messages must be
+  switched on (`userDefinedAuditlog`); logging policies bind with NEXT.
+- **Activity**: WAF violations, blocks, brute-force blocks, hijack resets, failed
+  logins and locked accounts over the last hour, day or week; events over time;
+  WAF violations by check; the hit counters of every checklist policy with their
+  trend; top source addresses and URLs; and a searchable, exportable table of
+  every event with all its fields and the original log line (native and CEF
+  formats).
+- **Where the events come from**: the dashboard receives syslog on UDP and TCP
+  514 - only from the address of a configured node - and, until that is set up,
+  reads the appliance's last 256 audit lines every minute. Events are stored like
+  the other history: the retention period, a cap of `SECURITY_MAX_EVENTS`, and
+  the external database (they wait locally while it is unreachable).
+
+**Sessions**
+- Sessions were requested from a NITRO object (`vpnsession`) that does not exist
+  on NetScaler; an error there could cost the whole live list. They now come
+  from `aaasession`, which lists every connection separately: one row per user,
+  address and virtual server, with the Gateway named from the virtual server's
+  address, the group, intranet IP, destinations and open connections, and the
+  live ICA connections (TCP and EDT) with the application server's name.
+- The Gateway's own log lines (SSLVPN LOGIN / LOGOUT / ICASTART / ICAEND, AAA
+  LOGIN_FAILED, and the login audit policy) complete each session: the real login
+  and logout time and duration, logout method, Gateway session id, client type
+  (ICA proxy, clientless, full VPN), operating system, Workspace app or browser,
+  Gateway FQDN, user agent, bytes, and every published application started with
+  its server, start and end. Sessions that ended before the dashboard saw them
+  are shown from their log lines; failed sign-ins keep their failure reason for
+  the whole retention period.
+- Time filter: a session that overlaps the range is shown (an active session that
+  began before "From" used to be hidden), and "To" left on its default means
+  "until now" (sessions that started after the page was opened were hidden). The
+  same on the Failover tab.
+
+**Settings and tests**
+- New settings: `SYSLOG_PORT`, `SYSLOG_EXTRA_SENDERS`, `SYSLOG_ADVERTISE_ADDRESS`,
+  `SECURITY_POLL_SECS`, `SECURITY_MAX_EVENTS` (see `.env.example`).
+- `tests/test_security.py` (68 checks, with `tests/fake_netscaler.py`, a stand-in
+  that answers like NITRO); the storage tests cover security events on
+  PostgreSQL, MySQL and MariaDB; the boot test sends syslog into the appliance
+  over UDP and TCP and finds the events in the external database.
+
 ## 1.17.0
 - **Works without internet access.** The pages used to load their styling,
   charts, Excel/PDF export and fonts from public CDNs, so a browser on a closed

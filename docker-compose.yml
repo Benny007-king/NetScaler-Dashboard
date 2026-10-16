@@ -17,6 +17,11 @@ services:
       DATA_DIR: /app/data
     ports:
       - "${HOST_PORT:-443}:443"   # HOST_PORT in .env publishes on another host port
+      # Syslog from the NetScalers for the Security tab (uncomment if nothing else on
+      # this host uses 514; inside a container the senders may appear NATed - see
+      # SYSLOG_EXTRA_SENDERS in .env.example):
+      # - "514:514/udp"
+      # - "514:514/tcp"
     env_file:
       - path: .env
         required: false

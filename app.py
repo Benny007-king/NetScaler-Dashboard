@@ -28,6 +28,7 @@ import requests
 
 import appliance
 import db
+import security
 from flask import (
     Flask, render_template, jsonify, request, redirect, url_for,
     session, flash
@@ -98,6 +99,7 @@ NODES_CONFIG_FILE = os.getenv('NODES_CONFIG_FILE') or _data_path('nodes_config.j
 LDAP_CONFIG_FILE = os.getenv('LDAP_CONFIG_FILE') or _data_path('ldap_config.json')
 FAILOVER_HISTORY_FILE = os.getenv('FAILOVER_HISTORY_FILE') or _data_path('failover_history.json')
 HA_STATE_FILE = os.getenv('HA_STATE_FILE') or _data_path('ha_last_state.json')
+SECURITY_FILE = os.getenv('SECURITY_FILE') or _data_path('security_checklist.json')
 APP_SECRET_FILE = os.getenv('APP_SECRET_FILE') or _data_path('.app_secret')
 LOG_FILE = os.getenv('APP_LOG_FILE') or _data_path('netscaler_complete.log')
 
@@ -1513,6 +1515,7 @@ def _db_documents():
                  and not auth_config.get('is_default_password', False) and not auth_config.get('unreadable')),
         'ldap': (dict(LDAP_CFG), os.path.exists(LDAP_CONFIG_FILE)),
         'ha_state': (ha, isinstance(ha, dict) and bool(ha)),
+        'security': (dict(SEC_MARKS), os.path.exists(SECURITY_FILE)),
     }
 
 def _detect_all_api_modes_soon():
@@ -1552,6 +1555,12 @@ def _db_apply_document(name, doc):
     elif name == 'ha_state':
         clean = {str(k)[:200]: str(v)[:64] for k, v in doc.items() if isinstance(v, str)}
         _write_json(HA_STATE_FILE, clean)
+    elif name == 'security':
+        clean = _clean_marks(doc)
+        with _sec_lock:
+            _write_json(SECURITY_FILE, clean, indent=2)
+            SEC_MARKS.clear()
+            SEC_MARKS.update(clean)
 
 db.register_documents(_db_documents, _db_apply_document)
 
@@ -2184,66 +2193,11 @@ def _pick(s, keys):
             return v
     return ''
 
-def _normalize_session(raw, kind):
-    """Map a raw NITRO vpn/aaa session dict into the dashboard's shape, including
-    a `detail` block (gateway, connection protocol, resource) for the sub-row."""
-    s = {str(k).lower(): v for k, v in raw.items()}
-    try: duration_secs = max(0, int(float(str(s.get('duration') or 0).strip())))
-    except (TypeError, ValueError): duration_secs = 0
-    start_dt = datetime.now().timestamp() - duration_secs
-    start = datetime.fromtimestamp(start_dt, APP_TZ).strftime('%d/%m/%Y %H:%M:%S')
-
-    src_ip = _pick(s, ['publicip', 'clientip', 'srcip', 'client_ip', 'ipaddress', 'ip'])
-    intranet_ip = _pick(s, ['intranetip', 'iip', 'peip', 'mappedip'])
-    gateway = _pick(s, ['vservername', 'vserver', 'vsname', 'gateway', 'gatewayname',
-                        'authnvsname', 'agname', 'vpnvservername', 'tmvserver',
-                        'vsvrname', 'polarisid', 'gatewayfqdn'])
-
-    # Stable identifier so repeated polls of the same session map to one row.
-    # NITRO exposes a per-session key; fall back to user+kind when it's absent.
-    session_id = _pick(s, ['sessionkey', 'sessionid', 'sid', 'sessguid',
-                           'sessionguid', 'pcbid']) or '|'.join(
-                               x for x in (str(s.get('username', '')), kind, str(src_ip or '')) if x)
-
-    # Connection class for the main row.
-    if kind == 'aaa':
-        conn_type = 'Web (AAA)'
-    elif intranet_ip:
-        conn_type = 'VPN (Full Tunnel)'
-    else:
-        conn_type = 'Web / Workspace'
-
-    # Per-connection protocol (ICA / RDP / SSL-VPN) and end resource, best-effort
-    # across the field names NetScaler uses on different builds.
-    protocol = _pick(s, ['transportprotocol', 'transport', 'protocol', 'sesstype', 'smartaccess'])
-    resource = _pick(s, ['application', 'appname', 'publishedapp', 'resource', 'server', 'destip', 'homepage'])
-    detail = {
-        'gateway': gateway or '—',
-        'protocol': protocol or ('SSL-VPN' if intranet_ip else '—'),
-        'resource': resource or '—',
-        'source_ip': src_ip or '—',
-        'intranet_ip': intranet_ip or '—',
-        'client_os': _pick(s, ['clientos', 'deviceos', 'os', 'useragent']) or '—',
-        'kind': 'Gateway/VPN' if kind == 'vpn' else 'AAA/Web',
-    }
-    return {
-        'user': s.get('username', 'Unknown'),
-        'session_id': session_id,
-        'type': conn_type,
-        'status': 'Active',
-        'duration': f"{duration_secs // 60} min",
-        'ip': src_ip or 'Unknown',
-        'gateway': gateway or ('N/A (AAA)' if kind == 'aaa' else 'Unknown'),
-        'start': start,
-        'end': 'Active',
-        'detail': detail,
-    }
-
 def _synthetic_row(user, status, when='', conn_type='—', gateway='—', ip='—', extra=None, sid=None):
     """A non-connection row (Failed attempt / Locked account) shaped like a session
     so it renders in the same table. Persisted with its explicit status."""
-    detail = {'gateway': gateway, 'protocol': '—', 'resource': '—',
-              'source_ip': ip, 'intranet_ip': '—', 'client_os': '—', 'kind': status}
+    detail = {'gateway': gateway, 'protocol': '—', 'resource': '—', 'source_ip': ip, 'intranet_ip': '—',
+              'client_os': '—', 'kind': {'Failed': 'Failed sign-in', 'Locked': 'Locked account'}.get(status, status)}
     if extra:
         detail.update(extra)
     return {
@@ -2253,27 +2207,365 @@ def _synthetic_row(user, status, when='', conn_type='—', gateway='—', ip='�
         'start': when or '', 'end': '', 'detail': detail,
     }
 
-def _ica_gateway_map(nitro):
-    """username(lower) -> gateway/vserver name, from live ICA connections. Used to
-    fill the gateway on the main session list (vpn/aaa sessions often omit it)."""
-    out = {}
-    for path, key in (('/config/vpnicaconnection', 'vpnicaconnection'),
-                      ('/config/icaconnection', 'icaconnection')):
+_VS_CACHE = {}
+_VS_CACHE_LOCK = threading.Lock()
+
+def _vserver_map(nitro, iid):
+    """'ip:port' -> (virtual server name, kind) and server ip -> server name, so a
+    session's addresses can be shown by name. Cached for five minutes."""
+    with _VS_CACHE_LOCK:
+        hit = _VS_CACHE.get(iid)
+    if hit and time.time() - hit[0] < 300:
+        return hit[1], hit[2]
+    vmap, smap = {}, {}
+    for path, key, kind in (('/config/vpnvserver?attrs=name,ipv46,port', 'vpnvserver', 'vpn'),
+                            ('/config/authenticationvserver?attrs=name,ipv46,port', 'authenticationvserver', 'auth'),
+                            ('/config/csvserver?attrs=name,ipv46,port', 'csvserver', 'cs'),
+                            ('/config/lbvserver?attrs=name,ipv46,port', 'lbvserver', 'lb')):
         try:
-            d = nitro._get(path, custom_timeout=4) or {}
-            items = d.get(key)
-            if isinstance(items, list) and items:
-                for raw in items:
-                    s = {str(k).lower(): v for k, v in raw.items()}
-                    u = str(s.get('username') or s.get('user') or '').lower()
-                    g = _pick(s, ['vservername', 'vserver', 'gateway', 'gatewayname', 'vsvrname', 'agname'])
-                    if u and g:
-                        out[u] = g
-                if out:
-                    break
+            rows = (nitro._get(path, custom_timeout=5) or {}).get(key) or []
+        except Exception:
+            continue
+        for v in rows if isinstance(rows, list) else []:
+            ip = str(v.get('ipv46') or '').strip()
+            if ip and ip not in ('0.0.0.0', '::'):
+                vmap.setdefault(f"{ip}:{_int(v.get('port'), 0)}", (str(v.get('name') or ''), kind))
+    try:
+        for sv in (nitro._get('/config/server?attrs=name,ipaddress', custom_timeout=5) or {}).get('server') or []:
+            if isinstance(sv, dict) and sv.get('ipaddress'):
+                smap.setdefault(str(sv['ipaddress']), str(sv.get('name') or ''))
+    except Exception:
+        pass
+    with _VS_CACHE_LOCK:
+        _VS_CACHE[iid] = (time.time(), vmap, smap)
+    return vmap, smap
+
+def _cached_vserver_map(iid):
+    with _VS_CACHE_LOCK:
+        hit = _VS_CACHE.get(iid)
+    return (hit[1], hit[2]) if hit else ({}, {})
+
+def _ica_list(nitro):
+    """Live ICA connections (TCP and EDT/DTLS), lower-cased keys."""
+    out = []
+    for path, key in (('/config/vpnicaconnection', 'vpnicaconnection'),
+                      ('/config/vpnicadtlsconnection', 'vpnicadtlsconnection')):
+        try:
+            for raw in (nitro._get(path, custom_timeout=5) or {}).get(key) or []:
+                if isinstance(raw, dict):
+                    row = {str(k).lower(): v for k, v in raw.items()}
+                    row['_dtls'] = key.endswith('dtlsconnection')
+                    out.append(row)
         except Exception:
             continue
     return out
+
+def _ica_entry(c, smap):
+    dest = str(c.get('destip') or '')
+    proto = str(c.get('transproto') or ('UDP' if c.get('_dtls') else 'TCP')).upper()
+    return {'server': smap.get(dest) or dest or '—',
+            'dest': f"{dest}:{c.get('destport')}" if dest else '—',
+            'client': f"{c.get('srcip')}:{c.get('srcport')}" if c.get('srcip') else '—',
+            'protocol': 'ICA over EDT (UDP)' if proto == 'UDP' else 'ICA (TCP)',
+            'domain': str(c.get('domain') or '')}
+
+def _live_sessions(nitro, iid):
+    """Active Gateway / AAA sessions from /config/aaasession. NetScaler lists one
+    entry per connection, so entries of one user from one address through one
+    virtual server are one session. Raises when the node does not answer."""
+    vmap, smap = _vserver_map(nitro, iid)
+    try:
+        aaa = (nitro._get('/config/aaasession', custom_timeout=6) or {}).get('aaasession') or []
+    except requests.HTTPError as e:
+        logger.info(f"AAA sessions could not be read: {e}")
+        aaa = []
+    groups = {}
+    for raw in aaa if isinstance(aaa, list) else []:
+        try:
+            if not isinstance(raw, dict):
+                continue
+            s = {str(k).lower(): v for k, v in raw.items()}
+            user = str(s.get('username') or '').strip()
+            if not user:
+                continue
+            pub = _pick(s, ['publicip', 'clientip', 'srcip'])
+            vip = f"{s.get('ipaddress')}:{_int(s.get('port'), 0)}" if s.get('ipaddress') else ''
+            g = groups.setdefault((user.lower(), pub, vip), {
+                'user': user, 'ip': pub, 'vip': vip, 'conns': 0, 'dest': set(),
+                'intranet': '', 'group': '', 'private': '', 'key': ''})
+            g['conns'] += 1
+            if s.get('destip') and str(s.get('destip')) not in ('0.0.0.0', '::'):
+                g['dest'].add(f"{s.get('destip')}:{s.get('destport')}")
+            g['intranet'] = g['intranet'] or _pick(s, ['intranetip', 'intranetip6', 'iip'])
+            g['group'] = g['group'] or str(s.get('groupname') or '')
+            g['private'] = g['private'] or _pick(s, ['privateip'])
+            g['key'] = g['key'] or str(s.get('sessionkey') or '')
+        except Exception as e:
+            logger.info(f"Skipped an aaasession row that could not be read: {e}")
+    ica = _ica_list(nitro)
+    rows, now_txt, ica_users = [], datetime.now(APP_TZ).strftime('%d/%m/%Y %H:%M:%S'), set()
+    for g in groups.values():
+        name, kind = vmap.get(g['vip'], ('', ''))
+        mine = [c for c in ica if str(c.get('username') or '').lower() == g['user'].lower()
+                and (not c.get('srcip') or not g['ip'] or str(c.get('srcip')) == g['ip'])]
+        if mine:
+            ica_users.add(g['user'].lower())
+        if g['intranet']:
+            ctype = 'VPN (Full Tunnel)'
+        elif kind in ('lb', 'cs', 'auth'):
+            ctype = 'Web (AAA)'
+        else:
+            ctype = 'Web / Workspace'
+        dests = sorted(g['dest'])
+        detail = {
+            'gateway': name or g['vip'] or '—', 'gateway_address': g['vip'] or '—',
+            'protocol': 'ICA' if mine else ('SSL-VPN' if g['intranet'] else 'HTTPS'),
+            'resource': ', '.join(sorted({_ica_entry(c, smap)['server'] for c in mine})) or
+                        ', '.join(smap.get(d.rsplit(':', 1)[0]) or d for d in dests[:5]) or '—',
+            'source_ip': g['ip'] or '—', 'intranet_ip': g['intranet'] or '—', 'mapped_ip': g['private'] or '—',
+            'groups': g['group'] or '—', 'connections': g['conns'], 'destinations': dests[:20],
+            'ica_live': [_ica_entry(c, smap) for c in mine][:20],
+            'kind': {'vpn': 'Gateway', 'auth': 'Authentication', 'lb': 'AAA-TM (load balancing)',
+                     'cs': 'AAA-TM (content switching)'}.get(kind, 'Gateway/AAA'),
+        }
+        rows.append({'user': g['user'], 'session_id': g['key'] or f"{g['user']}|{g['ip']}|{name or g['vip']}",
+                     'type': ctype, 'status': 'Active', 'duration': '', 'ip': g['ip'] or 'Unknown',
+                     'gateway': name or g['vip'] or 'Unknown', 'start': now_txt, 'end': 'Active', 'detail': detail})
+    # ICA proxy users who hold an application connection but no AAA session entry
+    for c in ica:
+        u = str(c.get('username') or '')
+        if not u or u.lower() in ica_users:
+            continue
+        ica_users.add(u.lower())
+        e = _ica_entry(c, smap)
+        rows.append({'user': u, 'session_id': f"{u}|{c.get('srcip')}|ica", 'type': 'Web / Workspace',
+                     'status': 'Active', 'duration': '', 'ip': str(c.get('srcip') or 'Unknown'), 'gateway': 'Unknown',
+                     'start': now_txt, 'end': 'Active',
+                     'detail': {'gateway': '—', 'protocol': 'ICA', 'resource': e['server'], 'source_ip': str(c.get('srcip') or '—'),
+                                'intranet_ip': '—', 'kind': 'ICA proxy', 'ica_live': [e]}})
+    return rows
+
+# --------------------------------------------------- sessions: log lines
+_CLIENT_TYPES = {'ICA': 'Web / Workspace (ICA proxy)', 'CVPN': 'Clientless VPN', 'RDP': 'RDP proxy',
+                 'VPN': 'VPN (Full Tunnel)', 'AGENT': 'VPN (Full Tunnel)', 'PLUGIN': 'VPN (Full Tunnel)'}
+
+def _fmt_ts(ts):
+    try:
+        return datetime.fromtimestamp(float(ts), APP_TZ).strftime('%d/%m/%Y %H:%M:%S') if ts else ''
+    except Exception:
+        return ''
+
+def _fmt_dur(secs):
+    secs = max(0, int(secs or 0))
+    h, m = divmod(secs // 60, 60)
+    return f"{h} h {m} min" if h else f"{m} min"
+
+def _apply_gateway_lines(r, rec, vmap):
+    """Fill a session from the Gateway's LOGIN/LOGOUT lines for it."""
+    li, lo = rec.get('login'), rec.get('logout')
+    first = li or lo
+    f = dict((lo or {}).get('detail') or {})
+    f.update((li or {}).get('detail') or {})
+    d = r.setdefault('detail', {})
+    start = li['ts'] if li else float(f.get('start_epoch') or lo['ts'])
+    r['_start_ts'] = min(start, r.get('_start_ts') or start)
+    vs = f.get('vserver') or first.get('url') or ''
+    name = vmap.get(vs, ('', ''))[0]
+    if name or vs:
+        if str(r.get('gateway') or '') in ('', 'Unknown', '—') or r.get('gateway') == vs or str(r.get('gateway', '')).startswith('N/A'):
+            r['gateway'] = name or vs
+        d['gateway'] = d.get('gateway') if d.get('gateway') not in (None, '', '—', vs) else (name or vs)
+        d['gateway_address'] = vs or d.get('gateway_address', '—')
+    ct = str(f.get('sslvpn_client_type') or '').upper()
+    if ct:
+        d['client_type'] = ct
+        r['type'] = _CLIENT_TYPES.get(ct, r.get('type') or ct)
+    d['gateway_session_id'] = first.get('session') or d.get('gateway_session_id', '—')
+    for src, dst in (('browser_type', 'user_agent'), ('group(s)', 'groups'), ('nat_ip', 'mapped_ip'),
+                     ('total_bytes_send', 'bytes_sent'), ('total_bytes_recv', 'bytes_received'),
+                     ('total_tcp_connections', 'tcp_connections'), ('http_resources_accessed', 'http_resources')):
+        v = f.get(src)
+        if v and v not in ('N/A', 'Mapped Ip') and d.get(dst) in (None, '', '—'):
+            d[dst] = v
+    if lo:
+        d['logout_method'] = lo.get('action') or f.get('logoutmethod') or '—'
+        d['logout_time'] = _fmt_ts(lo['ts'])
+        if r.get('status') != 'Active':
+            r['status'], r['_end_ts'] = 'Terminated', lo['ts']
+    d['login_time'] = _fmt_ts(start)
+
+def _row_from_gateway_lines(rec, vmap, live_ok):
+    """A session known only from its log lines. Without a logout line it is
+    'Unknown' for 12 hours (the appliance did not list it, but nothing says it
+    ended), then 'Terminated'."""
+    first = rec.get('login') or rec.get('logout')
+    status = 'Terminated'
+    if not rec.get('logout') and time.time() - first['ts'] < 12 * 3600:
+        status = 'Unknown'
+    r = {'user': first.get('username') or 'Unknown', 'ip': first.get('client_ip') or 'Unknown',
+         'type': 'Web / Workspace', 'gateway': 'Unknown', 'status': status, 'node': first.get('node'), 'end': '',
+         'detail': {'kind': 'Gateway', 'source_ip': first.get('client_ip') or '—'}}
+    _apply_gateway_lines(r, rec, vmap)
+    if not rec.get('logout'):
+        r['detail']['note'] = ('No logout line was received for this session, and the appliance does not list it '
+                               'among its active sessions.' if live_ok else
+                               'No logout line was received, and the appliance could not be asked whether the '
+                               'session is still active.')
+    return r
+
+def _apply_login_lines(r, logins, start, end):
+    """OS, access type, Gateway FQDN and user agent from the checklist's login
+    audit lines of the same user and address."""
+    user, ip = str(r.get('user') or '').lower(), r.get('ip')
+    near = [e for e in logins if str(e.get('username') or '').lower() == user
+            and (not ip or ip == 'Unknown' or not e.get('client_ip') or e['client_ip'] == ip)
+            and start - 600 <= e['ts'] <= (end or time.time()) + 60]
+    if not near:
+        return
+    e = near[-1]
+    f = e.get('detail') or {}
+    d = r.setdefault('detail', {})
+    for src, dst in (('os', 'client_os'), ('access type', 'access_type'), ('gateway fqdn', 'gateway_fqdn'),
+                     ('gateway', 'gateway_fqdn'), ('user-agent', 'user_agent'), ('session id', 'aaa_session_id')):
+        if f.get(src) and d.get(dst) in (None, '', '—'):
+            d[dst] = f[src]
+    d['login_lines'] = len(near)
+    first = min(x['ts'] for x in near)
+    if first < (r.get('_start_ts') or first + 1):
+        r['_start_ts'] = first
+
+def _apply_app_lines(r, apps, smap, start, end):
+    """Published applications the user started during the session (ICASTART /
+    ICAEND lines): name, server, start, end."""
+    user, ip = str(r.get('user') or '').lower(), r.get('ip')
+    pairs = {}
+    for e in apps:
+        if str(e.get('username') or '').lower() != user:
+            continue
+        if ip and ip != 'Unknown' and e.get('client_ip') and e['client_ip'] != ip:
+            continue
+        f = e.get('detail') or {}
+        t0 = float(f.get('start_epoch') or e['ts'])
+        if not (start - 120 <= t0 <= (end or time.time()) + 120):
+            continue
+        k = (f.get('source', ''), f.get('destination', ''))
+        rec = pairs.setdefault(k, {'app': '', 'start': t0, 'end': None, 'dest': f.get('destination', '')})
+        rec['app'] = rec['app'] or f.get('applicationname') or ''
+        rec['start'] = min(rec['start'], t0)
+        if e['kind'] == 'ica_end':
+            rec['end'] = e['ts']
+    if not pairs:
+        return
+    d = r.setdefault('detail', {})
+    lst = []
+    for rec in sorted(pairs.values(), key=lambda x: x['start']):
+        server_ip = rec['dest'].rsplit(':', 1)[0] if rec['dest'] else ''
+        lst.append({'app': rec['app'] or '—', 'server': smap.get(server_ip) or server_ip or '—', 'dest': rec['dest'] or '—',
+                    'start': _fmt_ts(rec['start']), 'end': _fmt_ts(rec['end']) if rec['end'] else '',
+                    'duration': _fmt_dur((rec['end'] or time.time()) - rec['start'])})
+    d['applications'] = lst[-30:]
+    names = sorted({a['app'] for a in lst if a['app'] != '—'})
+    if names:
+        d['resource'] = ', '.join(names)
+        d['protocol'] = 'ICA'
+
+def _sessions_view(stored, events, vmap, smap, live_ok):
+    """The rows the Sessions tab shows: what NITRO reported (stored history), each
+    completed from the log lines of the same session, plus the sessions known only
+    from log lines, and failed / locked sign-ins."""
+    now = time.time()
+    events = sorted(events, key=lambda e: e['ts'])
+    gw = {}
+    for e in events:
+        if e['kind'] in ('vpn_login', 'vpn_logout') and e.get('session'):
+            k = (e.get('node'), e['session'], str(e.get('username') or '').lower())
+            gw.setdefault(k, {})['login' if e['kind'] == 'vpn_login' else 'logout'] = e
+    logins = [e for e in events if e['kind'] == 'login']
+    apps = [e for e in events if e['kind'] in ('ica_start', 'ica_end')]
+    used, out = set(), []
+
+    def gw_window(rec):
+        li, lo = rec.get('login'), rec.get('logout')
+        f = (lo or {}).get('detail') or {}
+        start = li['ts'] if li else float(f.get('start_epoch') or lo['ts'])
+        return start, (lo['ts'] if lo else None)
+
+    def match(user, ip, t0, t1):
+        best = None
+        for k, rec in gw.items():
+            if k in used or k[2] != str(user or '').lower():
+                continue
+            cip = (rec.get('login') or rec.get('logout')).get('client_ip')
+            if ip and ip != 'Unknown' and cip and cip != ip:
+                continue
+            a, b = gw_window(rec)
+            # the same session: it began before the dashboard first saw it, and it
+            # had not ended before the dashboard last saw it
+            if a <= t0 + 300 and (b is None or b >= t1 - 300) and (best is None or a > best[1]):
+                best = (k, a)
+        return best[0] if best else None
+
+    for r in stored:
+        r = dict(r)
+        r['detail'] = dict(r.get('detail') or {})
+        if r.get('status') in ('Failed', 'Locked'):
+            out.append(r)
+            continue
+        first, last = r.get('first_seen') or now, r.get('last_seen') or now
+        r['_start_ts'] = first
+        r['_end_ts'] = None if r.get('status') == 'Active' else last
+        k = match(r.get('user'), r.get('ip'), first, last)
+        if k:
+            used.add(k)
+            _apply_gateway_lines(r, gw[k], vmap)
+        out.append(r)
+    for k, rec in gw.items():
+        if k not in used:
+            r = _row_from_gateway_lines(rec, vmap, live_ok)
+            out.append(r)
+    for r in out:
+        if r.get('status') in ('Failed', 'Locked'):
+            continue
+        start = r.get('_start_ts') or now
+        end = r.get('_end_ts')
+        _apply_login_lines(r, logins, start, end)
+        _apply_app_lines(r, apps, smap, r.get('_start_ts') or start, end)
+        start = r.get('_start_ts') or start
+        r['start'] = _fmt_ts(start)
+        if r.get('status') == 'Active':
+            r['end'] = 'Active'
+        elif end:
+            r['end'] = _fmt_ts(end)
+        elif not r.get('end') or r.get('end') == 'Active':
+            r['end'] = '—'
+        r['duration'] = _fmt_dur((end or now) - start) if (end or r.get('status') == 'Active') else '—'
+    # failed / locked sign-ins written to the log (kept for the whole retention period)
+    seen = {(str(r.get('user')).lower(), r.get('status'), r.get('start')) for r in out if r.get('status') in ('Failed', 'Locked')}
+    for e in events:
+        if e['kind'] not in ('login_failed', 'lockout'):
+            continue
+        status = 'Locked' if e['kind'] == 'lockout' else 'Failed'
+        when = _fmt_ts(e['ts'])
+        key = (str(e.get('username') or '').lower(), status, when)
+        if key in seen:
+            continue
+        seen.add(key)
+        out.append(_synthetic_row(e.get('username') or '—', status, when=when, ip=e.get('client_ip') or '—',
+                                  conn_type='AAA lockout' if status == 'Locked' else 'AAA login',
+                                  sid=f"{e.get('username')}|{status}|{e['ts']}",
+                                  extra={'failure_reason': (e.get('message') or '')[:200], 'source': 'Gateway log',
+                                         'log_line': (e.get('raw') or '')[:400]}))
+    for r in out:
+        for k in ('_start_ts', '_end_ts', 'first_seen', 'last_seen'):
+            r.pop(k, None)
+    out.sort(key=lambda r: parse_dmy(r.get('start')), reverse=True)
+    return out
+
+def parse_dmy(text):
+    try:
+        return datetime.strptime(str(text or ''), '%d/%m/%Y %H:%M:%S').timestamp()
+    except Exception:
+        return 0.0
 
 # Audit lines produced by the MANAGEMENT plane (admin/API/CLI/GUI/SSH logins and
 # role-based auth). These are not gateway/AAA end-user activity, so they are
@@ -2335,7 +2627,7 @@ def _audit_failed_locked_rows(nitro):
             sid = f"{user}|Locked" if is_lock else f"{user}|Failed|{when or line[:40]}"
             rows.append(_synthetic_row(user, status, when=when, ip=ip, sid=sid,
                         conn_type='AAA lockout' if is_lock else 'AAA login',
-                        extra={'resource': line[:200], 'protocol': 'Audit log'}))
+                        extra={'log_line': line[:400], 'source': 'Appliance audit log'}))
             if len(rows) >= 30:
                 break
     except Exception:
@@ -2376,68 +2668,46 @@ def api_user_sessions():
     instance_id = str(get_instance(inst).get('id'))
     node_req = request.args.get('node', 'primary')
     other_node = 'secondary' if node_req == 'primary' else 'primary'
-    all_sessions = []
-    used_node = None
+    live, used_node, live_ok = [], None, False
 
     for nk in [node_req, other_node]:
+        if not (get_instance(inst).get(nk) or {}).get('ip'):
+            continue
         try:
             nitro = get_nitro(nk, inst)
-            vpn_resp = nitro._get('/config/vpnsession', custom_timeout=4)
-            aaa_resp = nitro._get('/config/aaasession', custom_timeout=4)
-
-            vpn_sessions = vpn_resp.get('vpnsession', []) if isinstance(vpn_resp, dict) else []
-            aaa_sessions = aaa_resp.get('aaasession', []) if isinstance(aaa_resp, dict) else []
-
-            # One odd row must not cost the whole list (and must not send the poll
-            # to the other node as if this one had not answered).
-            for raw_s in vpn_sessions:
-                try: all_sessions.append(_normalize_session(raw_s, 'vpn'))
-                except Exception as e: logger.info(f"Skipped a vpnsession row that could not be read: {e}")
-
-            seen_users = {x['user'] for x in all_sessions}
-            for raw_s in aaa_sessions:
-                try:
-                    if str(raw_s.get('username')) not in seen_users:
-                        all_sessions.append(_normalize_session(raw_s, 'aaa'))
-                except Exception as e: logger.info(f"Skipped an aaasession row that could not be read: {e}")
+            live = _live_sessions(nitro, instance_id)
+            used_node, live_ok = nk, True
+            break
+        except (requests.ConnectionError, requests.Timeout):
+            continue                         # this node did not answer - ask the other one
+        except Exception as e:
+            logger.info(f"Sessions could not be read from {nk}: {e}")
             used_node = nk
             break
-        except Exception:
-            continue
 
-    # Fill a missing gateway from live ICA connections (they carry the vserver name).
     extra_rows = []
     if used_node is not None:
         try:
-            live = get_nitro(used_node, inst)
-            gw_map = _ica_gateway_map(live)
-            if gw_map:
-                for s in all_sessions:
-                    gwv = str(s.get('gateway') or '')
-                    # Fill anything we couldn't resolve, including the AAA placeholder,
-                    # when the user has a live gateway/ICA connection.
-                    if gwv in ('Unknown', '—', '') or gwv.startswith('N/A'):
-                        g = gw_map.get(str(s.get('user')).lower())
-                        if g:
-                            s['gateway'] = g
-                            s['detail']['gateway'] = g
-            # Failed/locked: audit log (management accounts) + AAA users (gateway).
-            # Persisted alongside sessions so they don't vanish when the audit-log
-            # line scrolls out of the live window a moment later.
-            all_sessions += _audit_failed_locked_rows(live) + _locked_and_failed_rows(live)
+            nit = get_nitro(used_node, inst)
+            # Failed/locked: the audit log (end users only) and AAA users. Persisted
+            # with the sessions so they do not vanish when the line scrolls away.
+            extra_rows = _audit_failed_locked_rows(nit) + _locked_and_failed_rows(nit)
         except Exception:
             pass
 
-    # Persist everything, then return the stored history for THIS instance.
     try:
-        db.upsert_sessions(node_req, all_sessions, instance=instance_id)
+        db.upsert_sessions(node_req, live + extra_rows, instance=instance_id)
         stored = db.get_sessions(days=db.RETENTION_DAYS, instance=instance_id)
-        return jsonify({'sessions': stored,
-                        'source': 'history', 'retention_days': db.RETENTION_DAYS})
+        events = db.get_security_events(instance=instance_id, since=time.time() - db.RETENTION_DAYS * 86400,
+                                        kinds=security.SESSION_KINDS, limit=20000)
+        vmap, smap = _cached_vserver_map(instance_id)
+        return jsonify({'sessions': _sessions_view(stored, events, vmap, smap, live_ok),
+                        'source': 'history', 'retention_days': db.RETENTION_DAYS,
+                        'live': live_ok, 'log_lines': len(events)})
     except Exception as e:
         logger.warning(f"Session history unavailable, returning live only: {e}")
 
-    return jsonify({'sessions': all_sessions, 'source': 'live'})
+    return jsonify({'sessions': live + extra_rows, 'source': 'live', 'live': live_ok})
 
 @app.route('/api/session-debug')
 @login_required
@@ -2506,7 +2776,8 @@ def api_session_debug():
                 'from_node': nk,
                 'hanode': sample(nit, '/config/hanode', 'hanode'),
                 'systemsession': sample(nit, '/config/systemsession', 'systemsession', n=6),
-                'vpnsession': sample(nit, '/config/vpnsession', 'vpnsession'),
+                'vpnvserver': sample(nit, '/config/vpnvserver?attrs=name,ipv46,port', 'vpnvserver'),
+                'vpnicadtlsconnection': sample(nit, '/config/vpnicadtlsconnection', 'vpnicadtlsconnection'),
                 'aaasession': sample(nit, '/config/aaasession', 'aaasession'),
                 'vpnicaconnection': sample(nit, '/config/vpnicaconnection', 'vpnicaconnection'),
                 'aaauser': sample(nit, '/config/aaauser', 'aaauser', n=8),
@@ -2525,45 +2796,26 @@ def api_session_debug():
 @app.route('/api/session-ica')
 @login_required
 def api_session_ica():
-    """Live ICA/RDP connection detail for a user (gateway, protocol, published
-    resource). NetScaler only reports this for currently-active sessions."""
+    """Live ICA connections of one user (application server, protocol, client
+    address). NetScaler reports them only while they are open."""
     inst = request.args.get('instance')
+    iid = str(get_instance(inst).get('id'))
     user = (request.args.get('user') or '').strip()
     node = request.args.get('node') or 'primary'
     if not user:
         return jsonify({'connections': []})
     conns = []
     for nk in [node, ('secondary' if node == 'primary' else 'primary')]:
+        if not (get_instance(inst).get(nk) or {}).get('ip'):
+            continue
         try:
             nitro = get_nitro(nk, inst)
+            _, smap = _vserver_map(nitro, iid)
+            items = _ica_list(nitro)
         except Exception:
             continue
-        # Try the ICA-connection object names used across builds.
-        raw_items = []
-        for path, key in (('/config/vpnicaconnection', 'vpnicaconnection'),
-                          ('/config/icaconnection', 'icaconnection'),
-                          ('/config/aaasession', 'aaasession')):
-            try:
-                d = nitro._get(path, custom_timeout=4) or {}
-                v = d.get(key)
-                if isinstance(v, list) and v:
-                    raw_items = v; break
-            except Exception:
-                continue
-        for raw in raw_items:
-            s = {str(k).lower(): v for k, v in raw.items()}
-            if user.lower() not in (str(s.get('username', '')).lower(), str(s.get('user', '')).lower()):
-                continue
-            conns.append({
-                'gateway': _pick(s, ['vservername', 'vserver', 'gateway', 'gatewayname']) or '—',
-                'protocol': _pick(s, ['protocol', 'transportprotocol', 'transport', 'sesstype']) or 'ICA',
-                'resource': _pick(s, ['application', 'appname', 'publishedapp', 'resource', 'server', 'destip']) or '—',
-                'server': _pick(s, ['server', 'destip', 'backendserver']) or '—',
-                'client_ip': _pick(s, ['clientip', 'publicip', 'srcip']) or '—',
-                'device': _pick(s, ['deviceos', 'clientos', 'devicename', 'useragent']) or '—',
-            })
-        if conns:
-            break
+        conns = [_ica_entry(c, smap) for c in items if str(c.get('username') or '').lower() == user.lower()]
+        break
     return jsonify({'user': user, 'connections': conns})
 
 @app.route('/api/failover-history')
@@ -2649,6 +2901,227 @@ def api_unlock_user():
     return jsonify({"success": False, "error": msg, "raw": resp}), 400
 
 # ======================================================================================
+# Security tab
+# ======================================================================================
+_sec_lock = threading.Lock()
+_SEC_IDS = {c['id'] for c in security.security_catalog.CHECKS}
+_SEC_STATES = ('done', 'irrelevant')
+
+def _clean_marks(doc):
+    """{instance: {check id: {'state', 'by', 'at'}}}, only known checks and states."""
+    out = {}
+    for inst, marks in (doc.items() if isinstance(doc, dict) else []):
+        if not isinstance(marks, dict):
+            continue
+        clean = {}
+        for cid, m in marks.items():
+            if cid in _SEC_IDS and isinstance(m, dict) and m.get('state') in _SEC_STATES:
+                clean[cid] = {'state': m['state'], 'by': str(m.get('by') or '')[:120], 'at': str(m.get('at') or '')[:40]}
+        if clean:
+            out[str(inst)[:64]] = clean
+    return out
+
+def _load_marks():
+    try:
+        with open(SECURITY_FILE, 'r', encoding='utf-8') as f:
+            return _clean_marks(json.load(f))
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logger.warning(f"{SECURITY_FILE} could not be read ({e}); checklist marks start empty")
+        return {}
+
+SEC_MARKS = _load_marks()
+
+def _syslog_sender(ip):
+    """The instance a syslog sender belongs to: one of its nodes' addresses, or an
+    address given in SYSLOG_EXTRA_SENDERS (ip=instance id, comma separated)."""
+    ip = str(ip or '')
+    for inst in get_instances():
+        for k in ('primary', 'secondary'):
+            node = inst.get(k)
+            if isinstance(node, dict) and str(node.get('ip') or '').strip() == ip and ip:
+                return str(inst.get('id'))
+    for pair in os.getenv('SYSLOG_EXTRA_SENDERS', '').split(','):
+        a, _, b = pair.strip().partition('=')
+        if a.strip() == ip and b.strip():
+            return b.strip()
+    return None
+
+def _security_targets():
+    out = []
+    for inst in get_instances():
+        iid = str(inst.get('id'))
+        for nk in active_node_keys(iid):
+            node = inst.get(nk) or {}
+            if node.get('ip'):
+                try:
+                    out.append((iid, nk, str(node['ip']), get_nitro(nk, iid)))
+                except Exception:
+                    continue
+    return out
+
+def _security_facts(iid, nk, ip, nitro):
+    facts = security.collect_facts(nitro, cache_key=(iid, nk), fresh=True)
+    if len(facts.get('errors', {})) >= len(security._FACT_SOURCES):
+        return                                   # not reachable this time
+    checks = security.evaluate(facts, {'dashboard_addresses': _dashboard_addresses()})
+    security.series.add(iid, ip, security.sample_counts(checks))
+
+def _dashboard_addresses():
+    addrs = set(security.own_addresses())
+    try:
+        host = (request.host or '').rsplit(':', 1)[0].strip('[]') if request else ''
+        if security.valid_ip(host):
+            addrs.add(host)
+    except Exception:
+        pass
+    return addrs
+
+def _sec_node(inst):
+    node = request.args.get('node', 'primary')
+    if node not in ('primary', 'secondary'):
+        node = 'primary'
+    cfg = get_instance(inst).get(node) or {}
+    if not cfg.get('ip') and node == 'secondary':
+        node, cfg = 'primary', get_instance(inst).get('primary') or {}
+    return node, cfg
+
+def _checklist(inst, fresh=False):
+    iid = str(get_instance(inst).get('id'))
+    node, cfg = _sec_node(inst)
+    if not cfg.get('ip'):
+        return None, ('This node has no address configured.', 400)
+    facts = security.collect_facts(get_nitro(node, inst), cache_key=(iid, node), fresh=fresh)
+    if len(facts.get('errors', {})) >= len(security._FACT_SOURCES):
+        first = next(iter(facts['errors'].values()), 'no answer')
+        return None, (f"The appliance could not be read: {first}", 502)
+    recv = security.receiver.status()
+    ctx = {'node_protocol': str(cfg.get('protocol') or ''), 'dashboard_addresses': _dashboard_addresses(),
+           'received': recv['senders'].get(str(cfg.get('ip')))}
+    checks = security.evaluate(facts, ctx)
+    marks = SEC_MARKS.get(iid, {})
+    for c in checks:
+        c['mark'] = marks.get(c['id'])
+    return {'instance': iid, 'node': node, 'node_ip': cfg.get('ip'), 'version': security.ns_version(facts),
+            'checks': checks, 'read_errors': facts.get('errors', {}), 'read_at': facts.get('read_at'),
+            'vservers': sorted(str(v.get('name')) for v in facts.get('vpn_vserver') or [] if isinstance(v, dict) and v.get('name')),
+            'portal_vservers': sorted(str(v.get('name')) for v in facts.get('lb_vserver') or []
+                                      if isinstance(v, dict) and v.get('name') and str(v.get('servicetype', '')).upper() in ('HTTP', 'SSL')),
+            'dashboard_address': next(iter(sorted(_dashboard_addresses())), ''),
+            'receiver': {'port': recv['port'], 'listening': recv['listening'], 'error': recv['error']}}, None
+
+@app.route('/api/security/checklist')
+@login_required
+def api_security_checklist():
+    inst = request.args.get('instance')
+    try:
+        data, err = _checklist(inst, fresh=request.args.get('fresh') == '1')
+    except KeyError as e:
+        return jsonify({'error': str(e)}), 400
+    if err:
+        return jsonify({'error': err[0]}), err[1]
+    return jsonify(data)
+
+@app.route('/api/security/mark', methods=['POST'])
+@login_required
+def api_security_mark():
+    body = request.get_json(force=True, silent=True) or {}
+    iid = str(get_instance(request.args.get('instance')).get('id'))
+    cid, state = str(body.get('id') or ''), str(body.get('state') or '')
+    if cid not in _SEC_IDS:
+        return jsonify({'error': 'Unknown checklist item.'}), 400
+    if state not in _SEC_STATES + ('',):
+        return jsonify({'error': "state must be 'done', 'irrelevant' or empty."}), 400
+    with _sec_lock:
+        marks = {k: dict(v) for k, v in SEC_MARKS.items()}
+        mine = marks.setdefault(iid, {})
+        if state:
+            mine[cid] = {'state': state, 'by': str(session.get('user') or '')[:120],
+                         'at': datetime.now(APP_TZ).isoformat(timespec='seconds')}
+        else:
+            mine.pop(cid, None)
+        marks = _clean_marks(marks)
+        try:
+            _write_json(SECURITY_FILE, marks, indent=2)
+        except OSError as e:
+            return jsonify({'error': f'The mark could not be saved: {e}'}), 500
+        SEC_MARKS.clear()
+        SEC_MARKS.update(marks)
+    db.documents_changed()
+    return jsonify({'ok': True, 'mark': SEC_MARKS.get(iid, {}).get(cid)})
+
+_RANGES = {'1h': (3600, 60), '24h': (86400, 3600), '7d': (7 * 86400, 6 * 3600)}
+
+@app.route('/api/security/activity')
+@login_required
+def api_security_activity():
+    inst = request.args.get('instance')
+    iid = str(get_instance(inst).get('id'))
+    span, bucket = _RANGES.get(request.args.get('range', '24h'), _RANGES['24h'])
+    now = time.time()
+    since = now - span
+    try:
+        events = db.get_security_events(instance=iid, since=since, kinds=security.SECURITY_KINDS, limit=50000)
+    except Exception as e:
+        return jsonify({'error': f'Security events could not be read: {db.describe_error(e)}'}), 500
+    summary = security.summarise(events, since, bucket)
+    hits, version, read_err = [], '', None
+    try:
+        data, err = _checklist(inst)
+        if err:
+            read_err = err[0]
+        else:
+            version = data['version']
+            names = set()
+            hits = security.policy_hits(data['checks'])
+            for h in hits:
+                names.add(h['policy'])
+            trend = security.series.trend(iid, names, since)
+            for h in hits:
+                pts = trend.get(h['policy'], [])
+                h['recent'] = sum(v for _, v in pts)
+                h['trend'] = pts[-120:]
+    except Exception as e:
+        read_err = str(e)[:200]
+    k = summary['by_kind']
+    waf_blocked = sum(v for a, v in summary['by_action'].items() if 'block' in a and 'not' not in a)
+    recv = security.receiver.status()
+    node_ips = {str((get_instance(inst).get(n) or {}).get('ip') or '') for n in ('primary', 'secondary')}
+    return jsonify({
+        'instance': iid, 'range': request.args.get('range', '24h'), 'since': since, 'version': version,
+        'kpi': {'waf': k.get('waf', 0) + k.get('bot', 0), 'waf_blocked': waf_blocked,
+                'brute_force': k.get('brute_force', 0), 'cookie_hijack': k.get('cookie_hijack', 0),
+                'login_failed': k.get('login_failed', 0), 'lockout': k.get('lockout', 0),
+                'attackers': len({e['client_ip'] for e in events if e.get('client_ip')})},
+        'summary': summary, 'hits': hits, 'hits_error': read_err, 'kinds': security.KINDS,
+        'truncated': len(events) >= 50000,
+        'receiver': {'port': recv['port'], 'listening': recv['listening'], 'error': recv['error'],
+                     'from_this_instance': {ip: v for ip, v in recv['senders'].items() if ip in node_ips},
+                     'rejected': recv['rejected'], 'queue_dropped': recv['queue_dropped']},
+        'poll_secs': security.POLL_SECS,
+    })
+
+@app.route('/api/security/events')
+@login_required
+def api_security_events():
+    inst = request.args.get('instance')
+    iid = str(get_instance(inst).get('id'))
+    span, _ = _RANGES.get(request.args.get('range', '24h'), _RANGES['24h'])
+    kind = request.args.get('kind') or ''
+    kinds = [kind] if kind in security.KINDS else list(security.SECURITY_KINDS)
+    limit = max(1, min(_int(request.args.get('limit'), 500), 5000))
+    try:
+        rows = db.get_security_events(instance=iid, since=time.time() - span, kinds=kinds,
+                                      text=request.args.get('q') or '', limit=limit)
+    except Exception as e:
+        return jsonify({'error': f'Security events could not be read: {db.describe_error(e)}'}), 500
+    for r in rows:
+        r['time'] = _fmt_ts(r['ts'])
+        r['kind_label'] = security.KINDS.get(r['kind'], r['kind'])
+    return jsonify({'events': rows, 'limit': limit, 'more': len(rows) >= limit})
+
+# ======================================================================================
 # Error Handlers
 # ======================================================================================
 # Version/health endpoints, plus upload-based upgrades when running as the appliance.
@@ -2683,6 +3156,14 @@ try:
     start_api_detect_thread()
 except Exception as e:
     logger.error(f"History DB init failed: {e}")
+
+# Security events: syslog from the NetScalers, and their own recent audit lines.
+try:
+    security.ingest.start(db.add_security_events)
+    security.start_receiver(_syslog_sender)
+    security.start_poller(_security_targets, _security_facts)
+except Exception as e:
+    logger.error(f"Security event collection could not start: {e}")
 
 # Which API each node speaks is found out in the background (NITRO until known).
 # Doing it here made the start wait for every unreachable appliance in turn - long
