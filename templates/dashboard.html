@@ -1682,7 +1682,6 @@ function licenseTable(l) {
         rows.push(row('LAS enforcement', `<span class="badge ${lv}">in ${l.las_enforcement_days} days</span>`));
     }
     if (l.server) rows.push(row('License server', `${escapeHtml(l.server)}${l.server_type ? ' <span class="text-slate-500 text-xs">(' + escapeHtml(l.server_type) + ')</span>' : ''}${l.server_status && !/^\d+$/.test(l.server_status) ? ' · ' + escapeHtml(l.server_status) : ''}`));
-    if (l.vpn_users) rows.push(row('Gateway users', `<span class="font-mono">${Number(l.vpn_users).toLocaleString()}</span>`));
     const last = rows.length - 1;
     rows[last] = rows[last].replace('border-b border-slate-700', '');
     const notes = (l.notes || []).length

@@ -471,3 +471,161 @@ CHECKS += [
 # Shown in this order on the tab.
 GROUP_ORDER = ["Gateway protection policies", "Gateway settings", "Management and platform"]
 CHECKS.sort(key=lambda c: GROUP_ORDER.index(c["group"]))
+
+
+# ------------------------------------------------------------ added in 1.20.0
+CHECKS += [
+    {
+        "id": "ciphers",
+        "group": "Gateway settings",
+        "title": "Strong ciphers only on the Gateway",
+        "summary": "No RC4, DES/3DES, export, NULL or MD5 ciphers on the Gateway virtual servers.",
+        "about": (
+            "The cipher list decides how the TLS connection is encrypted. RC4, DES and 3DES, export-grade, NULL and "
+            "MD5 ciphers are broken or too weak; CBC ciphers with SHA-1 are dated. A group with only TLS 1.3 and "
+            "ECDHE with AES-GCM or ChaCha20 gives forward secrecy and authenticated encryption to every current "
+            "client."),
+        "notes": [
+            "The dashboard reads the ciphers bound to the Gateway virtual server, or to its SSL profile, and opens "
+            "cipher groups to see what is in them. The built-in DEFAULT group counts as Partly.",
+            "The ECDSA ciphers are only used with an ECDSA certificate, the RSA ones with an RSA certificate.",
+            "On 13.1, TLS 1.3 ciphers need the enhanced SSL profiles (`set ssl parameter -defaultProfile ENABLED`).",
+        ],
+        "variants": [{"label": "All versions", "commands": [
+            ("A strong cipher group", "add ssl cipher Gateway_Strong_Ciphers\n"
+             "bind ssl cipher Gateway_Strong_Ciphers -cipherName TLS1.3-AES256-GCM-SHA384\n"
+             "bind ssl cipher Gateway_Strong_Ciphers -cipherName TLS1.3-CHACHA20-POLY1305-SHA256\n"
+             "bind ssl cipher Gateway_Strong_Ciphers -cipherName TLS1.3-AES128-GCM-SHA256\n"
+             "bind ssl cipher Gateway_Strong_Ciphers -cipherName TLS1.2-ECDHE-ECDSA-AES256-GCM-SHA384\n"
+             "bind ssl cipher Gateway_Strong_Ciphers -cipherName TLS1.2-ECDHE-ECDSA-AES128-GCM-SHA256\n"
+             "bind ssl cipher Gateway_Strong_Ciphers -cipherName TLS1.2-ECDHE-RSA-AES256-GCM-SHA384\n"
+             "bind ssl cipher Gateway_Strong_Ciphers -cipherName TLS1.2-ECDHE-RSA-AES128-GCM-SHA256"),
+            ("On the Gateway virtual server", "unbind ssl vserver <GATEWAY_VSERVER> -cipherName DEFAULT\n"
+             "bind ssl vserver <GATEWAY_VSERVER> -cipherName Gateway_Strong_Ciphers"),
+            ("...or on its SSL profile, when one is bound", "bind ssl profile <SSL_PROFILE> -cipherName Gateway_Strong_Ciphers -cipherPriority 1"),
+        ]}],
+        "detect": "ciphers",
+    },
+    {
+        "id": "gw_timeouts",
+        "group": "Gateway settings",
+        "title": "Gateway sessions time out",
+        "summary": "An idle session ends within an hour, and every session ends after a maximum time.",
+        "about": (
+            "A Gateway session left open on a shared or stolen device is a way in. The idle timeout ends it when "
+            "nothing happens; the forced timeout ends it after a fixed time however busy it is, so a session (or a "
+            "stolen session cookie) cannot live for days."),
+        "notes": [
+            "Session policies can set their own timeouts (`set vpn sessionAction ... -sessTimeout`), which win over "
+            "these global ones for the users they apply to.",
+        ],
+        "variants": [{"label": "All versions", "commands": [
+            ("Setting (minutes)", "set vpn parameter -sessTimeout 30 -forcedTimeout 720")]}],
+        "detect": "gw_timeouts",
+    },
+    {
+        "id": "login_lockout",
+        "group": "Gateway settings",
+        "title": "Accounts lock after repeated failed logins",
+        "summary": "After 5 wrong passwords a user is locked out of the Gateway for a while.",
+        "about": (
+            "Without a limit an attacker can try passwords for a user for ever (password spraying, brute force). "
+            "maxLoginAttempts locks the account on the Gateway after that many failures, for failedLoginTimeout "
+            "minutes - before the directory's own lockout locks the user out of everything."),
+        "notes": [
+            "Locked users can be freed early on the Unlock User tab.",
+            "Keep the number below the directory's own lockout threshold, so the Gateway locks first.",
+        ],
+        "variants": [{"label": "All versions", "commands": [
+            ("Setting", "set aaa parameter -maxLoginAttempts 5 -failedLoginTimeout 15")]}],
+        "detect": "login_lockout",
+    },
+    {
+        "id": "clientless_off",
+        "group": "Gateway settings",
+        "title": "Clientless access off when it is not used",
+        "summary": "Clientless VPN (web applications through the Gateway's own rewriting) is switched off.",
+        "about": (
+            "Clientless access rewrites web applications so they can be used through the Gateway without a client. "
+            "Its URL rewriting and proxy endpoints are a large attack surface that most ICA-proxy and full-VPN "
+            "deployments never use."),
+        "notes": ["Only when clientless access is not used - otherwise mark it 'Not relevant'."],
+        "variants": [{"label": "All versions", "commands": [
+            ("Setting", "set vpn parameter -clientlessVpnMode OFF")]}],
+        "detect": "clientless_off",
+        "optional": True,
+    },
+    {
+        "id": "mgmt_timeout",
+        "group": "Management and platform",
+        "title": "Management sessions time out",
+        "summary": "An idle GUI, CLI or NITRO session of an administrator ends after at most 15 minutes.",
+        "about": (
+            "An administrator's session left open on a workstation gives full control of the appliance. The system "
+            "timeout ends idle management sessions."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [
+            ("Setting (seconds)", "set system parameter -timeout 600")]}],
+        "detect": "mgmt_timeout",
+    },
+    {
+        "id": "snmp_community",
+        "group": "Management and platform",
+        "title": "No default SNMP community",
+        "summary": "No SNMP community called 'public' or 'private'.",
+        "about": (
+            "'public' and 'private' are the first community strings anyone tries; SNMP v1/v2c sends them in clear "
+            "text and they give read (or write) access to the appliance's configuration and counters. Use SNMPv3 "
+            "with users, or at least a community string nobody can guess, limited to the monitoring hosts."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [
+            ("Remove the default communities", "rm snmp community public\nrm snmp community private")]}],
+        "detect": "snmp_community",
+    },
+    {
+        "id": "config_saved",
+        "group": "Management and platform",
+        "title": "Running configuration is saved",
+        "summary": "No changes that would be lost at the next restart.",
+        "about": (
+            "Changes made on the CLI, the GUI or over NITRO live only in memory until they are saved. A hardening "
+            "change that is not saved is gone after a reboot or a failover to a node that restarts, and an attacker's "
+            "change that is not saved is easy to miss."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [("Save", "save ns config")]}],
+        "detect": "config_saved",
+    },
+    {
+        "id": "rpc_nodes",
+        "group": "Management and platform",
+        "title": "RPC nodes: changed password, secure channel",
+        "summary": "The HA / cluster RPC channel uses its own password and is encrypted.",
+        "about": (
+            "HA and cluster nodes synchronise configuration and files over RPC. Its password is nsroot by default "
+            "and the channel is not encrypted unless secure is set - anyone on the management network who knows "
+            "the default can push configuration to the appliance."),
+        "notes": [
+            "The appliance never shows the RPC password, so the dashboard checks the secure channel only - make sure "
+            "the password is not the default.",
+            "Set the same password on every node of the pair.",
+        ],
+        "variants": [{"label": "All versions", "commands": [
+            ("For each node (its own and its peer's NSIP)", "set ns rpcNode <NSIP> -password <NEW_PASSWORD> -secure YES")]}],
+        "detect": "rpc_nodes",
+    },
+    {
+        "id": "admin_accounts",
+        "group": "Management and platform",
+        "title": "Named administrator accounts",
+        "summary": "Administrators sign in with their own accounts, not all with nsroot.",
+        "about": (
+            "With one shared nsroot account nobody can tell who changed what, and the password has to change "
+            "whenever someone leaves. Named accounts (best authenticated against the directory) make the audit log "
+            "say who did it, and nsroot can be kept as a break-glass account with a long password."),
+        "notes": ["The dashboard only sees which system users exist, not how they authenticate."],
+        "variants": [{"label": "All versions", "commands": [
+            ("A named administrator", "add system user <ADMIN_NAME> <PASSWORD>\nbind system user <ADMIN_NAME> superuser 100")]}],
+        "detect": "admin_accounts",
+    },
+]
+CHECKS.sort(key=lambda c: GROUP_ORDER.index(c["group"]))

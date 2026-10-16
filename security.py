@@ -102,6 +102,11 @@ _FACT_SOURCES = (
     ("sys_param", "/config/systemparameter", "systemparameter"),
     ("ntp_server", "/config/ntpserver", "ntpserver"),
     ("ntp_sync", "/config/ntpsync", "ntpsync"),
+    ("vpn_param", "/config/vpnparameter", "vpnparameter"),
+    ("snmp_community", "/config/snmpcommunity", "snmpcommunity"),
+    ("ns_config", "/config/nsconfig", "nsconfig"),
+    ("rpc_node", "/config/nsrpcnode", "nsrpcnode"),
+    ("sys_user", "/config/systemuser", "systemuser"),
 )
 
 _pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="sec-facts")
@@ -135,11 +140,60 @@ def collect_facts(nitro, cache_key=None, fresh=False) -> dict:
         else:
             errors[name] = err
     facts["errors"] = errors
+    try:
+        _collect_ciphers(nitro, facts)
+    except Exception as e:                       # never costs the rest of the checklist
+        errors["ciphers"] = str(e)[:160]
     facts["read_at"] = now
     if cache_key is not None:
         with _facts_lock:
             _facts_cache[cache_key] = (now, facts)
     return facts
+
+
+def _collect_ciphers(nitro, facts):
+    """Ciphers bound to each Gateway virtual server (or to its SSL profile), with
+    cipher groups opened up: facts['ciphers'] = {vserver: {'source', 'items': [...],
+    'groups': {group: [members]}}}. Skipped when the first pass had no answer."""
+    from urllib.parse import quote
+    if "vpn_vserver" not in facts or "ssl_vserver" not in facts:
+        return
+
+    def get(path, key):
+        try:
+            d = nitro._get(path, custom_timeout=6) or {}
+        except Exception:
+            return None
+        v = d.get(key)
+        return [x for x in (v if isinstance(v, list) else [v] if isinstance(v, dict) else []) if isinstance(x, dict)]
+
+    gws = {str(v.get("name")) for v in facts.get("vpn_vserver") or [] if isinstance(v, dict) and v.get("name")}
+    default_on = _yes(_one(facts, "ssl_param").get("defaultprofile"))
+    out = {}
+    for v in facts.get("ssl_vserver") or []:
+        name = str(v.get("vservername") or v.get("name") or "") if isinstance(v, dict) else ""
+        if name not in gws:
+            continue
+        prof = str(v.get("sslprofile") or "") or ("ns_default_ssl_profile_frontend" if default_on else "")
+        if prof:
+            rows = get("/config/sslprofile_sslcipher_binding/" + quote(prof, safe=""), "sslprofile_sslcipher_binding")
+            source = "profile " + prof
+        else:
+            rows = get("/config/sslvserver_sslcipher_binding/" + quote(name, safe=""), "sslvserver_sslcipher_binding")
+            source = "virtual server"
+        if rows is None:
+            out[name] = {"source": source, "items": None, "groups": {}}
+            continue
+        items = [str(r.get("cipheraliasname") or r.get("ciphername") or "") for r in rows]
+        items = [x for x in items if x]
+        groups = {}
+        for it in items:
+            if not re.match(r"^(TLS1|SSL3|TLS1\.[0-3])[-.]", it, re.I) and it.upper() != "DEFAULT":
+                mem = get("/config/sslcipher_sslciphersuite_binding/" + quote(it, safe=""), "sslcipher_sslciphersuite_binding")
+                if mem:
+                    groups[it] = [str(m.get("ciphername") or m.get("cipheraliasname") or "") for m in mem]
+        out[name] = {"source": source, "items": items, "groups": groups}
+    facts["ciphers"] = out
 
 
 def ns_version(facts) -> str:
@@ -639,6 +693,142 @@ def detect_firmware(check, facts, ctx):
     return _result("configured" if build >= fixed else "missing", ev)
 
 
+_WEAK_CIPHER = re.compile(r"RC4|(^|-)3?DES|DES-CBC|EXP|NULL|MD5|ADH|ANON", re.I)
+_DATED_CIPHER = re.compile(r"CBC-SHA$|-SHA$", re.I)
+
+
+def detect_ciphers(check, facts, ctx):
+    u = _unknown(facts, "ssl_vserver", "vpn_vserver")
+    if u:
+        return u
+    data = facts.get("ciphers") or {}
+    if not data:
+        return _result("unknown", ["No Gateway virtual server with SSL settings was found on this node."])
+    ev, worst = [], 0                                # 0 fine, 1 partly, 2 weak, 3 unknown
+    for name, d in sorted(data.items()):
+        if d["items"] is None:
+            ev.append(f"{name}: the cipher bindings could not be read")
+            worst = max(worst, 3)
+            continue
+        names = []
+        for it in d["items"]:
+            names += d["groups"].get(it, [it])
+        weak = sorted({c for c in names if _WEAK_CIPHER.search(c)})
+        dated = sorted({c for c in names if _DATED_CIPHER.search(c) and c not in weak})
+        default = any(it.upper() == "DEFAULT" for it in d["items"])
+        unopened = [it for it in d["items"] if it.upper() != "DEFAULT" and it not in d["groups"]
+                    and not re.match(r"^(TLS1|SSL3|TLS1\.[0-3])[-.]", it, re.I)]
+        line = f"{name} ({d['source']}): " + (", ".join(d["items"]) or "no ciphers bound")
+        if weak:
+            line += " - weak: " + ", ".join(weak[:6])
+            worst = max(worst, 2)
+        elif default or dated or unopened:
+            line += (" - the built-in DEFAULT group" if default else "") + (" - SHA-1 CBC: " + ", ".join(dated[:4]) if dated else "")
+            worst = max(worst, 1)
+        ev.append(line)
+    status = {0: "configured", 1: "partial", 2: "missing", 3: "unknown"}[worst]
+    return _result(status, ev)
+
+
+def detect_gw_timeouts(check, facts, ctx):
+    u = _unknown(facts, "vpn_param")
+    if u:
+        return u
+    p = _one(facts, "vpn_param")
+    if not p:
+        return _result("unknown", ["vpnparameter was not returned."])
+    idle, forced = _int(p.get("sesstimeout")), _int(p.get("forcedtimeout"))
+    ev = [f"vpn parameter sessTimeout = {p.get('sesstimeout', '?')} min", f"forcedTimeout = {p.get('forcedtimeout', 'not set')} min"]
+    ok = [0 < idle <= 60, forced > 0]
+    return _result("configured" if all(ok) else ("partial" if any(ok) else "missing"), ev)
+
+
+def detect_login_lockout(check, facts, ctx):
+    u = _unknown(facts, "aaa_param")
+    if u:
+        return u
+    p = _one(facts, "aaa_param")
+    if "maxloginattempts" not in p:
+        return _result("missing", ["aaa parameter maxLoginAttempts is not set: there is no lockout."])
+    n = _int(p.get("maxloginattempts"))
+    ev = [f"aaa parameter maxLoginAttempts = {p.get('maxloginattempts')}",
+          f"failedLoginTimeout = {p.get('failedlogintimeout', 'not set')} min"]
+    if n <= 0:
+        return _result("missing", ev)
+    return _result("configured" if n <= 10 else "partial", ev + ([] if n <= 10 else ["More than 10 attempts is a lot."]))
+
+
+def detect_clientless_off(check, facts, ctx):
+    u = _unknown(facts, "vpn_param")
+    if u:
+        return u
+    v = str(_one(facts, "vpn_param").get("clientlessvpnmode") or "")
+    if not v:
+        return _result("unknown", ["The appliance did not report clientlessVpnMode."])
+    return _result("configured" if v.upper() in ("OFF", "DISABLED") else "missing", [f"vpn parameter clientlessVpnMode = {v}"])
+
+
+def detect_mgmt_timeout(check, facts, ctx):
+    u = _unknown(facts, "sys_param")
+    if u:
+        return u
+    p = _one(facts, "sys_param")
+    if "timeout" not in p:
+        return _result("unknown", ["The appliance did not report the system timeout."])
+    t = _int(p.get("timeout"))
+    ev = [f"system parameter timeout = {p.get('timeout')} s"]
+    return _result("configured" if 0 < t <= 900 else ("partial" if t > 900 else "missing"), ev)
+
+
+def detect_snmp_community(check, facts, ctx):
+    u = _unknown(facts, "snmp_community")
+    if u:
+        return u
+    names = [str(x.get("communityname") or "") for x in facts.get("snmp_community") or [] if isinstance(x, dict)]
+    bad = [n for n in names if n.lower() in ("public", "private")]
+    ev = ["SNMP communities: " + (", ".join(names) if names else "none")]
+    return _result("missing" if bad else "configured", ev + ([f"Default name(s): {', '.join(bad)}"] if bad else []))
+
+
+def detect_config_saved(check, facts, ctx):
+    u = _unknown(facts, "ns_config")
+    if u:
+        return u
+    p = _one(facts, "ns_config")
+    if "configchanged" not in p:
+        return _result("unknown", ["The appliance did not say whether the configuration changed."])
+    changed = str(p.get("configchanged")).lower() in ("true", "1", "yes")
+    ev = ["Unsaved changes" if changed else "No unsaved changes"]
+    if p.get("lastconfigsavetime"):
+        ev.append(f"Last saved: {p.get('lastconfigsavetime')}")
+    return _result("missing" if changed else "configured", ev)
+
+
+def detect_rpc_nodes(check, facts, ctx):
+    u = _unknown(facts, "rpc_node")
+    if u:
+        return u
+    rows = [x for x in facts.get("rpc_node") or [] if isinstance(x, dict)]
+    if not rows:
+        return _result("unknown", ["No RPC nodes were returned."])
+    ev = [f"{x.get('ipaddress')}: secure {x.get('secure', '?')}" for x in rows]
+    secure = sum(_yes(x.get("secure")) for x in rows)
+    ev.append("The RPC password cannot be read - make sure it is not the default (nsroot).")
+    return _result("configured" if secure == len(rows) else ("partial" if secure else "missing"), ev)
+
+
+def detect_admin_accounts(check, facts, ctx):
+    u = _unknown(facts, "sys_user")
+    if u:
+        return u
+    names = [str(x.get("username") or "") for x in facts.get("sys_user") or [] if isinstance(x, dict)]
+    others = [n for n in names if n and n.lower() not in ("nsroot", "nsrecover")]
+    ev = ["System users: " + (", ".join(names) if names else "none returned")]
+    if not names:
+        return _result("unknown", ev)
+    return _result("configured" if others else "missing", ev + ([] if others else ["Only nsroot - everybody shares it."]))
+
+
 DETECTORS = {
     "responder": detect_responder, "login_audit": detect_login_audit, "brute_force": detect_brute_force,
     "malicious_ip": detect_malicious_ip, "waf": detect_waf, "csp": detect_csp, "httponly": detect_httponly,
@@ -646,7 +836,10 @@ DETECTORS = {
     "syslog": detect_syslog, "tls_versions": detect_tls_versions, "hsts": detect_hsts, "ssl_reneg": detect_ssl_reneg,
     "http_invalid": detect_http_invalid, "auth_feedback": detect_auth_feedback, "mgmt_restrict": detect_mgmt_restrict,
     "mgmt_services": detect_mgmt_services, "sys_passwords": detect_sys_passwords, "ntp": detect_ntp,
-    "firmware": detect_firmware,
+    "firmware": detect_firmware, "ciphers": detect_ciphers, "gw_timeouts": detect_gw_timeouts,
+    "login_lockout": detect_login_lockout, "clientless_off": detect_clientless_off, "mgmt_timeout": detect_mgmt_timeout,
+    "snmp_community": detect_snmp_community, "config_saved": detect_config_saved, "rpc_nodes": detect_rpc_nodes,
+    "admin_accounts": detect_admin_accounts,
 }
 
 

@@ -6,6 +6,22 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.20.0
+**Security checklist: nine more items** (32 in all)
+- Gateway settings: **strong ciphers only** - the ciphers bound to the Gateway
+  virtual server or its SSL profile, cipher groups opened up; RC4, DES/3DES,
+  export, NULL and MD5 are weak, SHA-1 CBC and the built-in DEFAULT group are
+  Partly - with a strong group to bind; **session timeouts** (idle within an
+  hour, a forced maximum); **account lockout** after repeated failed logins;
+  **clientless access off** when it is not used.
+- Management and platform: **management session timeout**, **no default SNMP
+  community** (public / private), **running configuration saved**, **RPC nodes**
+  on the secure channel (the password itself cannot be read and the item says
+  so), and **named administrator accounts** instead of nsroot only.
+
+**License & Capacity**
+- The Gateway users line is gone.
+
 ## 1.19.0
 **Security checklist: ten more items** (23 in all, in three groups)
 - Gateway settings: only TLS 1.2 / 1.3 on the Gateway virtual servers, HSTS,

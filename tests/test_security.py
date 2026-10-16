@@ -68,7 +68,16 @@ facts = security.collect_facts(FakeNitro(True))
 check(security.ns_version(facts) == "14.1-43.56", "version read from nsversion", security.ns_version(facts))
 res = {c["id"]: c for c in security.evaluate(facts, {"node_protocol": "http", "dashboard_addresses": {"192.0.2.200"}})}
 st = {k: v["status"] for k, v in res.items()}
-check(len(res) == len(security.security_catalog.CHECKS) == 23, "23 checklist entries", len(res))
+check(len(res) == len(security.security_catalog.CHECKS) == 32, "32 checklist entries", len(res))
+check(st["ciphers"] == "configured" and "Gateway_Strong_Ciphers" in res["ciphers"]["evidence"][0],
+      "ciphers read from the SSL profile, the cipher group opened", res["ciphers"]["evidence"])
+check(st["gw_timeouts"] == "configured" and st["login_lockout"] == "configured" and st["clientless_off"] == "configured"
+      and st["mgmt_timeout"] == "configured" and st["snmp_community"] == "configured" and st["config_saved"] == "configured"
+      and st["rpc_nodes"] == "configured" and st["admin_accounts"] == "configured",
+      "timeouts, lockout, clientless off, management timeout, SNMP, saved config, RPC, named admins",
+      {k: st[k] for k in ("gw_timeouts", "login_lockout", "clientless_off", "mgmt_timeout", "snmp_community", "config_saved",
+                           "rpc_nodes", "admin_accounts")})
+check(any("cannot be read" in e for e in res["rpc_nodes"]["evidence"]), "RPC: the password cannot be checked, and it says so")
 check([c["group"] for c in security.security_catalog.CHECKS] == sorted((c["group"] for c in security.security_catalog.CHECKS),
       key=security.security_catalog.GROUP_ORDER.index), "entries in group order")
 check(st["tls_versions"] == "configured" and "profile Gateway_SSL" in res["tls_versions"]["evidence"][0],
@@ -118,7 +127,10 @@ empty = {c["id"]: c["status"] for c in security.evaluate(security.collect_facts(
 check(empty["login_audit"] == "missing" and empty["waf"] == "partial" and empty["httponly"] == "missing"
       and empty["cookie_v1"] == "missing" and empty["tcp_isn"] == "missing" and empty["mgmt_secure"] == "missing"
       and empty["tls_versions"] == "missing" and empty["ssl_reneg"] == "missing" and empty["mgmt_services"] == "missing"
-      and empty["sys_passwords"] == "missing" and empty["ntp"] == "missing" and empty["auth_feedback"] == "missing",
+      and empty["sys_passwords"] == "missing" and empty["ntp"] == "missing" and empty["auth_feedback"] == "missing"
+      and empty["ciphers"] == "missing" and empty["gw_timeouts"] == "partial" and empty["login_lockout"] == "missing"
+      and empty["clientless_off"] == "missing" and empty["snmp_community"] == "missing" and empty["config_saved"] == "missing"
+      and empty["rpc_nodes"] == "missing" and empty["admin_accounts"] == "missing" and empty["mgmt_timeout"] == "missing",
       "an appliance with nothing in place", empty)
 down = security.evaluate(security.collect_facts(FakeNitro(down=True)), {})
 check(all(c["status"] in ("unknown", "missing") for c in down) and sum(c["status"] == "unknown" for c in down) >= 10,
@@ -141,7 +153,7 @@ with c.session_transaction() as s:
 
 r = c.get("/api/security/checklist")
 j = r.get_json()
-check(r.status_code == 200 and len(j["checks"]) == 23 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["StoreFront_LB"],
+check(r.status_code == 200 and len(j["checks"]) == 32 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["StoreFront_LB"],
       "checklist endpoint: entries and the virtual servers for the commands", r.status_code)
 r = c.post("/api/security/mark", json={"id": "epa_referer", "state": "irrelevant"})
 r2 = c.post("/api/security/mark", json={"id": "saml_protection", "state": "done"})
