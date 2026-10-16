@@ -275,6 +275,14 @@ def _check_scope_params():
     node = request.args.get('node')
     if node is not None and node != '' and node not in ('primary', 'secondary'):
         return jsonify({'error': "node must be 'primary' or 'secondary'"}), 400
+    if request.path.startswith(_NETSCALER_ONLY) and get_mode(inst) == 'sdx':
+        return jsonify({'error': 'This instance is an SDX Management Service. Open one of its NetScaler instances '
+                                 'for this (add it as an instance of its own).', 'code': 'sdx'}), 409
+
+# Endpoints that talk to a NetScaler, not to an SDX Management Service.
+_NETSCALER_ONLY = ('/api/system-stats', '/api/ha-status', '/api/lb-vservers', '/api/services', '/api/certificates',
+                   '/api/user-sessions', '/api/session-', '/api/failover-history', '/api/unlock-user', '/api/security/',
+                   '/api/nextgen-debug', '/api/detect-api')
 
 @app.before_request
 def _enforce_idle_timeout():
@@ -822,6 +830,13 @@ class NetScalerAPI:
                 return {"errorcode": -1, "message": m}
         return {"errorcode": -1, "message": said[-1] if said else "All unlock attempts failed."}
 
+class SdxAPI(NetScalerAPI):
+    """The SDX Management Service's NITRO API (/nitro/v2): the platform, its
+    hardware health and the NetScaler (VPX) instances it hosts. Read-only here."""
+    def __init__(self, ip, username, password, port=443, protocol='https'):
+        super().__init__(ip, username, password, port, protocol)
+        self.base_url = f"{protocol}://{ip}:{port}/nitro/v2"
+
 # ======================================================================================
 # Next-Gen API Client
 # ======================================================================================
@@ -887,7 +902,7 @@ def _int(v, default):
 # NODES_CONFIG_FILE is defined at the top (under DATA_DIR).
 # Deployment topology: 'standalone' (primary only), 'ha' (primary+secondary pair),
 # or 'cluster' (primary = Cluster IP / CLIP; members read from /config/clusternode).
-VALID_MODES = ('standalone', 'ha', 'cluster')
+VALID_MODES = ('standalone', 'ha', 'cluster', 'sdx')     # sdx: the node is an SDX Management Service
 
 def _blank_node():
     return {'ip': '', 'username': '', 'password': '', 'port': 443, 'protocol': 'https'}
@@ -1008,7 +1023,7 @@ def node_items(instance_id=None):
 
 def active_node_keys(instance_id=None):
     """Node keys the UI should surface, per deployment mode."""
-    if get_mode(instance_id) in ('standalone', 'cluster'):
+    if get_mode(instance_id) in ('standalone', 'cluster', 'sdx'):
         return ['primary']
     return [k for k, _ in node_items(instance_id)]
 
@@ -1056,6 +1071,10 @@ def get_detect_info(instance_id, node_key):
     return API_DETECT_INFO.get(str(get_instance(instance_id).get('id')), {}).get(node_key, {})
 
 def detect_api_mode_for_node(node_key: str, cfg: dict, instance_id=None):
+    if get_mode(instance_id) == 'sdx':
+        set_api_mode(instance_id, node_key, 'sdx')
+        _set_detect_info(instance_id, node_key, mode='sdx', reason='SDX Management Service (NITRO v2)')
+        return
     if not cfg.get('ip') or not cfg.get('username') or not cfg.get('password'):
         set_api_mode(instance_id, node_key, 'nitro')
         _set_detect_info(instance_id, node_key, mode='nitro', reason='Node is not fully configured')
@@ -1138,6 +1157,13 @@ def get_nitro(node_key: str, instance_id=None) -> NetScalerAPI:
     if not isinstance(cfg, dict): raise KeyError(f"Unknown node '{node_key}'")
     return NetScalerAPI(cfg['ip'], cfg['username'], cfg['password'], cfg['port'], cfg['protocol'])
 
+def get_sdx(instance_id=None) -> SdxAPI:
+    inst = get_instance(instance_id)
+    cfg = inst.get('primary')
+    if str(inst.get('mode')) != 'sdx' or not isinstance(cfg, dict) or not cfg.get('ip'):
+        raise KeyError('This instance is not an SDX with an address')
+    return SdxAPI(cfg['ip'], cfg.get('username', ''), cfg.get('password', ''), cfg.get('port', 443), cfg.get('protocol', 'https'))
+
 def get_nextgen(node_key: str, instance_id=None) -> NextGenAPI:
     cfg = get_instance(instance_id).get(node_key or 'primary') if (node_key or 'primary') in ('primary', 'secondary') else None
     if not isinstance(cfg, dict): raise KeyError(f"Unknown node '{node_key}'")
@@ -1201,6 +1227,8 @@ def _get_cluster_nodes_normalized(instance_id=None):
 def _get_ha_data_fast(instance_id=None):
     # Cluster members and HA nodes are normalized to the same {'hanode': [...]} shape
     # so every downstream caller works regardless of deployment mode.
+    if get_mode(instance_id) == 'sdx':
+        return {}
     if get_mode(instance_id) == 'cluster':
         return _get_cluster_nodes_normalized(instance_id)
     for nk in active_node_keys(instance_id):
@@ -1281,6 +1309,112 @@ def _roles_from_ha(instance_id=None) -> tuple[dict, dict]:
             if ip: roles[ip] = str(n.get('state') or n.get('hacurstate') or 'Unknown')
     return roles, raw
 
+# ======================================================================================
+# License & Capacity
+# ======================================================================================
+_LIC_CACHE = {}                      # (instance, node key) -> (read at, license_info)
+LICENSE_WARN_DAYS = 30
+
+_LIC_MODES = {
+    'LAS (FIXED BANDWIDTH)': 'LAS - fixed bandwidth', 'LAS': 'LAS - online',
+    'LOCAL': 'Local license file', 'POOLED': 'Pooled (NetScaler Console)', 'FIPS-POOLED': 'Pooled, FIPS',
+    'CICO': 'Check-in / check-out', 'FIPS-CICO': 'Check-in / check-out, FIPS', 'EXPRESS': 'Express (free)',
+    'CPU': 'vCPU (pooled)', 'CPU-LOCAL': 'vCPU (local)', 'SELF MANAGED POOL': 'Self-managed pool',
+    'SELF MANAGED VCPU': 'Self-managed vCPU',
+}
+_EDITIONS = {'PLATINUM': 'Premium', 'ENTERPRISE': 'Advanced', 'STANDARD': 'Standard'}
+
+def _first(d, key):
+    v = (d or {}).get(key) if isinstance(d, dict) else None
+    if isinstance(v, list):
+        v = v[0] if v else {}
+    return v if isinstance(v, dict) else {}
+
+def _truthy(v):
+    return str(v).strip().upper() in ('TRUE', '1', 'YES', 'ENABLED', 'ON')
+
+def license_info(nitro):
+    """What the appliance says about its license: nslicense (edition flags,
+    licensing mode, days to expiry), nscapacity (bandwidth / vCPUs, edition) and
+    nslicenseserver (pooled / LAS server, grace period). Each part may be missing
+    on a build or for a read-only user; what is unknown says so."""
+    lic, cap, srv, errors = {}, {}, {}, []
+    for path, key, target in (('/config/nslicense', 'nslicense', 'lic'), ('/config/nscapacity', 'nscapacity', 'cap'),
+                              ('/config/nslicenseserver', 'nslicenseserver', 'srv')):
+        try:
+            got = _first(nitro._get(path, custom_timeout=4) or {}, key)
+        except Exception as e:
+            got = {}
+            if target != 'srv':
+                errors.append(f"{key}: {str(e)[:100]}")
+        if target == 'lic': lic = got
+        elif target == 'cap': cap = got
+        else: srv = got
+
+    edition = 'Unknown'
+    if _truthy(lic.get('isplatinumlic')): edition = 'Premium'
+    elif _truthy(lic.get('isenterpriselic')): edition = 'Advanced'
+    elif _truthy(lic.get('isstandardlic')): edition = 'Standard'
+    elif cap.get('edition'): edition = _EDITIONS.get(str(cap['edition']).upper(), str(cap['edition']).title())
+    if _truthy(lic.get('issgwylic')) and edition == 'Unknown': edition = 'Gateway'
+
+    raw_mode = str(lic.get('licensingmode') or '').strip()
+    mode = _LIC_MODES.get(raw_mode.upper(), raw_mode or 'Unknown')
+
+    capacity = 'Unknown'
+    bw = cap.get('actualbandwidth') or cap.get('bandwidth')
+    if _int(cap.get('vcpucount'), 0) > 0 and (_truthy(cap.get('vcpu')) or 'CPU' in raw_mode.upper()):
+        capacity = f"{_int(cap.get('vcpucount'), 0)} vCPU"
+    elif bw and str(bw) != '0':
+        unit = str(cap.get('unit') or 'Mbps') if cap.get('bandwidth') and not cap.get('actualbandwidth') else 'Mbps'
+        capacity = f"{bw} {unit}"
+    elif _int(lic.get('modelid'), 0) > 0:
+        capacity = f"{_int(lic.get('modelid'), 0)} Mbps"
+
+    days = [d for d in (_int(lic.get('daystoexpiration'), -1), _int(cap.get('daystoexpiration'), -1)) if d > 0]
+    days_left = min(days) if days else None
+    expires_on = ((datetime.now(APP_TZ) + timedelta(days=days_left)).strftime('%d/%m/%Y') if days_left is not None else '')
+    las_days = _int(lic.get('daystolasenforcement'), 0)
+
+    grace = _truthy(srv.get('grace'))
+    grace_hours = _int(srv.get('gptimeleft'), 0) if grace else 0
+
+    level, notes = 'ok', []
+    if grace:
+        level = 'bad' if grace_hours <= 72 else 'warn'
+        notes.append(f"In the grace period: {grace_hours // 24} day(s) {grace_hours % 24} h left before the license stops working.")
+    if days_left is not None and days_left <= LICENSE_WARN_DAYS:
+        level = 'bad' if days_left <= 7 else ('warn' if level == 'ok' else level)
+        notes.append(f"The license expires in {days_left} day(s), on {expires_on}.")
+    if las_days and las_days <= LICENSE_WARN_DAYS and 'LAS' not in raw_mode.upper():
+        level = 'warn' if level == 'ok' else level
+        notes.append(f"LAS enforcement in {las_days} day(s): move this appliance to LAS licensing before then.")
+    if errors and edition == 'Unknown':
+        level = 'unknown'
+
+    return {
+        'edition': edition, 'mode': mode, 'mode_raw': raw_mode, 'capacity': capacity,
+        'days_left': days_left, 'expires_on': expires_on, 'las_enforcement_days': las_days or None,
+        'grace': grace, 'grace_hours_left': grace_hours if grace else None,
+        'server': str(srv.get('servername') or srv.get('licenseserverip') or ''),
+        'server_status': str(srv.get('status') or ''), 'server_type': str(srv.get('type') or ''),
+        'vpn_users': _int(lic.get('f_sslvpn_users'), 0) or None,
+        'level': level, 'notes': notes, 'errors': errors,
+    }
+
+def _cached_license(instance_id, node_key):
+    """License info for the health wall: read at most every ten minutes per node."""
+    key = (str(instance_id), node_key)
+    hit = _LIC_CACHE.get(key)
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    try:
+        info = license_info(get_nitro(node_key, instance_id))
+    except Exception:
+        return hit[1] if hit else None
+    _LIC_CACHE[key] = (time.time(), info)
+    return info
+
 def _build_node_overview(node_key: str, instance_id=None) -> dict:
     cfg = get_instance(instance_id).get(node_key, {})
     ip = cfg.get('ip')
@@ -1320,29 +1454,15 @@ def _build_node_overview(node_key: str, instance_id=None) -> dict:
     except Exception as e:
         logger.warning(f"Could not fetch configchanged for {node_key}: {e}")
 
-    lic_type, lic_mode, bandwidth = "Base / Express", "File Based", "Unknown"
-    try:
-        lic_data = nitro._get('/config/nslicense', custom_timeout=3).get('nslicense', [{}])[0]
-        if lic_data.get('pl') == 'TRUE' or lic_data.get('premium') == 'TRUE': lic_type = "Premium (Platinum)"
-        elif lic_data.get('ent') == 'TRUE' or lic_data.get('advanced') == 'TRUE': lic_type = "Advanced (Enterprise)"
-        elif lic_data.get('wl') == 'TRUE' or lic_data.get('standard') == 'TRUE': lic_type = "Standard"
-        model = lic_data.get('modelid')
-        if model and str(model) != '0': bandwidth = f"{model} Mbps"
-    except Exception: pass
-
-    try:
-        cap_data = nitro._get('/config/nscapacity', custom_timeout=3).get('nscapacity', [{}])[0]
-        if cap_data.get('edition'): lic_type = f"{cap_data.get('edition').title()}"
-        if cap_data.get('bandwidth') and str(cap_data.get('bandwidth')) != '0':
-            bandwidth = f"{cap_data.get('bandwidth')} {cap_data.get('unit', 'Mbps')}"
-            lic_mode = "LAS Fixed Bandwidth"
-        if cap_data.get('platform') == 'VSERVER': lic_mode = "LAS (Virtual Server Based)"
-    except Exception: pass
+    lic = license_info(nitro)
+    _LIC_CACHE[(str(get_instance(instance_id).get('id')), node_key)] = (time.time(), lic)
 
     return {
         'connected': connected, 'ha_role': role, 'ha_status': ha_status, 'ns_stats': stats,
         'version': version, 'ip': ip, 'config_changed': config_changed,
-        'license_type': lic_type, 'license_mode': lic_mode, 'bandwidth': bandwidth,
+        # the three keys earlier pages read, and everything else in 'license'
+        'license_type': lic['edition'], 'license_mode': lic['mode'], 'bandwidth': lic['capacity'],
+        'license': lic,
     }
 
 # ======================================================================================
@@ -1637,7 +1757,7 @@ def _clean_instance(inst, idx, stored_by_id):
     if mode not in VALID_MODES:
         mode = 'ha'
     name = str(inst.get('name') or '').strip() or f"Instance {idx + 1}"
-    node_keys = ('primary',) if mode in ('standalone', 'cluster') else ('primary', 'secondary')
+    node_keys = ('primary',) if mode in ('standalone', 'cluster', 'sdx') else ('primary', 'secondary')
     prev = stored_by_id.get(iid, {})
     out = {'id': iid, 'name': name, 'mode': mode}
     for k in node_keys:
@@ -1763,6 +1883,10 @@ def _node_probe(instance_id, node_key, cfg):
         out['mem'] = _to_pct(ns.get('memusagepcnt', ns.get('memusagepct')))
     except Exception as e:
         out['error'] = str(e)[:100]
+    if out['reachable']:
+        lic = _cached_license(instance_id, node_key)
+        if lic and lic.get('level') in ('warn', 'bad'):
+            out['license'] = {'level': lic['level'], 'notes': lic['notes']}
     # Prefer the cached hostname; only pay for a lookup when we don't have one.
     ck = (instance_id, node_key)
     out['name'] = _HOSTNAME_CACHE.get(ck) or ''
@@ -1781,6 +1905,8 @@ def _node_probe(instance_id, node_key, cfg):
 def _instance_health(inst):
     """One instance's health card: per-node reachability/load plus HA role+status."""
     iid = str(inst.get('id'))
+    if str(inst.get('mode')) == 'sdx':
+        return _sdx_health(inst)
     keys = active_node_keys(iid)
     nodes = []
     if keys:
@@ -1814,6 +1940,8 @@ def _instance_health(inst):
             warnings.append(f"{who} unreachable")
         elif hs.get('severity') == 'bad' or hs.get('forced'):
             warnings.append(f"{who}: {hs.get('label')}")
+        if n.get('license'):
+            warnings.append(f"{who}: " + ' '.join(n['license']['notes']))
 
     role_trouble = False
     if str(inst.get('mode')) == 'ha' and total == 2 and up == 2:
@@ -1838,6 +1966,198 @@ def _instance_health(inst):
             'mode': str(inst.get('mode', 'ha')).lower(), 'status': status,
             'nodes_up': up, 'nodes_total': total, 'nodes': nodes,
             'warnings': warnings}
+
+# ======================================================================================
+# SDX
+# ======================================================================================
+_SDX_CACHE = {}                      # instance id -> (read at, overview)
+_SDX_SOURCES = ('mps', 'mps_health', 'ns', 'xen_health_resource_hw', 'xen_health_monitor', 'xen_health_interface',
+                'xen_health_disk', 'sdx_license', 'license_expiry_info')
+_sdx_pool = ThreadPoolExecutor(max_workers=6, thread_name_prefix='sdx')
+
+def _rows(v):
+    if isinstance(v, dict):
+        return [v]
+    return [x for x in v if isinstance(x, dict)] if isinstance(v, list) else []
+
+def _pick_any(d, keys, default=''):
+    for k in keys:
+        v = d.get(k)
+        if v not in (None, '', 'NA', 'N/A'):
+            return v
+    return default
+
+def _bad_status(v):
+    return str(v or '').strip().upper() in ('ERROR', 'FAILED', 'FAIL', 'CRITICAL', 'DOWN', 'BAD')
+
+def _dashboard_instances_by_ip():
+    """IP -> {id, name, node} for every NetScaler instance configured here."""
+    out = {}
+    for i in get_instances():
+        if str(i.get('mode')) == 'sdx':
+            continue
+        for nk in ('primary', 'secondary'):
+            ip = str((i.get(nk) or {}).get('ip') or '').strip()
+            if ip:
+                out.setdefault(ip, {'id': str(i.get('id')), 'name': i.get('name') or str(i.get('id')), 'node': nk})
+    return out
+
+def sdx_overview(instance_id=None, fresh=False):
+    """Everything the SDX view shows, read in parallel from the Management Service.
+    A part that cannot be read is named in 'errors'; nothing is ever written."""
+    iid = str(get_instance(instance_id).get('id'))
+    hit = _SDX_CACHE.get(iid)
+    if hit and not fresh and time.time() - hit[0] < 30:
+        return hit[1]
+    api = get_sdx(iid)
+
+    def one(name):
+        try:
+            d = api._get('/config/' + name, custom_timeout=8) or {}
+            return name, d.get(name, []), None
+        except Exception as e:
+            return name, None, str(e)[:160]
+
+    got, errors = {}, {}
+    for name, val, err in _sdx_pool.map(one, _SDX_SOURCES):
+        if err is None:
+            got[name] = val
+        else:
+            errors[name] = err
+    reachable = 'mps' in got or 'ns' in got
+    mps = (_rows(got.get('mps')) or [{}])[0]
+    health = (_rows(got.get('mps_health')) or [{}])[0]
+    platform = {
+        'hostname': str(_pick_any(mps, ['hostname'])), 'platform': str(_pick_any(mps, ['platform'])),
+        'serial': str(_pick_any(mps, ['serial'])), 'product': str(_pick_any(mps, ['product'])),
+        'version': ' '.join(str(x) for x in (_pick_any(mps, ['product_version']), _pick_any(mps, ['build_number_short', 'build_number'])) if x),
+        'bios': str(_pick_any(mps, ['bios_version'])), 'uptime': str(_pick_any(mps, ['uptime'])),
+        'hypervisor_uptime': str(_pick_any(mps, ['hypervisor_uptime'])),
+        'cpu': _to_pct(health.get('cpu_usage')), 'memory': _to_pct(health.get('memory_usage')),
+        'disk': _to_pct(health.get('disk_usage')),
+    }
+    hardware = []
+    for kind, src in (('Hardware', 'xen_health_resource_hw'), ('Sensor', 'xen_health_monitor')):
+        for x in _rows(got.get(src)):
+            hardware.append({'kind': kind, 'name': str(_pick_any(x, ['name'], '?')),
+                             'value': str(_pick_any(x, ['current_value'])), 'expected': str(_pick_any(x, ['expected_value'])),
+                             'unit': str(_pick_any(x, ['unit'])), 'status': str(_pick_any(x, ['status'], 'NA')),
+                             'failures': _int(x.get('number_of_failures'), 0)})
+    interfaces = [{'port': str(_pick_any(x, ['port', 'mapped_port'], '?')), 'name': str(_pick_any(x, ['display_name', 'mapped_port'])),
+                   'state': str(_pick_any(x, ['state'], '?')), 'rx_errors': _int(x.get('rx_errors'), 0),
+                   'tx_errors': _int(x.get('tx_errors'), 0), 'vf': f"{_int(x.get('vf_assigned'), 0)}/{_int(x.get('vf_total'), 0)}"}
+                  for x in _rows(got.get('xen_health_interface'))]
+    disks = [{'name': str(_pick_any(x, ['name', 'disk_name', 'device_name', 'slot'], '?')),
+              'status': str(_pick_any(x, ['status', 'state', 'health'], 'NA')),
+              'size': str(_pick_any(x, ['size', 'capacity', 'disk_size', 'total_size'])),
+              'detail': {k: str(v)[:80] for k, v in x.items() if k not in ('id',) and v not in (None, '')}}
+             for x in _rows(got.get('xen_health_disk'))]
+    lic = (_rows(got.get('sdx_license')) or [{}])[0]
+    license_ = {
+        'platform': str(_pick_any(lic, ['platform'])), 'server': str(_pick_any(lic, ['license_server_name'])),
+        'pooled': _truthy(lic.get('is_pooled_license')),
+        'max_throughput': _int(lic.get('max_throughput'), 0), 'available_throughput': _int(lic.get('available_throughput'), 0),
+        'max_instances': _int(_pick_any(lic, ['max_number_of_ns_instances', 'max_number_of_instances'], 0), 0),
+        'available_instances': _int(_pick_any(lic, ['available_number_of_ns_instances', 'available_number_of_instances'], 0), 0),
+        'expiring': sorted(({'feature': str(_pick_any(x, ['feature'], '?')), 'days': _int(x.get('expirydays'), -1),
+                             'count': _int(x.get('expirycount'), 0)} for x in _rows(got.get('license_expiry_info'))),
+                           key=lambda e: e['days'] if e['days'] >= 0 else 10 ** 9),
+    }
+    by_ip = _dashboard_instances_by_ip()
+    instances = []
+    for x in _rows(got.get('ns')):
+        ip = str(_pick_any(x, ['ip_address', 'ipv4_address']))
+        vm = str(_pick_any(x, ['vm_state'], '?'))
+        st = str(_pick_any(x, ['instance_state', 'state'], '?'))
+        instances.append({
+            'name': str(_pick_any(x, ['name'], ip or '?')), 'ip': ip, 'vm_state': vm, 'state': st,
+            'status': str(_pick_any(x, ['status'])), 'health': str(_pick_any(x, ['health'])),
+            'reason': str(_pick_any(x, ['reason']))[:200], 'role': str(_pick_any(x, ['instance_mode'])),
+            'version': str(_pick_any(x, ['version'])), 'cpu': _to_pct(x.get('ns_cpu_usage')),
+            'memory': _to_pct(x.get('ns_memory_usage')), 'throughput': _int(x.get('throughput'), 0),
+            'rx': _pick_any(x, ['ns_rx']), 'tx': _pick_any(x, ['ns_tx']), 'http_req': _pick_any(x, ['http_req']),
+            'cores': _int(_pick_any(x, ['cpu_core_pe', 'number_of_cpu', 'number_of_cores'], 0), 0),
+            'memory_mb': _int(x.get('vm_memory_total'), 0), 'uptime': str(_pick_any(x, ['uptime'])),
+            'license': str(_pick_any(x, ['license', 'license_edition'])),
+            'ok': vm.lower() == 'running' and st.upper() in ('UP', '?'),
+            'dashboard': by_ip.get(ip),
+        })
+    instances.sort(key=lambda i: i['name'].lower())
+    data = {
+        'instance': iid, 'reachable': reachable, 'platform': platform, 'hardware': hardware,
+        'hardware_errors': [h for h in hardware if _bad_status(h['status'])],
+        'interfaces': interfaces, 'disks': disks, 'license': license_, 'instances': instances,
+        'errors': errors, 'read_at': time.time(),
+    }
+    _SDX_CACHE[iid] = (time.time(), data)
+    return data
+
+def _sdx_health(inst):
+    """The health wall card of an SDX: the platform, its hardware, its instances."""
+    iid = str(inst.get('id'))
+    cfg = inst.get('primary') or {}
+    node = {'key': 'primary', 'ip': cfg.get('ip', ''), 'name': '', 'reachable': False, 'cpu': None, 'mem': None}
+    out = {'id': iid, 'name': inst.get('name') or iid, 'mode': 'sdx', 'status': 'unknown', 'nodes_up': 0,
+           'nodes_total': 1, 'nodes': [node], 'warnings': []}
+    if not cfg.get('ip'):
+        node['error'] = 'No IP configured'
+        return out
+    try:
+        d = sdx_overview(iid)
+    except Exception as e:
+        node['error'] = str(e)[:100]
+        out['status'] = 'down'
+        out['warnings'].append('Management Service unreachable')
+        return out
+    if not d['reachable']:
+        out['status'] = 'down'
+        out['warnings'].append('Management Service unreachable')
+        node['error'] = next(iter(d['errors'].values()), 'no answer')
+        return out
+    p = d['platform']
+    node.update(reachable=True, name=p.get('hostname') or 'Management Service', cpu=p.get('cpu'), mem=p.get('memory'))
+    out['nodes_up'] = 1
+    warn = [f"{h['name']}: {h['status']}" for h in d['hardware_errors']][:4]
+    down = [i for i in d['instances'] if not i['ok']]
+    warn += [f"{i['name']}: {i['vm_state']}/{i['state']}" for i in down][:4]
+    soon = [e for e in d['license']['expiring'] if 0 <= e['days'] <= LICENSE_WARN_DAYS]
+    warn += [f"License {e['feature']} expires in {e['days']} day(s)" for e in soon][:2]
+    out['warnings'] = warn
+    out['status'] = 'degraded' if (d['hardware_errors'] or down or soon) else 'up'
+    out['sdx'] = {'platform': p.get('platform'), 'version': p.get('version'), 'hostname': p.get('hostname'),
+                  'hardware_errors': len(d['hardware_errors']),
+                  'instances': [{'name': i['name'], 'ip': i['ip'], 'ok': i['ok'], 'vm_state': i['vm_state'],
+                                 'state': i['state'], 'dashboard': i['dashboard']} for i in d['instances']]}
+    return out
+
+def sdx_host_of(ip):
+    """The SDX (from what was read lately) that hosts the NetScaler at this IP."""
+    for iid, (ts, d) in list(_SDX_CACHE.items()):
+        if time.time() - ts > 3600:
+            continue
+        for i in d.get('instances', []):
+            if i.get('ip') and i['ip'] == str(ip):
+                inst = next((x for x in get_instances() if str(x.get('id')) == iid), {})
+                return {'sdx_id': iid, 'sdx_name': inst.get('name') or iid, 'vpx_name': i['name'],
+                        'hostname': (d.get('platform') or {}).get('hostname', '')}
+    return None
+
+@app.route('/api/sdx/overview')
+@login_required
+def api_sdx_overview():
+    inst = request.args.get('instance')
+    if get_mode(inst) != 'sdx':
+        return jsonify({'error': 'This instance is not an SDX.'}), 400
+    try:
+        d = sdx_overview(inst, fresh=request.args.get('fresh') == '1')
+    except KeyError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': f'The Management Service could not be read: {str(e)[:200]}'}), 502
+    if not d['reachable']:
+        return jsonify({'error': 'The Management Service could not be read: '
+                                 + next(iter(d['errors'].values()), 'no answer'), 'errors': d['errors']}), 502
+    return jsonify(d)
 
 def start_api_detect_thread():
     """Re-check each node's API capability periodically, so the Next-Gen API being
@@ -1997,6 +2317,14 @@ def api_caps():
     inst = request.args.get('instance')
     iid = get_instance(inst).get('id')
     mode = get_mode(inst)
+    if mode == 'sdx':
+        v = get_instance(inst).get('primary') or {}
+        hit = _SDX_CACHE.get(str(iid))
+        name = ((hit[1].get('platform') or {}).get('hostname') if hit else '') or 'Management Service'
+        return jsonify({'api_mode': {'primary': 'sdx'}, 'mode': 'sdx', 'primary_node': 'primary', 'instance': iid,
+                        'api_detect': {'primary': {'mode': 'sdx', 'reason': 'SDX Management Service (NITRO v2)'}},
+                        'nodes': {'primary': {'ip': v.get('ip', ''), 'protocol': v.get('protocol', 'https'),
+                                              'port': v.get('port', 443), 'name': name}}})
     default_name = {'primary': 'Cluster (CLIP)' if mode == 'cluster' else 'Primary', 'secondary': 'Secondary'}
     nodes_data = {}
     for k in active_node_keys(inst):
@@ -2045,7 +2373,10 @@ def api_system_stats():
     inst = request.args.get('instance')
     node = request.args.get('node')
     if node:
-        try: return jsonify({'node': node, 'api_mode': get_api_mode(inst, node), **_build_node_overview(node, inst)})
+        try:
+            ov = _build_node_overview(node, inst)
+            ov['hosted_on'] = sdx_host_of(ov.get('ip'))
+            return jsonify({'node': node, 'api_mode': get_api_mode(inst, node), **ov})
         except Exception as e: return jsonify({'error': str(e)}), 500
     try:
         return jsonify({
@@ -2952,6 +3283,8 @@ def _security_targets():
     out = []
     for inst in get_instances():
         iid = str(inst.get('id'))
+        if str(inst.get('mode')) == 'sdx':
+            continue                             # an SDX Management Service has none of this
         for nk in active_node_keys(iid):
             node = inst.get(nk) or {}
             if node.get('ip'):

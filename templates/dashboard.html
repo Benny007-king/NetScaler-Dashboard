@@ -509,6 +509,54 @@
     </div>
   </section>
 
+  <section class="panel hidden fade-in" id="panel-sdx">
+    <div id="sdxError" class="hidden glass-panel rounded-2xl p-6 mb-6 text-red-300 text-sm"></div>
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+      <div class="glass-panel rounded-2xl p-6 border-t-4 border-cyan-500">
+        <h3 class="text-lg font-semibold text-white mb-4">SDX platform</h3>
+        <div id="sdxPlatform" class="table-container text-sm">Loading...</div>
+      </div>
+      <div class="glass-panel rounded-2xl p-6 border-t-4 border-purple-500">
+        <h3 class="text-lg font-semibold text-white mb-4">License &amp; capacity</h3>
+        <div id="sdxLicense" class="text-sm">Loading...</div>
+      </div>
+      <div class="glass-panel rounded-2xl p-6 border-t-4 border-emerald-500">
+        <h3 class="text-lg font-semibold text-white mb-4">Management Service</h3>
+        <div id="sdxMps" class="text-sm">Loading...</div>
+      </div>
+    </div>
+    <div class="glass-panel rounded-2xl p-6 mb-6">
+      <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <h3 class="text-lg font-semibold text-white">NetScaler instances on this SDX</h3>
+        <p class="text-xs text-slate-400">Open one to see its own overview, sessions and security, or add it as an instance in Settings.</p>
+      </div>
+      <div class="table-container"><table>
+        <thead><tr><th>Name</th><th>IP</th><th>State</th><th>Role</th><th>Version</th><th class="text-right">CPU</th><th class="text-right">Memory</th><th class="text-right">Throughput</th><th class="text-right">Cores / RAM</th><th>Uptime</th><th>Dashboard</th></tr></thead>
+        <tbody id="sdxInstances" class="text-slate-300"></tbody>
+      </table></div>
+    </div>
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6">
+      <div class="glass-panel rounded-2xl p-6">
+        <h3 class="text-lg font-semibold text-white mb-4">Hardware health</h3>
+        <div class="table-container max-h-[28rem] overflow-y-auto"><table>
+          <thead><tr><th>Component</th><th>Reading</th><th>Expected</th><th>Status</th></tr></thead>
+          <tbody id="sdxHardware" class="text-slate-300"></tbody>
+        </table></div>
+      </div>
+      <div class="glass-panel rounded-2xl p-6">
+        <h3 class="text-lg font-semibold text-white mb-4">Interfaces and disks</h3>
+        <div class="table-container max-h-[16rem] overflow-y-auto mb-4"><table>
+          <thead><tr><th>Port</th><th>Name</th><th>State</th><th class="text-right">RX / TX errors</th><th class="text-right">Virtual functions</th></tr></thead>
+          <tbody id="sdxInterfaces" class="text-slate-300"></tbody>
+        </table></div>
+        <div class="table-container"><table>
+          <thead><tr><th>Disk</th><th>Size</th><th>Status</th></tr></thead>
+          <tbody id="sdxDisks" class="text-slate-300"></tbody>
+        </table></div>
+      </div>
+    </div>
+  </section>
+
   <section class="panel hidden fade-in" id="panel-security">
     <div class="glass-panel rounded-2xl p-6 mb-6">
       <div class="flex flex-wrap items-start justify-between gap-4 mb-5">
@@ -780,7 +828,7 @@ function nodeFieldsHtml(kind, node) {
 function instanceCardHtml(inst) {
     inst = inst || {};
     const mode = inst.mode || 'ha';
-    const priTitle = mode === 'cluster' ? 'Cluster IP (CLIP)' : 'Primary Node';
+    const priTitle = PRI_TITLES[mode] || 'Primary Node';
     return `
     <div class="instance-card bg-slate-900/40 border border-slate-700 rounded-xl p-4" data-id="${escapeHtml(inst.id || '')}">
       <div class="flex flex-wrap items-center gap-2 mb-3">
@@ -789,6 +837,7 @@ function instanceCardHtml(inst) {
           <option value="standalone"${mode === 'standalone' ? ' selected' : ''}>Standalone</option>
           <option value="ha"${mode === 'ha' ? ' selected' : ''}>HA Pair</option>
           <option value="cluster"${mode === 'cluster' ? ' selected' : ''}>Cluster (CLIP)</option>
+          <option value="sdx"${mode === 'sdx' ? ' selected' : ''}>SDX (Management Service)</option>
         </select>
         <button type="button" onclick="removeInstanceCard(this)" class="px-2.5 py-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 rounded-lg text-sm" title="Remove instance">✕ Remove</button>
       </div>
@@ -808,11 +857,12 @@ function syncNodePort(sel) {
     if (portEl) portEl.value = (sel.value === 'https') ? 443 : 80;
 }
 
+const PRI_TITLES = { cluster: 'Cluster IP (CLIP)', sdx: 'SDX Management Service (its address and nsroot or a read-only user)' };
 function onCardModeChange(sel) {
     const card = sel.closest('.instance-card');
     const mode = sel.value;
     card.querySelector('.card-sec').classList.toggle('hidden', mode !== 'ha');
-    card.querySelector('.card-pri-title').textContent = (mode === 'cluster') ? 'Cluster IP (CLIP)' : 'Primary Node';
+    card.querySelector('.card-pri-title').textContent = PRI_TITLES[mode] || 'Primary Node';
 }
 
 function addInstance(inst) {
@@ -1282,10 +1332,12 @@ function pollUpgrade() {
 
 // --- TABS LOGIC ---
 function setActiveTab(name) {
+    if (state.mode === 'sdx' && NS_ONLY_TABS.includes(name)) name = 'overview';
+    const panelName = (name === 'overview' && state.mode === 'sdx') ? 'sdx' : name;
     const panels = document.querySelectorAll('section.panel');
     panels.forEach(p => p.classList.add('hidden'));
     
-    const selected = document.getElementById(`panel-${name}`);
+    const selected = document.getElementById(`panel-${panelName}`);
     if(selected) selected.classList.remove('hidden');
 
     const btns = document.querySelectorAll('.tab-btn');
@@ -1309,7 +1361,7 @@ function setActiveTab(name) {
     }
 
     if (name === 'wall') loadWall();
-    if (name === 'overview') loadOverview();
+    if (name === 'overview') { if (state.mode === 'sdx') loadSdx(); else loadOverview(); }
     if (name === 'applications') { loadApplications(); loadServices(); }
     if (name === 'failover') loadFailover();
     if (name === 'sessions') loadSessions();
@@ -1396,12 +1448,26 @@ function initCharts() {
     } catch(e) { console.error("Chart init failed", e); }
 }
 
+// An SDX Management Service is not a NetScaler: it gets its own view in place of
+// Overview, and the tabs about a NetScaler's traffic are hidden.
+const NS_ONLY_TABS = ['applications', 'failover', 'sessions', 'security', 'certificates', 'unlock'];
+function applyModeUi() {
+    const sdx = state.mode === 'sdx';
+    document.querySelectorAll('.tab-btn').forEach(b => {
+        if (NS_ONLY_TABS.includes(b.dataset.tab)) b.classList.toggle('hidden', sdx);
+        if (b.dataset.tab === 'overview') b.textContent = sdx ? 'SDX' : 'Overview';
+    });
+    const np = $('nodePicker');
+    if (np) np.classList.toggle('invisible', sdx);
+}
+
 // --- DATA LOADERS ---
 async function fetchCaps() {
     const r = await getJSON('/api/caps');
     if (r.ok) {
         state.apiModes = r.data.api_mode || {};
         state.mode = r.data.mode || 'ha';
+        applyModeUi();
         const haTitle = $('haPanelTitle');
         if (haTitle) haTitle.textContent = (state.mode === 'cluster') ? 'Cluster Nodes' : 'High Availability';
 
@@ -1491,6 +1557,24 @@ function wallNodeRow(n) {
     </div>`;
 }
 
+function sdxWallRows(x) {
+    const inst = x.instances || [];
+    const up = inst.filter(i => i.ok).length;
+    const rows = inst.map(i => {
+        const link = i.dashboard
+            ? `<button class="text-[11px] text-sky-300 hover:text-white" onclick="event.stopPropagation(); openInstance('${escapeHtml(i.dashboard.id)}')">open →</button>`
+            : '<span class="text-[11px] text-slate-600">not added</span>';
+        return `<div class="flex items-center gap-2 py-1 border-t border-white/5">
+            <span class="status-dot ${i.ok ? 'dot-up' : 'dot-down'}"></span>
+            <span class="text-slate-200 text-xs truncate">${escapeHtml(i.name)}</span>
+            <span class="font-mono text-[11px] text-slate-500 truncate">${escapeHtml(i.ip || '')}</span>
+            <span class="ml-auto">${link}</span></div>`;
+    }).join('');
+    return `<div class="mt-2 pt-2 border-t border-white/10">
+        <div class="text-[11px] uppercase tracking-wider text-slate-500 mb-1">${escapeHtml(x.platform || 'SDX')} · ${up}/${inst.length} instances running${x.hardware_errors ? ` · <span class="text-red-300">${x.hardware_errors} hardware error(s)</span>` : ''}</div>
+        ${rows || '<div class="text-xs text-slate-500">No instances</div>'}</div>`;
+}
+
 function wallCard(it) {
     const meta = WALL_STATUS[it.status] || WALL_STATUS.unknown;
     const warn = (it.warnings || []).length
@@ -1511,6 +1595,7 @@ function wallCard(it) {
             <span class="badge ${meta.badge} shrink-0">${meta.label}</span>
         </div>
         <div>${(it.nodes || []).map(wallNodeRow).join('') || '<div class="text-xs text-slate-500">No nodes configured</div>'}</div>
+        ${it.sdx ? sdxWallRows(it.sdx) : ''}
         ${warn}
     </div>`;
 }
@@ -1570,6 +1655,41 @@ function haStatusCell(st) {
     return `<span class="badge ${cls}">${lock}${escapeHtml(st.label)}</span>`;
 }
 
+// License & Capacity: amber within 30 days of expiry or in a grace period, red
+// within a week (or three days of grace).
+const LIC_CLS = { ok: 'badge-success', warn: 'badge-warning', bad: 'badge-danger', unknown: 'badge-muted' };
+function licenseTable(l) {
+    const row = (label, html, last) => `<tr class="${last ? '' : 'border-b border-slate-700'}"><td class="text-slate-500 w-32 align-top">${label}</td><td class="text-white">${html}</td></tr>`;
+    const rows = [
+        row('Edition', `<span class="font-medium">${escapeHtml(l.edition || 'Unknown')}</span>`),
+        row('Type', escapeHtml(l.mode || 'Unknown')),
+        row('Capacity', `<span class="font-mono">${escapeHtml(l.capacity || 'Unknown')}</span>`),
+    ];
+    let exp;
+    if (l.days_left != null) {
+        const lvl = l.days_left <= 7 ? 'bad' : (l.days_left <= 30 ? 'warn' : 'ok');
+        exp = `<span class="badge ${LIC_CLS[lvl]}">${escapeHtml(l.expires_on)}</span> <span class="text-slate-400 text-xs">in ${l.days_left} day${l.days_left === 1 ? '' : 's'}</span>`;
+    } else {
+        exp = '<span class="text-slate-400">No expiry reported</span>';
+    }
+    rows.push(row('Expires', exp));
+    if (l.grace) {
+        const h = l.grace_hours_left || 0;
+        rows.push(row('Grace period', `<span class="badge ${h <= 72 ? 'badge-danger' : 'badge-warning'}">${Math.floor(h / 24)} d ${h % 24} h left</span>`));
+    }
+    if (l.las_enforcement_days) {
+        const lv = l.las_enforcement_days <= 30 ? 'badge-warning' : 'badge-muted';
+        rows.push(row('LAS enforcement', `<span class="badge ${lv}">in ${l.las_enforcement_days} days</span>`));
+    }
+    if (l.server) rows.push(row('License server', `${escapeHtml(l.server)}${l.server_type ? ' <span class="text-slate-500 text-xs">(' + escapeHtml(l.server_type) + ')</span>' : ''}${l.server_status && !/^\d+$/.test(l.server_status) ? ' · ' + escapeHtml(l.server_status) : ''}`));
+    if (l.vpn_users) rows.push(row('Gateway users', `<span class="font-mono">${Number(l.vpn_users).toLocaleString()}</span>`));
+    const last = rows.length - 1;
+    rows[last] = rows[last].replace('border-b border-slate-700', '');
+    const notes = (l.notes || []).length
+        ? `<div class="mt-3 text-xs ${l.level === 'bad' ? 'text-red-300' : 'text-amber-300'}">\u26A0 ${l.notes.map(escapeHtml).join('<br>')}</div>` : '';
+    return `<table class="w-full">${rows.join('')}</table>${notes}`;
+}
+
 async function loadOverview(background) {
     // Background auto-refresh polls carry a header so they don't reset the
     // idle-timeout clock. Both calls run in parallel to cut first-paint latency.
@@ -1601,6 +1721,10 @@ async function loadOverview(background) {
         const haStRow = haSt.label
             ? `<tr class="border-t border-slate-700"><td class="text-slate-500">HA Status</td><td>${haStatusCell(haSt)}</td></tr>`
             : '';
+        const ho = r.data.hosted_on;
+        const hostRow = ho
+            ? `<tr class="border-t border-slate-700"><td class="text-slate-500">Runs on</td><td><button class="text-sky-300 hover:text-white" onclick="openInstance('${escapeHtml(ho.sdx_id)}')">${/sdx/i.test(ho.sdx_name) ? '' : 'SDX '}${escapeHtml(ho.sdx_name)}</button> <span class="text-slate-500 text-xs">as ${escapeHtml(ho.vpx_name)}</span></td></tr>`
+            : '';
         
         $('sysStats').innerHTML = `
         <table class="w-full">
@@ -1608,14 +1732,11 @@ async function loadOverview(background) {
             <tr class="border-b border-slate-700"><td class="text-slate-500">Version</td><td class="text-white">${escapeHtml(r.data.version)}</td></tr>
             <tr><td class="text-slate-500">HA Role</td><td><span class="badge ${badge}">${escapeHtml(role)}</span></td></tr>
             ${haStRow}
+            ${hostRow}
         </table>`;
         
-        $('licStats').innerHTML = `
-        <table class="w-full">
-            <tr class="border-b border-slate-700"><td class="text-slate-500 w-32">Edition</td><td class="text-white font-medium">${escapeHtml(r.data.license_type || 'Unknown')}</td></tr>
-            <tr class="border-b border-slate-700"><td class="text-slate-500">Mode</td><td class="text-white">${escapeHtml(r.data.license_mode || 'Unknown')}</td></tr>
-            <tr><td class="text-slate-500">Bandwidth</td><td class="font-mono text-white">${escapeHtml(r.data.bandwidth || 'Unknown')}</td></tr>
-        </table>`;
+        $('licStats').innerHTML = licenseTable(r.data.license || {
+            edition: r.data.license_type, mode: r.data.license_mode, capacity: r.data.bandwidth });
     }
 
     if (ha.ok) {
@@ -1836,6 +1957,94 @@ async function toggleSession(i) {
             <td><span class="badge badge-success">${escapeHtml(c.protocol)}</span></td>
             <td class="font-mono text-blue-300">${escapeHtml(c.client)}</td>
             <td>${escapeHtml(c.domain || '—')}</td></tr>`).join('')}</tbody></table>`;
+}
+
+// --- SDX ---
+function sdxStatusBadge(v) {
+    const s = String(v || '').toUpperCase();
+    if (['OK', 'UP', 'RUNNING', 'NORMAL', 'GOOD'].includes(s)) return 'badge-success';
+    if (['ERROR', 'FAILED', 'FAIL', 'DOWN', 'HALTED', 'CRITICAL', 'BAD'].includes(s)) return 'badge-danger';
+    if (!s || s === 'NA' || s === '?') return 'badge-muted';
+    return 'badge-warning';
+}
+function pctBar(v, label) {
+    if (v === null || v === undefined || v === '') return `<div class="text-xs text-slate-500">${label}: —</div>`;
+    const n = Math.max(0, Math.min(100, Number(v)));
+    const col = n >= 90 ? 'bg-red-500' : (n >= 75 ? 'bg-amber-500' : 'bg-emerald-500');
+    return `<div class="mb-3"><div class="flex justify-between text-xs mb-1"><span class="text-slate-400">${label}</span><span class="text-white font-mono">${n.toFixed(1)}%</span></div>
+        <div class="h-2 bg-slate-800 rounded-full overflow-hidden"><div class="h-full ${col}" style="width:${n}%"></div></div></div>`;
+}
+
+async function loadSdx(background) {
+    const opts = background ? { headers: { 'X-Idle-Refresh': '1' } } : undefined;
+    const r = await getJSON('/api/sdx/overview', opts);
+    const err = $('sdxError');
+    if (!r.ok) {
+        err.textContent = r.data.error || 'The SDX Management Service could not be read.';
+        err.classList.remove('hidden');
+        return;
+    }
+    err.classList.add('hidden');
+    const d = r.data, p = d.platform || {}, l = d.license || {};
+    const row = (k, v, mono) => `<tr class="border-b border-slate-700 last:border-0"><td class="text-slate-500 w-36">${k}</td><td class="text-white ${mono ? 'font-mono' : ''}">${escapeHtml(v || '—')}</td></tr>`;
+    $('sdxPlatform').innerHTML = `<table class="w-full">${row('Host name', p.hostname)}${row('Platform', p.platform)}${row('Serial number', p.serial, true)}${row('BIOS', p.bios)}${row('Hypervisor up', p.hypervisor_uptime)}</table>`;
+    $('sdxMps').innerHTML = `<table class="w-full mb-4">${row('Version', p.version)}${row('Up', p.uptime)}</table>` + pctBar(p.cpu, 'CPU') + pctBar(p.memory, 'Memory') + pctBar(p.disk, 'Disk');
+    const used = (l.max_throughput || 0) - (l.available_throughput || 0);
+    const usedI = (l.max_instances || 0) - (l.available_instances || 0);
+    const exp = (l.expiring || []).map(e => {
+        const lvl = e.days < 0 ? 'badge-muted' : (e.days <= 7 ? 'badge-danger' : (e.days <= 30 ? 'badge-warning' : 'badge-success'));
+        return `<div class="flex justify-between gap-2 py-1 border-t border-white/5"><span class="text-slate-300 truncate">${escapeHtml(e.feature)}</span><span class="badge ${lvl}">${e.days < 0 ? 'no expiry' : 'in ' + e.days + ' days'}</span></div>`;
+    }).join('');
+    $('sdxLicense').innerHTML = `<table class="w-full mb-3">${row('Platform license', l.platform)}${row('Throughput', l.max_throughput ? `${used.toLocaleString()} of ${Number(l.max_throughput).toLocaleString()} Mbps allocated` : '')}${row('Instances', l.max_instances ? `${usedI} of ${l.max_instances} used` : '')}${row('License server', l.server ? l.server + (l.pooled ? ' (pooled)' : '') : '')}</table>`
+        + (exp ? `<div class="text-xs uppercase tracking-wider text-slate-500 mb-1">License expiry</div>${exp}` : '');
+    const inst = d.instances || [];
+    $('sdxInstances').innerHTML = inst.length ? inst.map((i, n) => {
+        const dash = i.dashboard
+            ? `<button class="mark-btn" onclick="openInstance('${escapeHtml(i.dashboard.id)}')">Open ${escapeHtml(i.dashboard.name)}</button>`
+            : `<button class="mark-btn" onclick="addSdxInstance(${n})" title="Opens Settings with a new instance for it">Add to the dashboard</button>`;
+        const thr = [i.throughput ? i.throughput.toLocaleString() + ' Mbps' : '', (i.rx !== '' || i.tx !== '') ? `<span class="text-slate-500 text-[11px]">↓${escapeHtml(String(i.rx || 0))} ↑${escapeHtml(String(i.tx || 0))}</span>` : ''].filter(Boolean).join('<br>');
+        return `<tr>
+          <td class="text-white font-medium whitespace-nowrap">${escapeHtml(i.name)}${i.reason ? `<div class="text-[11px] text-amber-300">${escapeHtml(i.reason)}</div>` : ''}</td>
+          <td class="font-mono text-xs text-blue-300">${escapeHtml(i.ip || '—')}</td>
+          <td class="whitespace-nowrap"><span class="badge ${sdxStatusBadge(i.vm_state)}">${escapeHtml(i.vm_state)}</span> <span class="badge ${sdxStatusBadge(i.state)}">${escapeHtml(i.state)}</span></td>
+          <td class="text-xs">${escapeHtml(i.role || '—')}</td>
+          <td class="text-xs">${escapeHtml(i.version || '—')}</td>
+          <td class="text-right font-mono text-xs">${i.cpu == null ? '—' : i.cpu + '%'}</td>
+          <td class="text-right font-mono text-xs">${i.memory == null ? '—' : i.memory + '%'}</td>
+          <td class="text-right font-mono text-xs">${thr || '—'}</td>
+          <td class="text-right font-mono text-xs">${i.cores || '—'} / ${i.memory_mb ? (i.memory_mb / 1024).toFixed(1) + ' GB' : '—'}</td>
+          <td class="text-xs">${escapeHtml(i.uptime || '—')}</td>
+          <td>${dash}</td></tr>`;
+    }).join('') : '<tr><td colspan="11" class="text-center py-6 text-slate-500">No NetScaler instances on this SDX.</td></tr>';
+    window._sdxInstances = inst;
+    const hw = d.hardware || [];
+    $('sdxHardware').innerHTML = hw.length ? hw.map(h => `<tr>
+        <td class="text-xs"><span class="text-slate-500">${escapeHtml(h.kind)}</span> · <span class="text-white">${escapeHtml(h.name)}</span></td>
+        <td class="font-mono text-xs">${escapeHtml(h.value || '—')} ${escapeHtml(h.unit || '')}</td>
+        <td class="font-mono text-xs text-slate-400">${escapeHtml(h.expected || '—')}</td>
+        <td><span class="badge ${sdxStatusBadge(h.status)}">${escapeHtml(h.status)}</span>${h.failures ? ` <span class="text-[11px] text-amber-300">${h.failures} failure(s)</span>` : ''}</td></tr>`).join('')
+        : '<tr><td colspan="4" class="text-center py-6 text-slate-500">No hardware readings returned.</td></tr>';
+    const ifs = d.interfaces || [];
+    $('sdxInterfaces').innerHTML = ifs.length ? ifs.map(x => `<tr>
+        <td class="font-mono text-xs text-white">${escapeHtml(x.port)}</td><td class="text-xs">${escapeHtml(x.name || '—')}</td>
+        <td><span class="badge ${sdxStatusBadge(x.state)}">${escapeHtml(x.state)}</span></td>
+        <td class="text-right font-mono text-xs ${x.rx_errors || x.tx_errors ? 'text-amber-300' : ''}">${x.rx_errors} / ${x.tx_errors}</td>
+        <td class="text-right font-mono text-xs">${escapeHtml(x.vf)}</td></tr>`).join('')
+        : '<tr><td colspan="5" class="text-center py-4 text-slate-500">No interfaces returned.</td></tr>';
+    const dk = d.disks || [];
+    $('sdxDisks').innerHTML = dk.length ? dk.map(x => `<tr><td class="text-xs text-white">${escapeHtml(x.name)}</td><td class="font-mono text-xs">${escapeHtml(x.size || '—')}</td><td><span class="badge ${sdxStatusBadge(x.status)}">${escapeHtml(x.status)}</span></td></tr>`).join('')
+        : '<tr><td colspan="3" class="text-center py-4 text-slate-500">No disks returned.</td></tr>';
+}
+
+async function addSdxInstance(n) {
+    const i = (window._sdxInstances || [])[n];
+    if (!i) return;
+    await openSettings();
+    addInstance({ name: i.name, mode: i.role && /primary|secondary/i.test(i.role) ? 'ha' : 'standalone',
+                  primary: { ip: i.ip, port: 443, protocol: 'https', username: '' } });
+    const cards = document.querySelectorAll('#instanceList .instance-card');
+    const last = cards[cards.length - 1];
+    if (last) { last.scrollIntoView({ block: 'center' }); last.querySelector('.nf-user')?.focus(); }
 }
 
 // --- SECURITY ---
@@ -2405,7 +2614,9 @@ document.addEventListener('click', (e) => {
 function startAutoRefresh() {
     if (state.interval) clearInterval(state.interval);
     const active = document.querySelector('.tab-btn.active').dataset.tab;
-    if (active === 'overview') {
+    if (active === 'overview' && state.mode === 'sdx') {
+        state.interval = setInterval(() => pollOnce('sdx', () => loadSdx(true)), 30000);
+    } else if (active === 'overview') {
         state.interval = setInterval(() => pollOnce('overview', () => loadOverview(true)), state.refreshMs);
     } else if (active === 'security') {
         // counters and charts only: the events table keeps what the user opened

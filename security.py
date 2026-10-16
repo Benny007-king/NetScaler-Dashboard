@@ -95,6 +95,13 @@ _FACT_SOURCES = (
     ("nsip", "/config/nsip", "nsip"),
     ("vpn_vserver", "/config/vpnvserver", "vpnvserver"),
     ("lb_vserver", "/config/lbvserver?attrs=name,ipv46,port,servicetype", "lbvserver"),
+    ("ssl_vserver", "/config/sslvserver", "sslvserver"),
+    ("ssl_profile", "/config/sslprofile", "sslprofile"),
+    ("ssl_param", "/config/sslparameter", "sslparameter"),
+    ("http_profile", "/config/nshttpprofile/nshttp_default_profile", "nshttpprofile"),
+    ("sys_param", "/config/systemparameter", "systemparameter"),
+    ("ntp_server", "/config/ntpserver", "ntpserver"),
+    ("ntp_sync", "/config/ntpsync", "ntpsync"),
 )
 
 _pool = ThreadPoolExecutor(max_workers=8, thread_name_prefix="sec-facts")
@@ -459,11 +466,187 @@ def detect_syslog(check, facts, ctx):
     return _result("missing", ev + ["No syslog server on this node points at this dashboard."])
 
 
+def _gateway_ssl(facts):
+    """[(vserver name, the settings that apply: its SSL profile's, or its own)]."""
+    gws = {str(v.get("name")) for v in facts.get("vpn_vserver") or [] if isinstance(v, dict) and v.get("name")}
+    profiles = {str(p.get("name")): p for p in facts.get("ssl_profile") or [] if isinstance(p, dict)}
+    default_on = _yes(_one(facts, "ssl_param").get("defaultprofile"))
+    out = []
+    for v in facts.get("ssl_vserver") or []:
+        if not isinstance(v, dict) or str(v.get("vservername") or v.get("name") or "") not in gws:
+            continue
+        name = str(v.get("vservername") or v.get("name"))
+        prof = str(v.get("sslprofile") or "") or ("ns_default_ssl_profile_frontend" if default_on else "")
+        src = profiles.get(prof) if prof else None
+        out.append((name, prof if src is not None else "", src if src is not None else v))
+    return out
+
+
+def detect_tls_versions(check, facts, ctx):
+    u = _unknown(facts, "ssl_vserver", "vpn_vserver")
+    if u:
+        return u
+    rows = _gateway_ssl(facts)
+    if not rows:
+        return _result("unknown", ["No Gateway virtual server with SSL settings was found on this node."])
+    ev, bad = [], 0
+    for name, prof, p in rows:
+        on = [lbl for key, lbl in (("ssl3", "SSLv3"), ("tls1", "TLS 1.0"), ("tls11", "TLS 1.1"), ("tls12", "TLS 1.2"),
+                                    ("tls13", "TLS 1.3")) if _yes(p.get(key))]
+        weak = [x for x in on if x in ("SSLv3", "TLS 1.0", "TLS 1.1")]
+        bad += bool(weak) or "TLS 1.2" not in on
+        ev.append(f"{name}{' (profile ' + prof + ')' if prof else ''}: " + (", ".join(on) or "nothing enabled")
+                  + (f" - weak: {', '.join(weak)}" if weak else ""))
+    return _result("configured" if not bad else ("partial" if bad < len(rows) else "missing"), ev)
+
+
+def detect_hsts(check, facts, ctx):
+    u = _unknown(facts, "ssl_vserver", "vpn_vserver")
+    if u:
+        return u
+    rows = _gateway_ssl(facts)
+    if not rows:
+        return _result("unknown", ["No Gateway virtual server with SSL settings was found on this node."])
+    ev, ok = [], 0
+    for name, prof, p in rows:
+        on = _yes(p.get("hsts"))
+        ok += on
+        ev.append(f"{name}{' (profile ' + prof + ')' if prof else ''}: HSTS {'on, max-age ' + str(p.get('maxage', '?')) if on else 'off'}")
+    return _result("configured" if ok == len(rows) else ("partial" if ok else "missing"), ev)
+
+
+def detect_ssl_reneg(check, facts, ctx):
+    u = _unknown(facts, "ssl_param")
+    if u:
+        return u
+    v = str(_one(facts, "ssl_param").get("denysslreneg") or "")
+    if not v:
+        return _result("unknown", ["The appliance did not report denySSLReneg."])
+    good = v.upper() in ("NONSECURE", "ALL")
+    return _result("configured" if good else "missing", [f"ssl parameter denySSLReneg = {v}"])
+
+
+def detect_http_invalid(check, facts, ctx):
+    u = _unknown(facts, "http_profile")
+    if u:
+        return u
+    p = _one(facts, "http_profile")
+    if not p:
+        return _result("unknown", ["nshttp_default_profile was not returned."])
+    fields = (("dropinvalreqs", "drop invalid requests"), ("markhttp09inval", "HTTP/0.9 invalid"),
+              ("markconnreqinval", "CONNECT invalid"))
+    on = [lbl for k, lbl in fields if _yes(p.get(k))]
+    ev = [f"{lbl}: {p.get(k, '?')}" for k, lbl in fields]
+    return _result("configured" if len(on) == 3 else ("partial" if on else "missing"), ev)
+
+
+def detect_auth_feedback(check, facts, ctx):
+    u = _unknown(facts, "aaa_param")
+    if u:
+        return u
+    p = _one(facts, "aaa_param")
+    if "enableenhancedauthfeedback" not in p:
+        return _result("unknown", ["The appliance did not report enableEnhancedAuthFeedback."])
+    v = str(p.get("enableenhancedauthfeedback"))
+    return _result("missing" if _yes(v) else "configured", [f"aaa parameter enableEnhancedAuthFeedback = {v}"])
+
+
+def _mgmt_ips(facts):
+    return [x for x in facts.get("nsip") or [] if isinstance(x, dict)
+            and (str(x.get("type") or "").upper() == "NSIP" or _yes(x.get("mgmtaccess")))]
+
+
+def detect_mgmt_restrict(check, facts, ctx):
+    u = _unknown(facts, "nsip")
+    if u:
+        return u
+    rows = _mgmt_ips(facts)
+    if not rows:
+        return _result("unknown", ["No management address was returned."])
+    ev = [f"{x.get('ipaddress')} ({x.get('type')}): restrictAccess {x.get('restrictaccess', '?')}" for x in rows]
+    ok = sum(_yes(x.get("restrictaccess")) for x in rows)
+    return _result("configured" if ok == len(rows) else ("partial" if ok else "missing"), ev)
+
+
+def detect_mgmt_services(check, facts, ctx):
+    u = _unknown(facts, "nsip")
+    if u:
+        return u
+    rows = _mgmt_ips(facts)
+    if not rows:
+        return _result("unknown", ["No management address was returned."])
+    ev, bad = [], 0
+    for x in rows:
+        open_ = [n.upper() for n in ("telnet", "ftp") if _yes(x.get(n))]
+        bad += bool(open_)
+        ev.append(f"{x.get('ipaddress')} ({x.get('type')}): " + (", ".join(open_) + " enabled" if open_ else "Telnet and FTP off"))
+    return _result("configured" if not bad else "missing", ev)
+
+
+def detect_sys_passwords(check, facts, ctx):
+    u = _unknown(facts, "sys_param")
+    if u:
+        return u
+    p = _one(facts, "sys_param")
+    if not p:
+        return _result("unknown", ["systemparameter was not returned."])
+    strong = str(p.get("strongpassword") or "disabled")
+    length = _int(p.get("minpasswordlen"))
+    force = str(p.get("forcepasswordchange") or "?")
+    ev = [f"strongpassword = {strong}", f"minpasswordlen = {p.get('minpasswordlen', '?')}", f"forcePasswordChange = {force}"]
+    ok = [strong.lower() in ("enableall", "enablelocal"), length >= 8, _yes(force)]
+    return _result("configured" if all(ok) else ("partial" if any(ok) else "missing"), ev)
+
+
+def detect_ntp(check, facts, ctx):
+    u = _unknown(facts, "ntp_server")
+    if u:
+        return u
+    servers = [str(x.get("serverip") or x.get("servername") or "") for x in facts.get("ntp_server") or [] if isinstance(x, dict)]
+    servers = [x for x in servers if x]
+    sync = str(_one(facts, "ntp_sync").get("state") or "")
+    ev = ["Time servers: " + (", ".join(servers) if servers else "none")]
+    if sync:
+        ev.append(f"ntp sync = {sync}")
+    if servers and (_yes(sync) or not sync and "ntp_sync" in facts.get("errors", {})):
+        return _result("configured", ev)
+    return _result("partial" if servers else "missing", ev + ([] if servers else ["No time server is configured."]))
+
+
+# Fixed builds for CVE-2025-5777, CVE-2025-6543 and CVE-2025-7775 (NetScaler bulletins, June-August 2025).
+_FIXED_BUILDS = {"14.1": (47, 48), "13.1": (59, 22)}
+
+
+def detect_firmware(check, facts, ctx):
+    u = _unknown(facts, "version")
+    if u:
+        return u
+    v = ns_version(facts)
+    m = re.match(r"(\d+\.\d+)-(\d+)\.(\d+)", v)
+    if not m:
+        return _result("unknown", ["The version could not be read."])
+    line, build = m.group(1), (int(m.group(2)), int(m.group(3)))
+    fixed = _FIXED_BUILDS.get(line)
+    if fixed is None:
+        major = tuple(int(x) for x in line.split("."))
+        if major < (13, 1):
+            return _result("missing", [f"NetScaler {v}: this release line is end of life and does not get these fixes."])
+        return _result("configured", [f"NetScaler {v}: a release line newer than the 2025 bulletins."])
+    ev = [f"NetScaler {v}; the fixes are in {line}-{fixed[0]}.{fixed[1]} and later."]
+    if "FIPS" in str(facts.get("version")).upper():
+        ev.append("This looks like a FIPS build - those have their own fixed builds (13.1-37.241 or later).")
+        return _result("unknown", ev)
+    return _result("configured" if build >= fixed else "missing", ev)
+
+
 DETECTORS = {
     "responder": detect_responder, "login_audit": detect_login_audit, "brute_force": detect_brute_force,
     "malicious_ip": detect_malicious_ip, "waf": detect_waf, "csp": detect_csp, "httponly": detect_httponly,
     "cookie_v1": detect_cookie_v1, "tcp_isn": detect_tcp_isn, "mgmt_secure": detect_mgmt_secure,
-    "syslog": detect_syslog,
+    "syslog": detect_syslog, "tls_versions": detect_tls_versions, "hsts": detect_hsts, "ssl_reneg": detect_ssl_reneg,
+    "http_invalid": detect_http_invalid, "auth_feedback": detect_auth_feedback, "mgmt_restrict": detect_mgmt_restrict,
+    "mgmt_services": detect_mgmt_services, "sys_passwords": detect_sys_passwords, "ntp": detect_ntp,
+    "firmware": detect_firmware,
 }
 
 

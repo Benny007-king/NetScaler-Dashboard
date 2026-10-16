@@ -186,7 +186,7 @@ add responder policy Session_Cookie_Hijack_Block_Responder_Policy "AAA.USER.NAME
     # ===================================================== appliance settings
     {
         "id": "waf",
-        "group": "Appliance hardening",
+        "group": "Gateway settings",
         "title": "Built-in WAF protection for Auth, VPN and Portal",
         "summary": "NetScaler's built-in Web App Firewall protection covers the Gateway's authentication, VPN and portal endpoints.",
         "about": (
@@ -202,7 +202,7 @@ add responder policy Session_Cookie_Hijack_Block_Responder_Policy "AAA.USER.NAME
     },
     {
         "id": "csp_header",
-        "group": "Appliance hardening",
+        "group": "Gateway settings",
         "title": "Content-Security-Policy header on the Gateway",
         "summary": "Tells browsers which sources the Gateway pages may load scripts and frames from.",
         "about": (
@@ -224,7 +224,7 @@ add rewrite policy Gateway_CSP_Header_Policy "HTTP.RES.HEADER(\"Content-Security
     },
     {
         "id": "httponly",
-        "group": "Appliance hardening",
+        "group": "Gateway settings",
         "title": "HttpOnly flag on authentication cookies",
         "summary": "Scripts in the browser cannot read the Gateway's session cookies (NSC_AAAC, NSC_TMAS).",
         "about": (
@@ -242,7 +242,7 @@ add rewrite policy Gateway_CSP_Header_Policy "HTTP.RES.HEADER(\"Content-Security
     },
     {
         "id": "cookie_v1",
-        "group": "Appliance hardening",
+        "group": "Gateway settings",
         "title": "Cookie version 1",
         "summary": "Cookies NetScaler sets use version 1 (Max-Age) instead of version 0 (Expires).",
         "about": (
@@ -255,7 +255,7 @@ add rewrite policy Gateway_CSP_Header_Policy "HTTP.RES.HEADER(\"Content-Security
     },
     {
         "id": "tcp_isn",
-        "group": "Appliance hardening",
+        "group": "Management and platform",
         "title": "Enhanced TCP ISN generation",
         "summary": "The initial sequence numbers in the appliance's SYN-ACKs vary more, so they cannot be guessed.",
         "about": (
@@ -270,7 +270,7 @@ add rewrite policy Gateway_CSP_Header_Policy "HTTP.RES.HEADER(\"Content-Security
     },
     {
         "id": "mgmt_secure",
-        "group": "Appliance hardening",
+        "group": "Management and platform",
         "title": "Secure-only management access",
         "summary": "The management GUI and NITRO API answer on HTTPS only, never on plain HTTP.",
         "about": (
@@ -287,7 +287,7 @@ add rewrite policy Gateway_CSP_Header_Policy "HTTP.RES.HEADER(\"Content-Security
     },
     {
         "id": "syslog_dashboard",
-        "group": "Appliance hardening",
+        "group": "Management and platform",
         "title": "Send logs to this dashboard",
         "summary": "The NetScaler sends its audit log here, so every WAF violation and policy hit is kept.",
         "about": (
@@ -309,3 +309,165 @@ bind audit syslogGlobal -policyName Dashboard_Syslog_Policy -priority 100'''),
         "detect": "syslog",
     },
 ]
+
+
+# ------------------------------------------------------------ added in 1.19.0
+CHECKS += [
+    {
+        "id": "tls_versions",
+        "group": "Gateway settings",
+        "title": "Only TLS 1.2 and 1.3 on the Gateway",
+        "summary": "SSLv3, TLS 1.0 and TLS 1.1 are switched off on every Gateway virtual server.",
+        "about": (
+            "SSLv3, TLS 1.0 and TLS 1.1 have known weaknesses (POODLE, BEAST, weak hashes) and no current client "
+            "needs them. With only TLS 1.2 and 1.3 enabled, a client cannot be talked down to a protocol an attacker "
+            "can break."),
+        "notes": [
+            "When an SSL profile is bound to the virtual server (or the default profiles are enabled with "
+            "`set ssl parameter -defaultProfile ENABLED`), the protocols are set on the profile, not on the virtual "
+            "server - the dashboard reads whichever applies.",
+            "Very old Citrix Receiver versions (before 4.x) cannot connect without TLS 1.0.",
+        ],
+        "variants": [{"label": "All versions", "commands": [
+            ("On the Gateway virtual server", r"set ssl vserver <GATEWAY_VSERVER> -ssl3 DISABLED -tls1 DISABLED -tls11 DISABLED -tls12 ENABLED -tls13 ENABLED"),
+            ("...or on its SSL profile, when one is bound", r"set ssl profile <SSL_PROFILE> -ssl3 DISABLED -tls1 DISABLED -tls11 DISABLED -tls12 ENABLED -tls13 ENABLED"),
+        ]}],
+        "detect": "tls_versions",
+    },
+    {
+        "id": "hsts",
+        "group": "Gateway settings",
+        "title": "HSTS on the Gateway",
+        "summary": "Browsers are told to use only HTTPS for the Gateway, for a year.",
+        "about": (
+            "HTTP Strict Transport Security makes the browser refuse plain HTTP to the Gateway's host name once it "
+            "has seen the header, so a man in the middle cannot strip HTTPS from the first request (SSL stripping)."),
+        "notes": ["Available from NetScaler 12.0; on a bound SSL profile the setting lives on the profile."],
+        "variants": [{"label": "All versions", "commands": [
+            ("On the Gateway virtual server", r"set ssl vserver <GATEWAY_VSERVER> -HSTS ENABLED -maxage 31536000 -IncludeSubdomains YES"),
+            ("...or on its SSL profile, when one is bound", r"set ssl profile <SSL_PROFILE> -HSTS ENABLED -maxage 31536000 -IncludeSubdomains YES"),
+        ]}],
+        "detect": "hsts",
+    },
+    {
+        "id": "ssl_reneg",
+        "group": "Gateway settings",
+        "title": "No insecure TLS renegotiation",
+        "summary": "Only secure (RFC 5746) renegotiation is accepted.",
+        "about": (
+            "Renegotiation without the RFC 5746 extension lets an attacker splice their own request in front of a "
+            "user's (CVE-2009-3555) and can be used to exhaust the appliance's CPU. NONSECURE refuses it and keeps "
+            "secure renegotiation working; ALL refuses renegotiation entirely."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [
+            ("Setting", r"set ssl parameter -denySSLReneg NONSECURE")]}],
+        "detect": "ssl_reneg",
+    },
+    {
+        "id": "http_invalid",
+        "group": "Gateway settings",
+        "title": "Drop invalid HTTP requests",
+        "summary": "Malformed requests, HTTP/0.9 and CONNECT requests are dropped by the default HTTP profile.",
+        "about": (
+            "Requests that do not follow the HTTP standard are a common way to smuggle requests past inspection "
+            "(request smuggling) or to probe for parser flaws. The default HTTP profile can drop them, mark HTTP/0.9 "
+            "requests as invalid, and treat CONNECT requests as invalid."),
+        "notes": ["An HTTP profile bound to a virtual server overrides the default profile for it."],
+        "variants": [{"label": "All versions", "commands": [
+            ("Default HTTP profile", r"set ns httpProfile nshttp_default_profile -dropInvalReqs ENABLED -markHttp09Inval ENABLED -markConnReqInval ENABLED")]}],
+        "detect": "http_invalid",
+    },
+    {
+        "id": "auth_feedback",
+        "group": "Gateway settings",
+        "title": "Login errors do not reveal account details",
+        "summary": "A failed Gateway login does not say whether the user exists or the account is locked.",
+        "about": (
+            "With enhanced authentication feedback the login page tells the user why a login failed - the user "
+            "does not exist, the password expired, the account is locked. That is also a free way for an attacker "
+            "to find out which user names are real. Switched off, every failure gets the same message."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [
+            ("Setting", r"set aaa parameter -enableEnhancedAuthFeedback NO")]}],
+        "detect": "auth_feedback",
+    },
+    {
+        "id": "mgmt_restrict",
+        "group": "Management and platform",
+        "title": "Management address serves management only",
+        "summary": "The NSIP refuses traffic for anything that is not a management application.",
+        "about": (
+            "With restrictAccess the management address answers only management protocols (GUI, NITRO, SSH), so "
+            "nothing else - a mistakenly bound virtual server, another service - can be reached through it. "
+            "The same applies to a SNIP that has management access enabled."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [
+            ("Management address", r"set ns ip <NSIP> -restrictAccess ENABLED")]}],
+        "detect": "mgmt_restrict",
+    },
+    {
+        "id": "mgmt_services",
+        "group": "Management and platform",
+        "title": "Telnet and FTP off on management addresses",
+        "summary": "No clear-text management protocols are reachable.",
+        "about": (
+            "Telnet and FTP send the administrator's password unencrypted. SSH and SFTP do the same job encrypted, "
+            "so the clear-text ones should be off on the NSIP and on any SNIP with management access."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [
+            ("Management address", r"set ns ip <NSIP> -telnet DISABLED -ftp DISABLED")]}],
+        "detect": "mgmt_services",
+    },
+    {
+        "id": "sys_passwords",
+        "group": "Management and platform",
+        "title": "Strong passwords for management accounts",
+        "summary": "Local system users need complex passwords of at least 8 characters, and nsroot must change the default.",
+        "about": (
+            "strongpassword makes local system user passwords contain upper and lower case letters, digits and "
+            "special characters; minpasswordlen sets their minimum length; forcePasswordChange makes nsroot "
+            "choose a new password at the first login instead of keeping the default."),
+        "notes": ["Existing passwords are not checked again - the rules apply when a password is set."],
+        "variants": [{"label": "All versions", "commands": [
+            ("Setting", r"set system parameter -strongpassword enableall -minpasswordlen 8 -forcePasswordChange ENABLED")]}],
+        "detect": "sys_passwords",
+    },
+    {
+        "id": "ntp",
+        "group": "Management and platform",
+        "title": "Time synchronised (NTP)",
+        "summary": "The appliance keeps its clock in step with a time server.",
+        "about": (
+            "Log times only mean something when the clock is right: correlating a WAF violation with a login, a "
+            "SIEM, or an incident timeline needs it. Kerberos, SAML and OTP authentication also fail when the clock "
+            "drifts by minutes."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [
+            ("Time server and synchronisation", "add ntp server <NTP_SERVER>\nenable ntp sync")]}],
+        "detect": "ntp",
+    },
+    {
+        "id": "firmware",
+        "group": "Management and platform",
+        "title": "Firmware includes the 2025 Gateway security fixes",
+        "summary": "The build is not older than the fixes for CVE-2025-5777 (CitrixBleed 2), CVE-2025-6543 and CVE-2025-7775.",
+        "about": (
+            "CVE-2025-5777 leaks memory - session tokens included - from Gateway and AAA virtual servers; "
+            "CVE-2025-6543 and CVE-2025-7775 allow code execution on them. All three were exploited in the wild. "
+            "They are fixed in 14.1-47.48 and 13.1-59.22 (and later builds of each)."),
+        "notes": [
+            "This is what was known when this dashboard version was made. Check NetScaler's security bulletins "
+            "for anything newer.",
+            "After upgrading from a vulnerable build, end all ICA and PCoIP sessions: `kill icaconnection -all` "
+            "and `kill pcoipConnection -all` - stolen session tokens survive the upgrade otherwise.",
+            "13.1-FIPS / NDcPP builds have their own fixed build numbers (13.1-37.241 or later).",
+        ],
+        "variants": [{"label": "All versions", "commands": [
+            ("After the upgrade", "kill icaconnection -all\nkill pcoipConnection -all")]}],
+        "detect": "firmware",
+    },
+]
+
+# Shown in this order on the tab.
+GROUP_ORDER = ["Gateway protection policies", "Gateway settings", "Management and platform"]
+CHECKS.sort(key=lambda c: GROUP_ORDER.index(c["group"]))

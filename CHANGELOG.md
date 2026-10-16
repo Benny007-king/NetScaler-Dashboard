@@ -6,6 +6,45 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.19.0
+**Security checklist: ten more items** (23 in all, in three groups)
+- Gateway settings: only TLS 1.2 / 1.3 on the Gateway virtual servers, HSTS,
+  no insecure TLS renegotiation, invalid HTTP requests dropped by the default
+  HTTP profile, and login errors that do not reveal whether an account exists.
+  TLS settings are read from the bound SSL profile when there is one.
+- Management and platform: the management address serves management only
+  (restrictAccess), Telnet and FTP off, strong system passwords, NTP
+  synchronisation, and a firmware build that has the 2025 Gateway fixes
+  (CVE-2025-5777, CVE-2025-6543, CVE-2025-7775: 14.1-47.48 / 13.1-59.22 and
+  later), with the session kill commands to run after upgrading.
+
+**License & Capacity**
+- The edition (Premium / Advanced / Standard), the license **type** - LAS fixed
+  bandwidth, LAS online, pooled, local file, vCPU, Express - the capacity, the
+  **expiry date**, a **grace period** with the hours left, LAS enforcement, the
+  license server and the Gateway user count.
+- Amber within 30 days of expiry or during a grace period, red within 7 days (or
+  3 days of grace); the All Instances card names the node and the date.
+- The edition used to be guessed from the wrong fields (`wl` is the Web Logging
+  feature, not "Standard").
+
+**SDX**
+- New deployment mode **SDX**: the node is the SDX **Management Service**
+  (NITRO v2, read-only). Its view shows the platform (model, serial number,
+  version, uptime), the Management Service's CPU, memory and disk, the platform
+  license (throughput and instances used, what expires when), **hardware health**
+  (power supplies, fans, temperatures, voltages), interfaces and disks, and every
+  **NetScaler instance** on it: state, role, version, CPU, memory, throughput,
+  cores and memory.
+- An instance that is also added to the dashboard links to it ("Open"), and its
+  own overview says which SDX it runs on; one that is not can be added from the
+  list. The All Instances card shows the SDX's instances, hardware errors and
+  expiring licenses. Tabs that are about a NetScaler's traffic are hidden for an
+  SDX, and their endpoints refuse it.
+
+- `tests/test_platform.py`: license types, expiry and grace levels, the SDX view,
+  the wall card, the links between an SDX and its VPX, against stand-ins.
+
 ## 1.18.1
 - **Security checklist, as meant.** The TCP item is now **enhanced ISN
   generation** (`set ns tcpparam -enhancedISNgeneration ENABLED`) instead of SYN

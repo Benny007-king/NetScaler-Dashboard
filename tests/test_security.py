@@ -68,7 +68,24 @@ facts = security.collect_facts(FakeNitro(True))
 check(security.ns_version(facts) == "14.1-43.56", "version read from nsversion", security.ns_version(facts))
 res = {c["id"]: c for c in security.evaluate(facts, {"node_protocol": "http", "dashboard_addresses": {"192.0.2.200"}})}
 st = {k: v["status"] for k, v in res.items()}
-check(len(res) == len(security.security_catalog.CHECKS) == 13, "13 checklist entries", len(res))
+check(len(res) == len(security.security_catalog.CHECKS) == 23, "23 checklist entries", len(res))
+check([c["group"] for c in security.security_catalog.CHECKS] == sorted((c["group"] for c in security.security_catalog.CHECKS),
+      key=security.security_catalog.GROUP_ORDER.index), "entries in group order")
+check(st["tls_versions"] == "configured" and "profile Gateway_SSL" in res["tls_versions"]["evidence"][0],
+      "TLS versions read from the bound SSL profile, not the virtual server's own settings", res["tls_versions"]["evidence"])
+check(st["hsts"] == "configured" and st["ssl_reneg"] == "configured" and st["auth_feedback"] == "configured",
+      "HSTS (from the profile), secure renegotiation, auth feedback off")
+check(st["http_invalid"] == "partial", "invalid HTTP: CONNECT not marked -> partial", res["http_invalid"]["evidence"])
+check(st["mgmt_restrict"] == "configured" and st["mgmt_services"] == "configured" and st["sys_passwords"] == "configured"
+      and st["ntp"] == "configured", "restrict access, Telnet/FTP off, strong passwords, NTP")
+check(st["firmware"] == "missing" and "14.1-47.48" in res["firmware"]["evidence"][0], "14.1-43.56 is older than the 2025 fixes",
+      res["firmware"]["evidence"])
+fw = lambda v: security.evaluate(dict(facts, version={"version": v}), {})
+fwst = {v: next(c["status"] for c in fw(v) if c["id"] == "firmware") for v in
+        ("NetScaler NS14.1: Build 47.48.nc", "NetScaler NS14.1: Build 51.80.nc", "NetScaler NS13.1: Build 59.21.nc",
+         "NetScaler NS13.1: Build 60.29.nc", "NetScaler NS13.0: Build 92.31.nc", "NetScaler NS15.0: Build 1.1.nc")}
+check(list(fwst.values()) == ["configured", "configured", "missing", "configured", "missing", "configured"],
+      "firmware: fixed builds, an older 13.1, end-of-life 13.0, a newer line", fwst)
 check(st["login_audit"] == "configured", "login logging: both policies bound, user-defined logging on", res["login_audit"]["evidence"])
 check(st["brute_force"] == "partial" and any("selector" in e.lower() for e in res["brute_force"]["evidence"]),
       "brute force: the selector name mismatch of the original commands is found", res["brute_force"]["evidence"])
@@ -99,7 +116,9 @@ check(hits.get("Gateway_Login_Attempt_Audit_Responder_Policy") == 120 and hits.g
 
 empty = {c["id"]: c["status"] for c in security.evaluate(security.collect_facts(FakeNitro(False)), {})}
 check(empty["login_audit"] == "missing" and empty["waf"] == "partial" and empty["httponly"] == "missing"
-      and empty["cookie_v1"] == "missing" and empty["tcp_isn"] == "missing" and empty["mgmt_secure"] == "missing",
+      and empty["cookie_v1"] == "missing" and empty["tcp_isn"] == "missing" and empty["mgmt_secure"] == "missing"
+      and empty["tls_versions"] == "missing" and empty["ssl_reneg"] == "missing" and empty["mgmt_services"] == "missing"
+      and empty["sys_passwords"] == "missing" and empty["ntp"] == "missing" and empty["auth_feedback"] == "missing",
       "an appliance with nothing in place", empty)
 down = security.evaluate(security.collect_facts(FakeNitro(down=True)), {})
 check(all(c["status"] in ("unknown", "missing") for c in down) and sum(c["status"] == "unknown" for c in down) >= 10,
@@ -122,7 +141,7 @@ with c.session_transaction() as s:
 
 r = c.get("/api/security/checklist")
 j = r.get_json()
-check(r.status_code == 200 and len(j["checks"]) == 13 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["StoreFront_LB"],
+check(r.status_code == 200 and len(j["checks"]) == 23 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["StoreFront_LB"],
       "checklist endpoint: entries and the virtual servers for the commands", r.status_code)
 r = c.post("/api/security/mark", json={"id": "epa_referer", "state": "irrelevant"})
 r2 = c.post("/api/security/mark", json={"id": "saml_protection", "state": "done"})

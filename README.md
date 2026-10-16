@@ -30,7 +30,7 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 
 - **All-instances health wall**: the **All Instances** tab shows every deployment as a card — Operational / Degraded / Unreachable, nodes up, and per node the hostname, IP, HA role + status and live CPU/memory, with warnings for unreachable nodes and forced HA modes. Click a card to drill into that instance. Powered by `GET /api/instances-health` (all instances and nodes probed in parallel).
 - **Multiple instances**: manage many deployments at once. Add / rename / remove them in **Settings → NetScaler Instances** and pick the active one from the header **Instance** switcher; every tab, plus session and failover history, is scoped to it.
-- **Deployment modes** (per instance): `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode`). Selectable in **Settings**.
+- **Deployment modes** (per instance): `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode`), `sdx` (the node is an SDX Management Service - see below). Selectable in **Settings**.
 - **HA status at a glance**: the HA panel shows each node's role *and* its NITRO `hastatus` — including the forced **STAYPRIMARY / STAYSECONDARY** modes (flagged amber, since they suppress failover), `Up`, and failure states like route-monitor/partial/complete failure.
 - **HA resilience**: if one node of an HA pair is down, the dashboard keeps polling — HA status fails over to whichever node answers, the dead node is shown offline, the role change is logged as a failover, and the dead node fails fast (~3s connect timeout) instead of hanging.
 - **Dual-Stack** runtime: auto-detect Next-Gen per node, fall back to NITRO. Detection is explainable — the capability line shows *why* a node is on NITRO — and **re-runs automatically** every `API_DETECT_INTERVAL_SECS` (default 600s), so enabling Next-Gen on an appliance, or a node that was unreachable at boot, is picked up without a restart. `GET /api/nextgen-debug` reports the version, which management paths answer and the real login error; `NEXTGEN_BASE_PATH` overrides the path.
@@ -40,7 +40,9 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 - **Applications / Services**: shows Next-Gen Applications when a node has them, and falls back to classic **LB vServers** otherwise; **Services and Service Groups** are listed with their real runtime state (`UP` / `DOWN` / `OUT OF SERVICE` / `PARTIAL-UP`) and bound-member counts.
 - **Tabs follow the live primary**: Applications, Failover, Sessions, Security, Certificates and Unlock User open on the node currently holding the PRIMARY role, so they track a failover automatically.
 - **Failover History & User Sessions**: date-range filters with a pop-up picker (a session is shown when it overlaps the range); **Excel/PDF** export (client-side). The Sessions tab is about **Gateway / AAA end users** only - management logins and system accounts never appear. Live sessions come from NITRO `aaasession` (one row per user, address and virtual server; the Gateway named from its virtual server address; group, intranet IP, destinations) and the live ICA connections (application server by name, TCP or EDT). The Gateway's own log lines - received by [syslog](#security-tab) or read from the audit log - add the real **login and logout time**, duration and logout method, the Gateway and AAA **session ids**, the **client type** (ICA proxy, clientless, full VPN), **OS** and **Workspace app or browser** (from the login audit policy on the Security tab), the Gateway FQDN, user agent, bytes, and each **published application** with its server, start and end. Sessions that ended before the dashboard saw them appear from their log lines. **Failed sign-ins** (status `Failed`, attempt time, source IP, failure reason) and **locked accounts** (`Locked`) are kept for the retention period. `GET /api/session-debug` dumps per-node reachability and the raw (redacted) NITRO session and audit fields.
-- **Security tab**: a hardening checklist for the Gateway - login audit logging, brute-force rate limiter, session cookie hijack prevention, IP reputation, EPA Referer check, SAML hardening, built-in WAF protection for Auth/VPN/Portal, CSP header, HttpOnly cookies, cookie version 1, enhanced TCP ISN generation, secure-only management, syslog to the dashboard - each detected on the node, markable **Done** / **Not relevant**, with an explanation and the commands for the node's version. Below it, the **activity**: WAF violations and policy hits over time, the hit counters of the checklist's policies, top source addresses and URLs, and every event with all its fields. See [Security tab](#security-tab).
+- **SDX**: an instance in `sdx` mode points at the SDX **Management Service** (NITRO v2, read-only) and shows the platform, its hardware health (power supplies, fans, temperatures, voltages, interfaces, disks), the platform license, and every NetScaler (VPX) instance on it with state, role, version, load and allocation. An instance that is also added to the dashboard opens from there, and its own overview says which SDX it runs on.
+- **License & Capacity**: edition, license type (LAS fixed bandwidth, LAS online, pooled, local file, vCPU), capacity, expiry date and grace period - amber within 30 days or in grace, red within 7 days - also flagged on the All Instances card.
+- **Security tab**: a hardening checklist for the Gateway (23 items) - login audit logging, brute-force rate limiter, session cookie hijack prevention, IP reputation, EPA Referer check, SAML hardening, built-in WAF protection for Auth/VPN/Portal, CSP header, HttpOnly cookies, cookie version 1, enhanced TCP ISN generation, secure-only management, syslog to the dashboard - each detected on the node, markable **Done** / **Not relevant**, with an explanation and the commands for the node's version. Below it, the **activity**: WAF violations and policy hits over time, the hit counters of the checklist's policies, top source addresses and URLs, and every event with all its fields. See [Security tab](#security-tab).
 - **Unlock Users**: unlock a locked AAA user (NITRO, with automatic `?action=unlock` fallback).
 - **External database (optional)**: keep session and failover history, plus a copy of the settings, in your own **PostgreSQL, MySQL / MariaDB or Microsoft SQL Server** — set up in **Settings → Database**. The dashboard keeps working when that database is unreachable and catches up by itself when it returns.
 
@@ -56,6 +58,7 @@ netscaler-dashboard/
 ├── security.py                # Security tab: checklist detection, log-line parsing, syslog receiver
 ├── security_catalog.py        # The checklist entries: explanation, commands, how each is detected
 ├── tests/test_security.py     # Checklist, log lines, syslog, sessions - against tests/fake_netscaler.py
+├── tests/test_platform.py     # License & Capacity, SDX - against the same stand-ins
 ├── tests/test_storage.py      # Storage tests, run against real database servers
 ├── tests/test_auth.py         # Login tests: default admin, forced change, hashes from earlier releases
 ├── tests/test_offline.py      # No page loads from another host; bundled files match their checksums; time zone
@@ -110,7 +113,7 @@ Configure it live from **Settings → NetScaler Instances** (recommended), or ed
 }
 ```
 
-- `mode` (per instance): `standalone` | `ha` | `cluster`. In `cluster`, set `primary` to the **Cluster IP (CLIP)**; members are discovered automatically.
+- `mode` (per instance): `standalone` | `ha` | `cluster` | `sdx`. In `cluster`, set `primary` to the **Cluster IP (CLIP)**; members are discovered automatically. In `sdx`, `primary` is the SDX Management Service address with its `nsroot` (or a read-only Management Service user); add the NetScaler instances on it as instances of their own to see their traffic, sessions and security.
 - Passwords are stored in this gitignored file. Leaving a password blank in the Settings form keeps the currently stored value for that node.
 - **Backward compatible:** a legacy single-deployment file (top-level `mode`/`primary`/`secondary`) is migrated automatically into one `"Default"` instance on first start.
 
@@ -309,6 +312,7 @@ python app.py            # serves HTTPS on :443 by default
 - `GET  /api/appliance/status` — running version, appliance mode, and upgrade progress
 - `POST /api/appliance/upgrade` — upload an `.nsu` bundle (appliance only; raw request body)
 - `GET  /api/caps` — per-node API capability + deployment mode
+- `GET  /api/sdx/overview` — an `sdx` instance: platform, hardware health, license, its NetScaler instances
 - `GET  /api/system-stats?node=primary|secondary`
 - `GET  /api/ha-status` — HA nodes (or cluster members in cluster mode)
 - `GET  /api/lb-vservers?node=...` / `GET /api/services?node=...` (NITRO)
@@ -379,9 +383,9 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 
 ## Third-party components
 
-The appliance image contains Debian, Docker and the Python packages in `requirements.txt` (Flask, SQLAlchemy, requests, cryptography, ldap3, gunicorn, pg8000, PyMySQL, and pymssql with its bundled FreeTDS), each under its own licence. The disk image is written with VMware's open-vmdk.
+The appliance image contains Debian, Docker and the Python packages in `requirements.txt` (Flask, SQLAlchemy, requests, cryptography, ldap3, gunicorn, pg8000, PyMySQL, and pymssql with its bundled FreeTDS), each under its own license. The disk image is written with VMware's open-vmdk.
 
-The web UI's browser libraries and fonts are bundled in `static/vendor` and served by the dashboard itself, so the administrator's browser needs no internet access: Tailwind CSS 3.4.17 (MIT), Chart.js 4.5.1 (MIT), SheetJS 0.18.5 (Apache-2.0), jsPDF 2.5.1 with AutoTable 3.8.2 (MIT), and the Inter and JetBrains Mono fonts (SIL Open Font License 1.1). Each is the published file; `static/vendor/README.md` lists where it came from, `static/vendor/SHA256SUMS` its checksum, and `static/vendor/licenses/` the licence texts.
+The web UI's browser libraries and fonts are bundled in `static/vendor` and served by the dashboard itself, so the administrator's browser needs no internet access: Tailwind CSS 3.4.17 (MIT), Chart.js 4.5.1 (MIT), SheetJS 0.18.5 (Apache-2.0), jsPDF 2.5.1 with AutoTable 3.8.2 (MIT), and the Inter and JetBrains Mono fonts (SIL Open Font License 1.1). Each is the published file; `static/vendor/README.md` lists where it came from, `static/vendor/SHA256SUMS` its checksum, and `static/vendor/licenses/` the license texts.
 
 NetScaler and Citrix are trademarks of Cloud Software Group, Inc. This is an independent project; it is not affiliated with, endorsed by or supported by Cloud Software Group.
 

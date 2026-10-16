@@ -51,6 +51,7 @@ class FakeNitro:
     def __init__(self, configured=True, down=False):
         self.configured, self.down, self.calls = configured, down, []
         self.extra_hits = 0
+        self.lic_mode, self.lic_days, self.grace, self.grace_hours = "LAS (Fixed Bandwidth)", 21, 0, 0
 
     def _get(self, path, custom_timeout=None):
         self.calls.append(path)
@@ -66,10 +67,9 @@ class FakeNitro:
 
     @staticmethod
     def resource(path):
-        base = path.split("?")[0]
-        if base.rstrip("/").endswith("/nstcpprofile/nstcp_default_profile"):
-            return "nstcpprofile"
-        return base.rstrip("/").split("/")[-1]
+        """/config/<resource>[/<name>] -> <resource>"""
+        parts = path.split("?")[0].strip("/").split("/")
+        return parts[1] if len(parts) >= 2 and parts[0] in ("config", "stat") else parts[-1]
 
     def data(self):
         c, x = self.configured, self.extra_hits
@@ -107,11 +107,24 @@ class FakeNitro:
             "nslimitidentifier": [{"limitidentifier": "Check_Failed_Logins_Limit_Identifier", "threshold": "10", "timeslice": "600000",
                                    "selectorname": "Check_Failed_Logins_Selector", "hits": "30", "drop": "7"}] if c else [],
             "streamselector": [{"name": "Check_Failed_Logins_Selector_Policy"}] if c else [],
-            "aaaparameter": {"httponlycookie": "ENABLED" if c else "DISABLED",
+            "aaaparameter": {"httponlycookie": "ENABLED" if c else "DISABLED", "enableenhancedauthfeedback": "NO" if c else "YES",
                              "wafprotection": ["AUTH", "VPN", "PORTAL"] if c else ["DEFAULT"], "defaultcspheader": "DISABLED"},
             "nsparam": {"cookieversion": "1" if c else "0"},
             "nstcpparam": {"ws": "ENABLED", "enhancedisngeneration": "ENABLED" if c else "DISABLED"},
-            "nsip": [{"ipaddress": NSIP, "type": "NSIP", "gui": "SECUREONLY" if c else "ENABLED"}],
+            "nsip": [{"ipaddress": NSIP, "type": "NSIP", "gui": "SECUREONLY" if c else "ENABLED",
+                      "restrictaccess": "ENABLED" if c else "DISABLED", "telnet": "DISABLED", "ftp": "DISABLED" if c else "ENABLED"}],
+            "sslvserver": [{"vservername": "GW_VS", "ssl3": "DISABLED", "tls1": "DISABLED" if c else "ENABLED",
+                            "tls11": "DISABLED" if c else "ENABLED", "tls12": "ENABLED", "tls13": "ENABLED" if c else "DISABLED",
+                            "hsts": "DISABLED", "sslprofile": "Gateway_SSL" if c else ""}],
+            "sslprofile": [{"name": "Gateway_SSL", "ssl3": "DISABLED", "tls1": "DISABLED", "tls11": "DISABLED", "tls12": "ENABLED",
+                            "tls13": "ENABLED", "hsts": "ENABLED", "maxage": 31536000}] if c else [],
+            "sslparameter": {"denysslreneg": "NONSECURE" if c else "NO", "defaultprofile": "DISABLED"},
+            "nshttpprofile": [{"name": "nshttp_default_profile", "dropinvalreqs": "ENABLED" if c else "DISABLED",
+                               "markhttp09inval": "ENABLED" if c else "DISABLED", "markconnreqinval": "DISABLED"}],
+            "systemparameter": {"strongpassword": "enableall" if c else "disabled", "minpasswordlen": 8 if c else 4,
+                                "forcepasswordchange": "ENABLED" if c else "DISABLED"},
+            "ntpserver": [{"serverip": "192.0.2.123"}] if c else [],
+            "ntpsync": {"state": "ENABLED" if c else "DISABLED"},
             "vpnvserver": [{"name": "GW_VS", "ipv46": GW_IP, "port": 443}],
             "authenticationvserver": [{"name": "AAA_VS", "ipv46": "0.0.0.0", "port": 0}],
             "csvserver": [],
@@ -132,6 +145,70 @@ class FakeNitro:
             "nshostname": [{"hostname": "ns-gw01"}],
             "hanode": [],
             "ns": {"cpuusagepcnt": 12.5, "memusagepcnt": 40.1, "httptotrequests": 1000},
+            # LAS, fixed bandwidth, 21 days to go
+            "nslicense": {"isplatinumlic": True, "isenterpriselic": False, "isstandardlic": False, "modelid": 1000,
+                          "licensingmode": self.lic_mode, "daystoexpiration": self.lic_days, "daystolasenforcement": 0,
+                          "f_sslvpn_users": 5000},
+            "nscapacity": {"bandwidth": 1000, "unit": "Mbps", "edition": "Platinum", "actualbandwidth": 1000,
+                           "daystoexpiration": self.lic_days, "vcpu": False},
+            "nslicenseserver": [{"servername": "console.example.com", "status": 1, "grace": self.grace,
+                                 "gptimeleft": self.grace_hours, "type": "ADM"}] if self.lic_mode != "Local" else [],
+        }
+
+
+SDX_IP = "192.0.2.40"
+
+
+class FakeSdx:
+    """An SDX Management Service (NITRO v2): the platform, its VPX instances, sensors."""
+
+    def __init__(self, down=False, vpx_ip=NSIP):
+        self.down, self.calls = down, []
+        self.psu_ok, self.vpx_ip = False, vpx_ip
+
+    def _get(self, path, custom_timeout=None):
+        self.calls.append(path)
+        if self.down:
+            raise requests.ConnectionError("management service down")
+        name = path.split("?")[0].strip("/").split("/")[1]
+        data = self.data()
+        if name not in data:
+            r = requests.Response()
+            r.status_code = 404
+            raise requests.HTTPError("404 Client Error: Not Found", response=r)
+        return {"errorcode": 0, "message": "Done", name: data[name]}
+
+    def data(self):
+        return {
+            "mps": [{"hostname": "sdx-dc1", "platform": "NetScaler SDX 15000", "serial": "SN123456", "product": "SDX",
+                     "product_version": "14.1", "build_number_short": "43.50", "bios_version": "1.2",
+                     "uptime": "42 days, 3:10", "hypervisor_uptime": "42 days, 3:12"}],
+            "mps_health": [{"cpu_usage": "7.5", "memory_usage": "38.2", "disk_usage": "21"}],
+            "ns": [
+                # added to the dashboard: the NetScaler of tests/test_security.py
+                {"name": "vpx-gw01", "ip_address": self.vpx_ip, "vm_state": "Running", "instance_state": "Up", "status": "Success",
+                 "version": "NetScaler NS14.1: Build 43.56.nc", "ns_cpu_usage": "12", "ns_memory_usage": "40",
+                 "throughput": "1000", "ns_rx": "120", "ns_tx": "340", "cpu_core_pe": "2", "vm_memory_total": "4096",
+                 "uptime": "10 days", "instance_mode": "Standalone"},
+                {"name": "vpx-lb02", "ip_address": "192.0.2.42", "vm_state": "Halted", "instance_state": "Down",
+                 "status": "Failed", "reason": "VM halted by admin", "throughput": "500", "cpu_core_pe": "1",
+                 "vm_memory_total": "2048"},
+            ],
+            "xen_health_resource_hw": [
+                {"name": "Power Supply 1", "current_value": "OK", "expected_value": "OK", "status": "OK"},
+                {"name": "Power Supply 2", "current_value": "OK" if self.psu_ok else "Failed", "expected_value": "OK",
+                 "status": "OK" if self.psu_ok else "ERROR", "number_of_failures": 0 if self.psu_ok else 3},
+            ],
+            "xen_health_monitor": [{"name": "CPU 1 Temp", "current_value": "52", "unit": "degrees C", "status": "OK"},
+                                   {"name": "Fan 1", "current_value": "8400", "unit": "RPM", "status": "OK"}],
+            "xen_health_interface": [{"port": "10/1", "display_name": "10G 1", "state": "UP", "rx_errors": 0, "tx_errors": 0,
+                                      "vf_assigned": 2, "vf_total": 40},
+                                     {"port": "10/2", "state": "DOWN", "rx_errors": 4, "tx_errors": 0, "vf_assigned": 0, "vf_total": 40}],
+            "sdx_license": [{"platform": "SDX 15000-50G", "max_throughput": "50000", "available_throughput": "48500",
+                             "max_number_of_ns_instances": "25", "available_number_of_ns_instances": "23",
+                             "license_server_name": "", "is_pooled_license": "false"}],
+            "license_expiry_info": [{"feature": "Platform", "expirydays": "12", "expirycount": "1"},
+                                    {"feature": "SSL", "expirydays": "400", "expirycount": "1"}],
         }
 
 
@@ -188,7 +265,11 @@ def _sender(target, fake):
 
 
 def serve(port, syslog_target=None):
+    """NITRO v1 (a NetScaler) and NITRO v2 (an SDX Management Service) on one port.
+    FAKE_VPX_IP: the address the SDX lists for its first VPX (this stand-in's own)."""
+    import os
     fake = FakeNitro(True)
+    sdx = FakeSdx(vpx_ip=os.getenv("FAKE_VPX_IP", NSIP))
 
     class H(BaseHTTPRequestHandler):
         def log_message(self, *a):
@@ -203,6 +284,11 @@ def serve(port, syslog_target=None):
             self.wfile.write(body)
 
         def do_GET(self):
+            if self.path.startswith("/nitro/v2/"):
+                try:
+                    return self._send(sdx._get(self.path[len("/nitro/v2"):]))
+                except requests.HTTPError:
+                    return self._send({"errorcode": 404, "message": "Resource not found"}, 404)
             if not self.path.startswith("/nitro/v1/"):
                 return self._send({"error": "not found"}, 404)
             try:
