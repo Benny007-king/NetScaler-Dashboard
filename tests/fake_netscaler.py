@@ -107,7 +107,7 @@ class FakeNitro:
             "nslimitidentifier": [{"limitidentifier": "Check_Failed_Logins_Limit_Identifier", "threshold": "10", "timeslice": "600000",
                                    "selectorname": "Check_Failed_Logins_Selector", "hits": "30", "drop": "7"}] if c else [],
             "streamselector": [{"name": "Check_Failed_Logins_Selector_Policy"}] if c else [],
-            "aaaparameter": {"httponlycookie": "ENABLED" if c else "DISABLED", "maxaaausers": 4294967295 if c else 5,
+            "aaaparameter": {"httponlycookie": "ENABLED" if c else "DISABLED",
                              "wafprotection": ["AUTH", "VPN", "PORTAL"] if c else ["DEFAULT"], "defaultcspheader": "DISABLED"},
             "nsparam": {"cookieversion": "1" if c else "0"},
             "nstcpparam": {"ws": "ENABLED", "enhancedisngeneration": "ENABLED" if c else "DISABLED"},

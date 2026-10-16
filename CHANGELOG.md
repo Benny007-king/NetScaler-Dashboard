@@ -12,9 +12,7 @@ Each release is tagged in git as `vX.Y.Z`.
   cookies and spoofing protection. The WAF item is NetScaler's **built-in WAF
   protection** for the Gateway (`set aaa parameter -wafProtection AUTH VPN
   PORTAL`): all three listed is *In place*, some is *Partly*, DEFAULT or DISABLED
-  is pointed out. New item: **maximum concurrent AAA users** at the maximum
-  (`-maxAAAUsers 4294967295`), so the licence and not this setting limits how many
-  users can log on. Fourteen items in all.
+  is pointed out.
 - The storage tests now also pass on **Microsoft SQL Server 2022**, security
   events included.
 

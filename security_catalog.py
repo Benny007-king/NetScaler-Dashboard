@@ -195,25 +195,10 @@ add responder policy Session_Cookie_Hijack_Block_Responder_Policy "AAA.USER.NAME
             "for the VPN endpoints and PORTAL for the portal pages. The dashboard checks that all three are listed."),
         "notes": [
             "DEFAULT leaves the choice to the build, and DISABLED turns the protection off.",
-            "Only this setting of the command matters for this item; -maxAAAUsers has its own item.",
         ],
         "variants": [{"label": "All versions", "commands": [
             ("Setting", r"set aaa parameter -wafProtection AUTH VPN PORTAL")]}],
         "detect": "waf",
-    },
-    {
-        "id": "max_aaa_users",
-        "group": "Appliance hardening",
-        "title": "Maximum concurrent AAA users",
-        "summary": "The Gateway's limit on users logged on at the same time is set to the maximum.",
-        "about": (
-            "maxAAAUsers caps how many users can be logged on to the Gateway (VPN / AAA) at the same time. When the "
-            "cap is reached, further users are refused at login although the licence would allow them. Set to the "
-            "maximum, 4294967295, the licence is the only limit."),
-        "notes": [],
-        "variants": [{"label": "All versions", "commands": [
-            ("Setting", r"set aaa parameter -maxAAAUsers 4294967295")]}],
-        "detect": "max_aaa_users",
     },
     {
         "id": "csp_header",

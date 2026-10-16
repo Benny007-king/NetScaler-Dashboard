@@ -348,17 +348,6 @@ def detect_waf(check, facts, ctx):
                    scopes=scopes, policies=policies)
 
 
-def detect_max_aaa_users(check, facts, ctx):
-    u = _unknown(facts, "aaa_param")
-    if u:
-        return u
-    p = _one(facts, "aaa_param")
-    if "maxaaausers" not in p:
-        return _result("unknown", ["The appliance did not report maxAAAUsers."])
-    v = _int(p.get("maxaaausers"))
-    return _result("configured" if v >= 4294967295 else "missing", [f"aaa parameter maxAAAUsers = {p.get('maxaaausers')}"])
-
-
 def detect_csp(check, facts, ctx):
     u = _unknown(facts, "rw_action", "rw_policy")
     if u:
@@ -474,7 +463,7 @@ DETECTORS = {
     "responder": detect_responder, "login_audit": detect_login_audit, "brute_force": detect_brute_force,
     "malicious_ip": detect_malicious_ip, "waf": detect_waf, "csp": detect_csp, "httponly": detect_httponly,
     "cookie_v1": detect_cookie_v1, "tcp_isn": detect_tcp_isn, "mgmt_secure": detect_mgmt_secure,
-    "syslog": detect_syslog, "max_aaa_users": detect_max_aaa_users,
+    "syslog": detect_syslog,
 }
 
 

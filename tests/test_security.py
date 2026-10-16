@@ -68,7 +68,7 @@ facts = security.collect_facts(FakeNitro(True))
 check(security.ns_version(facts) == "14.1-43.56", "version read from nsversion", security.ns_version(facts))
 res = {c["id"]: c for c in security.evaluate(facts, {"node_protocol": "http", "dashboard_addresses": {"192.0.2.200"}})}
 st = {k: v["status"] for k, v in res.items()}
-check(len(res) == len(security.security_catalog.CHECKS) == 14, "14 checklist entries", len(res))
+check(len(res) == len(security.security_catalog.CHECKS) == 13, "13 checklist entries", len(res))
 check(st["login_audit"] == "configured", "login logging: both policies bound, user-defined logging on", res["login_audit"]["evidence"])
 check(st["brute_force"] == "partial" and any("selector" in e.lower() for e in res["brute_force"]["evidence"]),
       "brute force: the selector name mismatch of the original commands is found", res["brute_force"]["evidence"])
@@ -78,13 +78,11 @@ check(st["malicious_ip"] == "partial", "IP reputation: unbound policy and disabl
 check(st["epa_referer"] == "missing" and st["saml_protection"] == "missing", "absent policies -> missing")
 check(st["waf"] == "configured" and all(res["waf"]["scopes"].values()), "built-in WAF protection with AUTH VPN PORTAL",
       res["waf"]["evidence"])
-check(st["max_aaa_users"] == "configured", "max AAA users at the maximum", res["max_aaa_users"]["evidence"])
-part = {c["id"]: c for c in security.evaluate(dict(facts, aaa_param={"wafprotection": ["AUTH", "VPN"], "maxaaausers": 1000}), {})}
-check(part["waf"]["status"] == "partial" and "PORTAL" in " ".join(part["waf"]["evidence"])
-      and part["max_aaa_users"]["status"] == "missing", "WAF without PORTAL is partial; a lower user limit is pointed out",
-      (part["waf"]["evidence"], part["max_aaa_users"]["evidence"]))
+part = {c["id"]: c for c in security.evaluate(dict(facts, aaa_param={"wafprotection": ["AUTH", "VPN"]}), {})}
+check(part["waf"]["status"] == "partial" and "PORTAL" in " ".join(part["waf"]["evidence"]), "WAF without PORTAL is partial",
+      part["waf"]["evidence"])
 off = {c["id"]: c["status"] for c in security.evaluate(dict(facts, aaa_param={"wafprotection": "DISABLED"}), {})}
-check(off["waf"] == "missing" and off["max_aaa_users"] == "unknown", "WAF protection DISABLED; a build without maxAAAUsers")
+check(off["waf"] == "missing", "WAF protection DISABLED is not in place")
 check(st["csp_header"] == "configured" and st["httponly"] == "configured" and st["cookie_v1"] == "configured"
       and st["tcp_isn"] == "configured", "CSP, HttpOnly, cookie v1 and enhanced ISN generation detected")
 check(st["mgmt_secure"] == "configured" and any("HTTPS in Settings" in e for e in res["mgmt_secure"]["evidence"]),
@@ -101,8 +99,7 @@ check(hits.get("Gateway_Login_Attempt_Audit_Responder_Policy") == 120 and hits.g
 
 empty = {c["id"]: c["status"] for c in security.evaluate(security.collect_facts(FakeNitro(False)), {})}
 check(empty["login_audit"] == "missing" and empty["waf"] == "partial" and empty["httponly"] == "missing"
-      and empty["cookie_v1"] == "missing" and empty["tcp_isn"] == "missing" and empty["mgmt_secure"] == "missing"
-      and empty["max_aaa_users"] == "missing",
+      and empty["cookie_v1"] == "missing" and empty["tcp_isn"] == "missing" and empty["mgmt_secure"] == "missing",
       "an appliance with nothing in place", empty)
 down = security.evaluate(security.collect_facts(FakeNitro(down=True)), {})
 check(all(c["status"] in ("unknown", "missing") for c in down) and sum(c["status"] == "unknown" for c in down) >= 10,
@@ -125,7 +122,7 @@ with c.session_transaction() as s:
 
 r = c.get("/api/security/checklist")
 j = r.get_json()
-check(r.status_code == 200 and len(j["checks"]) == 14 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["StoreFront_LB"],
+check(r.status_code == 200 and len(j["checks"]) == 13 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["StoreFront_LB"],
       "checklist endpoint: entries and the virtual servers for the commands", r.status_code)
 r = c.post("/api/security/mark", json={"id": "epa_referer", "state": "irrelevant"})
 r2 = c.post("/api/security/mark", json={"id": "saml_protection", "state": "done"})
