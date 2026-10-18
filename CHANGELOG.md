@@ -6,6 +6,21 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.21.0
+- **Search on the Applications tab.** One box searches the applications (LB
+  virtual servers) and the services and service groups at once - name, IP,
+  port, type or state; several words narrow it down - plus a state filter (up,
+  down, out of service) and a count of what is shown.
+- **Why a session ended.** The Sessions tab has an **End Reason** column next to
+  the start and end time: *Logoff*, *Idle timeout*, *Forced logoff (maximum
+  session time)* or *Forced logoff (by an administrator)*, read from the
+  Gateway's LOGOUT line; the line's own value is in the detail row. A session
+  that ended without a logout line says so.
+- **A dedicated NetScaler user for the dashboard**, documented (README and the
+  website): API access only, the built-in `read-only` policy plus a command
+  policy for `unlock aaa user`, a 15-minute idle timeout and at most 20
+  connections.
+
 ## 1.20.0
 **Security checklist: nine more items** (32 in all)
 - Gateway settings: **strong ciphers only** - the ciphers bound to the Gateway

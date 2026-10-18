@@ -400,6 +400,20 @@
 
   <section class="panel hidden fade-in" id="panel-applications">
     <div id="appsNotice" class="mb-4 text-xs text-amber-400 bg-amber-400/10 p-3 rounded border border-amber-400/20 hidden"></div>
+    <div class="flex flex-wrap gap-3 mb-6 p-4 bg-slate-900/50 rounded-xl border border-slate-700/50 items-end">
+      <div class="grid gap-1 flex-grow">
+        <label for="appsQ" class="text-xs text-slate-400 ml-1">Search</label>
+        <input id="appsQ" type="search" autocomplete="off" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3 w-full"
+               placeholder="name, IP, port, type or state - several words narrow it down" oninput="filterApps()" onkeydown="if(event.key==='Escape'){this.value='';filterApps()}" />
+      </div>
+      <div class="grid gap-1">
+        <label for="appsState" class="text-xs text-slate-400 ml-1">State</label>
+        <select id="appsState" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3" onchange="filterApps()">
+          <option value="">All</option><option value="up">Up</option><option value="down">Down</option><option value="other">Out of service / other</option>
+        </select>
+      </div>
+      <p id="appsCount" class="text-xs text-slate-400 pb-2.5" aria-live="polite"></p>
+    </div>
     
     <div class="glass-panel rounded-2xl p-0 overflow-hidden mb-8">
       <div class="p-4 border-b border-white/5 bg-white/5 flex justify-between items-center">
@@ -502,8 +516,8 @@
       </div>
       <div class="table-container">
         <table>
-          <thead><tr><th class="w-8"></th><th class="w-12">#</th><th>User</th><th>Connection Type</th><th>Status</th><th>Duration</th><th>Source IP</th><th>Gateway</th><th>Start Time</th><th>End Time</th></tr></thead>
-          <tbody id="sessTable" class="text-slate-300"><tr><td colspan="10" class="text-center py-8 text-slate-500">Set filters and click Search...</td></tr></tbody>
+          <thead><tr><th class="w-8"></th><th class="w-12">#</th><th>User</th><th>Connection Type</th><th>Status</th><th>Duration</th><th>Source IP</th><th>Gateway</th><th>Start Time</th><th>End Time</th><th>End Reason</th></tr></thead>
+          <tbody id="sessTable" class="text-slate-300"><tr><td colspan="11" class="text-center py-8 text-slate-500">Set filters and click Search...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -1786,9 +1800,10 @@ async function loadApplications() {
         const vip = item.vip || item.ipv46 || item.ipaddress || '';
         const state = (item.state || item.curstate || '').toUpperCase();
         const badge = svcStateBadge(state);
-        return `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500 font-mono">${i + 1}</td><td class="text-white font-medium">${escapeHtml(name)}</td><td class="text-blue-300 font-mono text-xs">${escapeHtml(vip)}</td><td class="text-slate-400 font-mono text-xs">${escapeHtml(item.port == null ? '' : String(item.port))}</td><td><span class="badge ${badge}">${escapeHtml(state)}</span></td></tr>`;
+        return `<tr class="border-b border-slate-800/50 hover:bg-white/5" data-s="${escapeHtml([name, vip, item.port, item.servicetype, state].join(' ').toLowerCase())}" data-state="${escapeHtml(state)}"><td class="text-slate-500 font-mono">${i + 1}</td><td class="text-white font-medium">${escapeHtml(name)}</td><td class="text-blue-300 font-mono text-xs">${escapeHtml(vip)}</td><td class="text-slate-400 font-mono text-xs">${escapeHtml(item.port == null ? '' : String(item.port))}</td><td><span class="badge ${badge}">${escapeHtml(state)}</span></td></tr>`;
     }).join('') : '<tr><td colspan="5" class="text-center py-4 text-slate-500">No items found</td></tr>';
     $('appsTable').innerHTML = rows;
+    filterApps();
 }
 
 async function loadServices() {
@@ -1799,7 +1814,7 @@ async function loadServices() {
     // NITRO names these differently per object: a service reports its runtime
     // state in `svrstate` (not `curstate`) and its address in `ipaddress`.
     const row = (i, kind, name, ip, port, state, members) =>
-        `<tr class="border-b border-slate-800/50 hover:bg-white/5"><td class="text-slate-500">${i}</td>`
+        `<tr class="border-b border-slate-800/50 hover:bg-white/5" data-s="${escapeHtml([kind === 'GRP' ? 'group service group' : 'service', name, ip, port, state, members].join(' ').toLowerCase())}" data-state="${escapeHtml(String(state || '').toUpperCase())}"><td class="text-slate-500">${i}</td>`
         + `<td class="text-xs">${kind}</td><td class="text-white">${escapeHtml(name || '-')}</td>`
         + `<td class="font-mono text-xs text-slate-400">${escapeHtml(ip || '-')}</td>`
         + `<td class="text-xs text-slate-300">${escapeHtml(port == null ? '-' : String(port))}</td>`
@@ -1822,6 +1837,34 @@ async function loadServices() {
     });
     $('svcTable').innerHTML = rows.join('')
         || '<tr><td colspan="7" class="text-center text-slate-500 py-4">No services or service groups configured on this node</td></tr>';
+    filterApps();
+}
+
+// Search both tables at once: every word has to appear somewhere in the row.
+function filterApps() {
+    const words = ($('appsQ')?.value || '').toLowerCase().split(/\s+/).filter(Boolean);
+    const want = $('appsState')?.value || '';
+    const stateOk = st => !want || (want === 'up' ? /^UP|ACTIVE/.test(st) : want === 'down' ? /DOWN/.test(st) : !/^UP|ACTIVE|DOWN/.test(st));
+    let shown = 0, total = 0;
+    ['appsTable', 'svcTable'].forEach(id => {
+        const body = $(id);
+        if (!body) return;
+        body.querySelector('tr[data-nomatch]')?.remove();
+        const rows = [...body.querySelectorAll('tr[data-s]')];
+        let here = 0;
+        rows.forEach(tr => {
+            const ok = words.every(w => tr.dataset.s.includes(w)) && stateOk(tr.dataset.state || '');
+            tr.classList.toggle('hidden', !ok);
+            here += ok;
+        });
+        total += rows.length; shown += here;
+        if (rows.length && !here) {
+            const cols = body.closest('table').querySelectorAll('thead th').length;
+            body.insertAdjacentHTML('beforeend', `<tr data-nomatch><td colspan="${cols}" class="text-center py-4 text-slate-500">Nothing matches the search.</td></tr>`);
+        }
+    });
+    const c = $('appsCount');
+    if (c) c.textContent = (words.length || want) ? `${shown} of ${total} shown` : (total ? `${total} items` : '');
 }
 
 // --- HISTORY & SESSIONS ---
@@ -1887,11 +1930,20 @@ async function loadSessions() {
             <td>${escapeHtml(s.duration)}</td>
             <td><span class="font-mono text-blue-300 text-xs">${escapeHtml(s.ip)}</span></td>
             <td class="text-xs text-slate-300">${escapeHtml(s.gateway)}</td>
-            <td class="text-xs">${escapeHtml(formatILTime(s.start))}</td>
-            <td><span class="text-slate-400 text-xs">${escapeHtml(s.end)}</span></td></tr>
-            <tr id="sessDetail${i}" class="hidden"><td colspan="10" class="bg-slate-900/60 p-0"><div id="sessDetailBody${i}" class="p-4"></div></td></tr>`;
-    }).join('') : '<tr><td colspan="10" class="text-center py-8 text-slate-500">No sessions found in this time range.</td></tr>';
+            <td class="text-xs whitespace-nowrap">${escapeHtml(formatILTime(s.start))}</td>
+            <td class="whitespace-nowrap"><span class="text-slate-400 text-xs">${escapeHtml(s.end)}</span></td>
+            <td class="text-xs whitespace-nowrap">${endReasonCell(s)}</td></tr>
+            <tr id="sessDetail${i}" class="hidden"><td colspan="11" class="bg-slate-900/60 p-0"><div id="sessDetailBody${i}" class="p-4"></div></td></tr>`;
+    }).join('') : '<tr><td colspan="11" class="text-center py-8 text-slate-500">No sessions found in this time range.</td></tr>';
     $('sessTable').innerHTML = rows;
+}
+
+// Why a session ended: a logoff is normal; timeouts and forced ends are worth a look.
+function endReasonCell(s) {
+    const r = s.end_reason || '';
+    if (!r) return '<span class="text-slate-600">—</span>';
+    const cls = /^logoff/i.test(r) ? 'text-slate-300' : (/forced/i.test(r) ? 'text-amber-300' : (/idle/i.test(r) ? 'text-sky-300' : 'text-slate-500'));
+    return `<span class="${cls}">${escapeHtml(r)}</span>`;
 }
 
 const SESS_FIELDS = [
@@ -1899,7 +1951,7 @@ const SESS_FIELDS = [
     ['kind', 'Connection kind'], ['client_type', 'Gateway client type'], ['access_type', 'Access type'],
     ['client_os', 'Client OS'], ['protocol', 'Protocol'], ['resource', 'End resource'],
     ['source_ip', 'Source IP'], ['intranet_ip', 'Intranet IP'], ['mapped_ip', 'Mapped IP'], ['groups', 'Groups'],
-    ['login_time', 'Login time'], ['logout_time', 'Logout time'], ['logout_method', 'Logout method'],
+    ['login_time', 'Login time'], ['logout_time', 'Logout time'], ['end_reason', 'End reason'], ['logout_method', 'Logout method (as logged)'],
     ['gateway_session_id', 'Gateway session ID'], ['aaa_session_id', 'AAA session ID'],
     ['connections', 'Open connections'], ['tcp_connections', 'TCP connections (session)'],
     ['http_resources', 'Web resources opened'], ['bytes_sent', 'Bytes sent'], ['bytes_received', 'Bytes received'],

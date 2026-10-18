@@ -2691,6 +2691,24 @@ def _fmt_dur(secs):
     h, m = divmod(secs // 60, 60)
     return f"{h} h {m} min" if h else f"{m} min"
 
+def end_reason(method) -> str:
+    """The Gateway's LogoutMethod in words: a logoff, an idle timeout, a forced
+    logoff (the maximum session time, or an administrator ending it)."""
+    m = str(method or '').strip().lower().replace('_', ' ')
+    if not m:
+        return ''
+    if 'forc' in m:
+        return 'Forced logoff (maximum session time)'
+    if 'kill' in m or 'admin' in m or 'terminat' in m:
+        return 'Forced logoff (by an administrator)'
+    if 'explicit' in m or 'logout' in m or 'logoff' in m or 'user' in m:
+        return 'Logoff'
+    if 'idle' in m or 'timedout' in m or 'timed out' in m or 'timeout' in m:
+        return 'Idle timeout'
+    if 'disconnect' in m or 'error' in m:
+        return 'Disconnected'
+    return str(method).strip()
+
 def _apply_gateway_lines(r, rec, vmap):
     """Fill a session from the Gateway's LOGIN/LOGOUT lines for it."""
     li, lo = rec.get('login'), rec.get('logout')
@@ -2721,6 +2739,8 @@ def _apply_gateway_lines(r, rec, vmap):
     if lo:
         d['logout_method'] = lo.get('action') or f.get('logoutmethod') or '—'
         d['logout_time'] = _fmt_ts(lo['ts'])
+        r['end_reason'] = end_reason(d['logout_method']) or 'Ended'
+        d['end_reason'] = r['end_reason']
         if r.get('status') != 'Active':
             r['status'], r['_end_ts'] = 'Terminated', lo['ts']
     d['login_time'] = _fmt_ts(start)
@@ -2870,6 +2890,11 @@ def _sessions_view(stored, events, vmap, smap, live_ok):
         elif not r.get('end') or r.get('end') == 'Active':
             r['end'] = '—'
         r['duration'] = _fmt_dur((end or now) - start) if (end or r.get('status') == 'Active') else '—'
+        if r.get('status') == 'Active':
+            r['end_reason'] = ''
+        elif not r.get('end_reason'):
+            # no logout line: all that is known is that the appliance stopped listing it
+            r['end_reason'] = 'Not logged' if r.get('status') == 'Unknown' else 'No longer listed by the appliance'
     # failed / locked sign-ins written to the log (kept for the whole retention period)
     seen = {(str(r.get('user')).lower(), r.get('status'), r.get('start')) for r in out if r.get('status') in ('Failed', 'Locked')}
     for e in events:

@@ -153,7 +153,7 @@ with c.session_transaction() as s:
 
 r = c.get("/api/security/checklist")
 j = r.get_json()
-check(r.status_code == 200 and len(j["checks"]) == 32 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["StoreFront_LB"],
+check(r.status_code == 200 and len(j["checks"]) == 32 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["Exchange_OWA_LB", "Intranet_HTTP_LB", "StoreFront_LB"],
       "checklist endpoint: entries and the virtual servers for the commands", r.status_code)
 r = c.post("/api/security/mark", json={"id": "epa_referer", "state": "irrelevant"})
 r2 = c.post("/api/security/mark", json={"id": "saml_protection", "state": "done"})
@@ -227,6 +227,12 @@ oren = by.get(("oren", "Terminated"), [])
 check(oren and oren[0]["type"] == "Clientless VPN" and oren[0]["detail"].get("logout_method") == "TimedOut"
       and abs(dash.parse_dmy(oren[0]["end"]) - (T_LOGIN - 3600)) < 3 and oren[0]["duration"] == "1 h 0 min"
       and oren[0]["detail"].get("bytes_sent") == "1000", "an ended session known only from its LOGIN/LOGOUT lines", oren)
+check(oren and oren[0].get("end_reason") == "Idle timeout" and dana and dana[0].get("end_reason") == "",
+      "end reason: the LOGOUT line's TimedOut is an idle timeout; an active session has none", (oren and oren[0].get("end_reason")))
+reasons = {m: dash.end_reason(m) for m in ("Explicit", "TimedOut", "ForcedTimedOut", "Kill_Session", "", "Something new")}
+check(reasons == {"Explicit": "Logoff", "TimedOut": "Idle timeout", "ForcedTimedOut": "Forced logoff (maximum session time)",
+                  "Kill_Session": "Forced logoff (by an administrator)", "": "", "Something new": "Something new"},
+      "logout methods in words", reasons)
 fails = by.get(("mallory", "Failed"), [])
 check(fails and fails[0]["ip"] == "203.0.113.66" and fails[0]["end"] == "", "failed login from the log: user, address, no end time", fails)
 check(by.get(("eve", "Locked")), "locked AAA user")
