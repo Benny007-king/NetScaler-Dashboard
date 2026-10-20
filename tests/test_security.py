@@ -68,7 +68,7 @@ facts = security.collect_facts(FakeNitro(True))
 check(security.ns_version(facts) == "14.1-43.56", "version read from nsversion", security.ns_version(facts))
 res = {c["id"]: c for c in security.evaluate(facts, {"node_protocol": "http", "dashboard_addresses": {"192.0.2.200"}})}
 st = {k: v["status"] for k, v in res.items()}
-check(len(res) == len(security.security_catalog.CHECKS) == 37, "37 checklist entries", len(res))
+check(len(res) == len(security.security_catalog.CHECKS) == 36, "36 checklist entries", len(res))
 check("config_saved" not in res and "snmp_community" not in res, "running configuration saved and SNMP community are gone")
 check(st["snmp_v3"] == "configured" and any("monitor (SHA/AES)" in e for e in res["snmp_v3"]["evidence"]),
       "SNMP v3 only: no communities, a v3 user with SHA and AES, v3 traps", res["snmp_v3"]["evidence"])
@@ -101,14 +101,7 @@ check(st["hsts"] == "configured" and st["ssl_reneg"] == "configured" and st["aut
       "HSTS (from the profile), secure renegotiation, auth feedback off")
 check(st["mgmt_restrict"] == "configured" and st["mgmt_services"] == "configured" and st["sys_passwords"] == "configured"
       and st["ntp"] == "configured", "restrict access, Telnet/FTP off, strong passwords, NTP")
-check(st["firmware"] == "missing" and "14.1-47.48" in res["firmware"]["evidence"][0], "14.1-43.56 is older than the 2025 fixes",
-      res["firmware"]["evidence"])
-fw = lambda v: security.evaluate(dict(facts, version={"version": v}), {})
-fwst = {v: next(c["status"] for c in fw(v) if c["id"] == "firmware") for v in
-        ("NetScaler NS14.1: Build 47.48.nc", "NetScaler NS14.1: Build 51.80.nc", "NetScaler NS13.1: Build 59.21.nc",
-         "NetScaler NS13.1: Build 60.29.nc", "NetScaler NS13.0: Build 92.31.nc", "NetScaler NS15.0: Build 1.1.nc")}
-check(list(fwst.values()) == ["configured", "configured", "missing", "configured", "missing", "configured"],
-      "firmware: fixed builds, an older 13.1, end-of-life 13.0, a newer line", fwst)
+check("firmware" not in res, "no firmware item")
 check(st["login_audit"] == "configured", "login logging: both policies bound, user-defined logging on", res["login_audit"]["evidence"])
 check(st["brute_force"] == "partial" and any("selector" in e.lower() for e in res["brute_force"]["evidence"]),
       "brute force: the selector name mismatch of the original commands is found", res["brute_force"]["evidence"])
@@ -169,7 +162,7 @@ with c.session_transaction() as s:
 
 r = c.get("/api/security/checklist")
 j = r.get_json()
-check(r.status_code == 200 and len(j["checks"]) == 37 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["Exchange_OWA_LB", "Intranet_HTTP_LB", "StoreFront_LB"],
+check(r.status_code == 200 and len(j["checks"]) == 36 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["Exchange_OWA_LB", "Intranet_HTTP_LB", "StoreFront_LB"],
       "checklist endpoint: entries and the virtual servers for the commands", r.status_code)
 r = c.post("/api/security/mark", json={"id": "epa_referer", "state": "irrelevant"})
 r2 = c.post("/api/security/mark", json={"id": "saml_protection", "state": "done"})
@@ -224,6 +217,19 @@ pl = c.get("/api/security/activity?range=24h").get_json().get("poll", {}).get(NS
 check(pl.get("audit_error") == "" and pl.get("audit") == len(audit_lines()) and not pl.get("denied"),
       "with the rights back, the audit log is read again", pl)
 security.collect_facts(fake, cache_key=(iid, "primary"), fresh=True)
+
+print("-- unlock AAA user")
+from app import NetScalerAPI   # noqa: E402
+api = NetScalerAPI("192.0.2.10", "Dashboard", "x")
+calls = []
+api._post_status = lambda path, payload: (calls.append(path) or (200, {"errorcode": 0, "message": "Done"}, '{"errorcode": 0}'))
+check(api.unlock_user("dana")["errorcode"] == 0 and calls == ["/config/aaauser?action=unlock"],
+      "unlock is 'unlock aaa user' first - what Unlock_Users_Policy allows", calls)
+calls.clear()
+refused = (400, {"errorcode": 1045, "message": "Not authorized to execute this command"}, "")
+api._post_status = lambda path, payload: (calls.append(path) or refused)
+out = api.unlock_user("dana")
+check(out["errorcode"] != 0 and "Not authorized" in out["message"], "without the policy, the appliance's refusal is shown", out)
 
 print("-- sessions")
 r = c.get("/api/user-sessions")

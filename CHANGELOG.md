@@ -6,6 +6,24 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.23.0
+**Security tab**
+- **Export the checklist** to Excel or PDF (buttons next to *Check again*): every
+  item with what was detected on the node, your mark (who and when), what counts
+  towards the score, and what was found - for an audit or a change request. The
+  security events table keeps its own export.
+- Removed: *Firmware includes the 2025 Gateway security fixes* (36 items).
+
+**The dashboard's NetScaler user**
+- The documentation now lists everything the dashboard runs on the NetScaler and
+  which command policy allows it: the API only (no CLI, SSH or shell), `show` and
+  `stat` (built-in `read-only`), `show audit messages` and `show system user` /
+  `show system parameter` (`Dashboard_Read_Policy` - `read-only` does not allow
+  them), and `unlock aaa user` (`Unlock_Users_Policy`). Nothing else is ever run.
+- Unlock User tries `unlock aaa user` first - the call `Unlock_Users_Policy`
+  allows - so a restricted user no longer leaves a refused command in the
+  appliance's log before the unlock succeeds.
+
 ## 1.22.0
 **Why the WAF events and log lines stopped**
 - The dedicated NetScaler user documented in 1.21.0 had the built-in `read-only`

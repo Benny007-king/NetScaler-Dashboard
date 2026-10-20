@@ -473,26 +473,6 @@ CHECKS += [
             ("Time server and synchronisation", "add ntp server <NTP_SERVER>\nenable ntp sync")]}],
         "detect": "ntp",
     },
-    {
-        "id": "firmware",
-        "group": "Management and platform",
-        "title": "Firmware includes the 2025 Gateway security fixes",
-        "summary": "The build is not older than the fixes for CVE-2025-5777 (CitrixBleed 2), CVE-2025-6543 and CVE-2025-7775.",
-        "about": (
-            "CVE-2025-5777 leaks memory - session tokens included - from Gateway and AAA virtual servers; "
-            "CVE-2025-6543 and CVE-2025-7775 allow code execution on them. All three were exploited in the wild. "
-            "They are fixed in 14.1-47.48 and 13.1-59.22 (and later builds of each)."),
-        "notes": [
-            "This is what was known when this dashboard version was made. Check NetScaler's security bulletins "
-            "for anything newer.",
-            "After upgrading from a vulnerable build, end all ICA and PCoIP sessions: `kill icaconnection -all` "
-            "and `kill pcoipConnection -all` - stolen session tokens survive the upgrade otherwise.",
-            "13.1-FIPS / NDcPP builds have their own fixed build numbers (13.1-37.241 or later).",
-        ],
-        "variants": [{"label": "All versions", "commands": [
-            ("After the upgrade", "kill icaconnection -all\nkill pcoipConnection -all")]}],
-        "detect": "firmware",
-    },
 ]
 
 # Shown in this order on the tab.

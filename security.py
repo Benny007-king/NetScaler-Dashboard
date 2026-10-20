@@ -785,32 +785,6 @@ def detect_ntp(check, facts, ctx):
     return _result("partial" if servers else "missing", ev + ([] if servers else ["No time server is configured."]))
 
 
-# Fixed builds for CVE-2025-5777, CVE-2025-6543 and CVE-2025-7775 (NetScaler bulletins, June-August 2025).
-_FIXED_BUILDS = {"14.1": (47, 48), "13.1": (59, 22)}
-
-
-def detect_firmware(check, facts, ctx):
-    u = _unknown(facts, "version")
-    if u:
-        return u
-    v = ns_version(facts)
-    m = re.match(r"(\d+\.\d+)-(\d+)\.(\d+)", v)
-    if not m:
-        return _result("unknown", ["The version could not be read."])
-    line, build = m.group(1), (int(m.group(2)), int(m.group(3)))
-    fixed = _FIXED_BUILDS.get(line)
-    if fixed is None:
-        major = tuple(int(x) for x in line.split("."))
-        if major < (13, 1):
-            return _result("missing", [f"NetScaler {v}: this release line is end of life and does not get these fixes."])
-        return _result("configured", [f"NetScaler {v}: a release line newer than the 2025 bulletins."])
-    ev = [f"NetScaler {v}; the fixes are in {line}-{fixed[0]}.{fixed[1]} and later."]
-    if "FIPS" in str(facts.get("version")).upper():
-        ev.append("This looks like a FIPS build - those have their own fixed builds (13.1-37.241 or later).")
-        return _result("unknown", ev)
-    return _result("configured" if build >= fixed else "missing", ev)
-
-
 _WEAK_CIPHER = re.compile(r"RC4|(^|-)3?DES|DES-CBC|EXP|NULL|MD5|ADH|ANON", re.I)
 _DATED_CIPHER = re.compile(r"CBC-SHA$|-SHA$", re.I)
 
@@ -930,7 +904,7 @@ DETECTORS = {
     "syslog": detect_syslog, "tls_versions": detect_tls_versions, "hsts": detect_hsts, "ssl_reneg": detect_ssl_reneg,
     "http_invalid": detect_http_invalid, "auth_feedback": detect_auth_feedback, "mgmt_restrict": detect_mgmt_restrict,
     "mgmt_services": detect_mgmt_services, "sys_passwords": detect_sys_passwords, "ntp": detect_ntp,
-    "firmware": detect_firmware, "ciphers": detect_ciphers, "gw_timeouts": detect_gw_timeouts,
+    "ciphers": detect_ciphers, "gw_timeouts": detect_gw_timeouts,
     "login_lockout": detect_login_lockout, "clientless_off": detect_clientless_off, "mgmt_timeout": detect_mgmt_timeout,
     "snmp_v3": detect_snmp_v3, "rpc_nodes": detect_rpc_nodes, "http09": detect_http09,
     "http_connect": detect_http_connect, "http_extra": detect_http_extra, "geo": detect_geo, "mgmt_acl": detect_mgmt_acl,

@@ -584,6 +584,10 @@
             <div class="h-2 rounded-full bg-slate-800 overflow-hidden"><div id="secScoreBar" class="h-full bg-emerald-500 transition-all" style="width:0%"></div></div>
           </div>
           <button onclick="loadSecurity(true)" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg border border-slate-600">Check again</button>
+          <div class="flex gap-2" role="group" aria-label="Export the checklist">
+            <button onclick="exportChecklist('xlsx')" title="The checklist with what was detected and your marks" class="bg-green-700 hover:bg-green-600 text-white text-sm px-4 py-2 rounded-lg border border-green-600">Excel</button>
+            <button onclick="exportChecklist('pdf')" title="The checklist with what was detected and your marks" class="bg-red-700 hover:bg-red-600 text-white text-sm px-4 py-2 rounded-lg border border-red-600">PDF</button>
+          </div>
         </div>
       </div>
       <div class="flex flex-wrap gap-2 text-[11px] text-slate-400 mb-4">
@@ -2170,6 +2174,88 @@ function secRow(c, i) {
           <button class="mark-btn ${mark === 'irrelevant' ? 'on-irrelevant' : ''}" aria-pressed="${mark === 'irrelevant'}" onclick="setMark(${i}, '${mark === 'irrelevant' ? '' : 'irrelevant'}')">Not relevant</button>
         </div>
       </div>`;
+}
+
+// The checklist as a report: every item, what was detected, the marks, and what
+// counts towards the score. Built from the data, not the page, so nothing is cut.
+function secReport() {
+    const d = SEC.data;
+    const inst = (state.instances || []).find(x => x.id === state.instance) || {};
+    const relevant = d.checks.filter(c => c.mark?.state !== 'irrelevant');
+    const rows = d.checks.map(c => {
+        const m = c.mark?.state || '';
+        return {
+            group: c.group, title: c.title + (c.optional ? ' (only if you use it)' : ''), summary: c.summary,
+            status: c.status, detected: (SEC_STATUS[c.status] || SEC_STATUS.unknown).label,
+            mark: m === 'done' ? 'Done' : m === 'irrelevant' ? 'Not relevant' : '',
+            by: c.mark?.by || '', at: c.mark?.at ? formatILTime(c.mark.at) : '',
+            result: m === 'irrelevant' ? 'Not relevant' : secDone(c) ? 'In place' : 'Open',
+            found: (c.evidence || []).join('\n'),
+        };
+    });
+    return {
+        instance: inst.name || state.instance || '', node: d.node_ip || '', version: d.version || '',
+        read: d.read_at ? new Date(d.read_at * 1000).toLocaleString('en-GB', { timeZone: APP_TZ, hour12: false }) : '',
+        score: `${relevant.filter(secDone).length} of ${relevant.length}`, rows,
+    };
+}
+
+function exportChecklist(kind) {
+    if (!SEC.data?.checks?.length) { alert('The checklist has not been read yet.'); return; }
+    const r = secReport();
+    const name = `Security_Checklist_${(r.instance || 'NetScaler').replace(/[^A-Za-z0-9._-]+/g, '_')}_${new Date().toISOString().slice(0, 10)}`;
+    const head = ['Section', 'Item', 'Detected on the appliance', 'Your mark', 'Marked by', 'Marked at', 'Counts as', 'What was found', 'What it does'];
+    if (kind === 'xlsx') {
+        const aoa = [['NetScaler hardening checklist'], ['Instance', r.instance], ['Node', r.node], ['NetScaler', r.version],
+                     ['Read at', r.read], ['In place', r.score], [], head,
+                     ...r.rows.map(x => [x.group, x.title, x.detected, x.mark, x.by, x.at, x.result, x.found, x.summary])];
+        const ws = XLSX.utils.aoa_to_sheet(aoa);
+        ws['!cols'] = [24, 46, 22, 13, 18, 20, 12, 70, 60].map(w => ({ wch: w }));
+        ws['!autofilter'] = { ref: XLSX.utils.encode_range({ s: { r: 7, c: 0 }, e: { r: 7 + r.rows.length, c: head.length - 1 } }) };
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Checklist');
+        XLSX.writeFile(wb, name + '.xlsx');
+        return;
+    }
+    // jsPDF's built-in font has no glyphs beyond Latin-1
+    const t = s => String(s ?? '').replace(/[\u2018\u2019]/g, "'").replace(/[\u201C\u201D]/g, '"').replace(/[\u2013\u2014]/g, '-')
+        .replace(/\u2026/g, '...').replace(/\u2192/g, '->').replace(/\u2265/g, '>=').replace(/\u2264/g, '<=').replace(/[^\x00-\xFF]/g, '?');
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    doc.setFontSize(15);
+    doc.text('NetScaler hardening checklist', 14, 15);
+    doc.setFontSize(9);
+    doc.setTextColor(90);
+    doc.text(t([r.instance && `Instance ${r.instance}`, r.node && `node ${r.node}`, r.version && `NetScaler ${r.version}`,
+                r.read && `read at ${r.read}`, `in place: ${r.score}`].filter(Boolean).join('   |   ')), 14, 21);
+    const COLORS = { configured: [22, 163, 74], partial: [217, 119, 6], missing: [220, 38, 38], unknown: [100, 116, 139] };
+    const body = [];
+    let group = null, n = 0;
+    r.rows.forEach(x => {
+        if (x.group !== group) {
+            group = x.group;
+            body.push([{ content: t(group), colSpan: 6, styles: { fontStyle: 'bold', fillColor: [226, 232, 240], textColor: [30, 41, 59] } }]);
+        }
+        n += 1;
+        body.push([n, t(x.title), { content: t(x.detected), _st: x.status },
+                   t([x.mark, x.by && `by ${x.by}`, x.at].filter(Boolean).join('\n')), t(x.result), t(x.found)]);
+    });
+    doc.autoTable({
+        startY: 26, head: [['#', 'Item', 'Detected', 'Your mark', 'Counts as', 'What was found']], body,
+        styles: { fontSize: 7.5, cellPadding: 1.6, overflow: 'linebreak', valign: 'top' },
+        headStyles: { fillColor: [15, 23, 42] },
+        columnStyles: { 0: { cellWidth: 8 }, 1: { cellWidth: 62, fontStyle: 'bold' }, 2: { cellWidth: 24 }, 3: { cellWidth: 34 }, 4: { cellWidth: 20 } },
+        didParseCell: h => {
+            const st = h.section === 'body' && h.cell.raw && h.cell.raw._st;
+            if (st) { h.cell.styles.textColor = COLORS[st] || COLORS.unknown; h.cell.styles.fontStyle = 'bold'; }
+        },
+        didDrawPage: () => {
+            doc.setFontSize(7);
+            doc.setTextColor(120);
+            doc.text(`Page ${doc.internal.getNumberOfPages()}`, doc.internal.pageSize.getWidth() - 14, doc.internal.pageSize.getHeight() - 6, { align: 'right' });
+        },
+    });
+    doc.save(name + '.pdf');
 }
 
 async function setMark(i, value) {

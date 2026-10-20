@@ -805,11 +805,13 @@ class NetScalerAPI:
         or a NITRO object with errorcode 0 - never on some other page that happens
         to come back with status 200."""
         from urllib.parse import quote
+        # 'unlock aaa user' first: it is the call the dashboard user's Unlock_Users_Policy
+        # allows, so a restricted user does not leave refused commands in the log.
         attempts = (
-            ("/config/aaauser", {"aaauser": {"username": username, "unlockAccount": True}}),
             ("/config/aaauser?action=unlock", {"aaauser": {"username": username}}),
             # the name is one path segment, whatever characters it contains
             (f"/config/aaauser/{quote(username, safe='')}?action=unlock", {"aaauser": {"username": username}}),
+            ("/config/aaauser", {"aaauser": {"username": username, "unlockAccount": True}}),
         )
         said = []
         for path, payload in attempts:
