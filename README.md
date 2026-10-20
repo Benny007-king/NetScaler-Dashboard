@@ -42,7 +42,7 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 - **Failover History & User Sessions**: date-range filters with a pop-up picker (a session is shown when it overlaps the range); **Excel/PDF** export (client-side). The Sessions tab is about **Gateway / AAA end users** only - management logins and system accounts never appear. Live sessions come from NITRO `aaasession` (one row per user, address and virtual server; the Gateway named from its virtual server address; group, intranet IP, destinations) and the live ICA connections (application server by name, TCP or EDT). The Gateway's own log lines - received by [syslog](#security-tab) or read from the audit log - add the real **login and logout time**, duration and **why it ended** (logoff, idle timeout, forced logoff), the Gateway and AAA **session ids**, the **client type** (ICA proxy, clientless, full VPN), **OS** and **Workspace app or browser** (from the login audit policy on the Security tab), the Gateway FQDN, user agent, bytes, and each **published application** with its server, start and end. Sessions that ended before the dashboard saw them appear from their log lines. **Failed sign-ins** (status `Failed`, attempt time, source IP, failure reason) and **locked accounts** (`Locked`) are kept for the retention period. `GET /api/session-debug` dumps per-node reachability and the raw (redacted) NITRO session and audit fields.
 - **SDX**: an instance in `sdx` mode points at the SDX **Management Service** (NITRO v2, read-only) and shows the platform, its hardware health (power supplies, fans, temperatures, voltages, interfaces, disks), the platform license, and every NetScaler (VPX) instance on it with state, role, version, load and allocation. An instance that is also added to the dashboard opens from there, and its own overview says which SDX it runs on.
 - **License & Capacity**: edition, license type (LAS fixed bandwidth, LAS online, pooled, local file, vCPU), capacity, expiry date and grace period - amber within 30 days or in grace, red within 7 days - also flagged on the All Instances card.
-- **Security tab**: a hardening checklist for the Gateway (32 items) - login audit logging, brute-force rate limiter, session cookie hijack prevention, IP reputation, EPA Referer check, SAML hardening, built-in WAF protection for Auth/VPN/Portal, CSP header, HttpOnly cookies, cookie version 1, enhanced TCP ISN generation, secure-only management, syslog to the dashboard - each detected on the node, markable **Done** / **Not relevant**, with an explanation and the commands for the node's version. Below it, the **activity**: WAF violations and policy hits over time, the hit counters of the checklist's policies, top source addresses and URLs, and every event with all its fields. See [Security tab](#security-tab).
+- **Security tab**: a hardening checklist for the Gateway (37 items) - login audit logging, brute-force rate limiter, session cookie hijack prevention, IP reputation, EPA Referer check, SAML hardening, built-in WAF protection for Auth/VPN/Portal, CSP header, HttpOnly cookies, cookie version 1, enhanced TCP ISN generation, secure-only management, syslog to the dashboard - each detected on the node, markable **Done** / **Not relevant**, with an explanation and the commands for the node's version. Below it, the **activity**: WAF violations and policy hits over time, the hit counters of the checklist's policies, top source addresses and URLs, and every event with all its fields. See [Security tab](#security-tab).
 - **Unlock Users**: unlock a locked AAA user (NITRO, with automatic `?action=unlock` fallback).
 - **External database (optional)**: keep session and failover history, plus a copy of the settings, in your own **PostgreSQL, MySQL / MariaDB or Microsoft SQL Server** — set up in **Settings → Database**. The dashboard keeps working when that database is unreachable and catches up by itself when it returns.
 
@@ -119,13 +119,15 @@ Configure it live from **Settings → NetScaler Instances** (recommended), or ed
 
 ### A dedicated NetScaler user for the dashboard (optional)
 
-The dashboard only reads from the NetScaler, plus *unlock AAA user* on the Unlock User tab. Instead of `nsroot`, it can sign in with an account of its own that has exactly that - the built-in `read-only` command policy and one more for unlocking users - and that can only use the API (NITRO), not the CLI or SSH:
+The dashboard only reads from the NetScaler, plus *unlock AAA user* on the Unlock User tab. Instead of `nsroot`, it can sign in with an account of its own that has exactly that - the built-in `read-only` command policy, one policy for the reads `read-only` leaves out, and one for unlocking users - and that can only use the API (NITRO), not the CLI or SSH:
 
 ```
+add system cmdPolicy Dashboard_Read_Policy ALLOW "(^show\\s+audit\\s+messages)|(^show\\s+audit\\s+messages\\s+.*)|(^show\\s+system\\s+(user|parameter))|(^show\\s+system\\s+(user|parameter)\\s+.*)"
 add system cmdPolicy Unlock_Users_Policy ALLOW "(^unlock\\s+aaa\\s+user)|(^unlock\\s+aaa\\s+user\\s+.*)"
 add system user Dashboard <password> -externalAuth DISABLED -timeout 900 -logging ENABLED -maxsession 20 -allowedManagementInterface API
 bind system user Dashboard read-only 100
 bind system user Dashboard Unlock_Users_Policy 110
+bind system user Dashboard Dashboard_Read_Policy 120
 save ns config
 ```
 
@@ -133,6 +135,7 @@ save ns config
 - `-externalAuth DISABLED` - the local password always works, also when LDAP/RADIUS is down.
 - `-timeout 900` - idle sessions end after 15 minutes; `-maxsession 20` - at most 20 connections at once.
 - Use a long random password and enter it in **Settings → NetScaler Instances** for every node (on an HA pair the user is synchronised to the secondary).
+- `Dashboard_Read_Policy` is needed: the built-in `read-only` policy does not allow `show audit messages` or `show system ...`, and without them the dashboard cannot read the audit log (WAF violations, policy hits and failed logins when no syslog arrives) nor the system users and parameters. The Security tab says when a read is refused.
 - Without the Unlock policy the dashboard still works; only unlocking users is refused.
 
 ### Environment — `.env`

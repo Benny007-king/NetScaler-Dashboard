@@ -6,6 +6,32 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.22.0
+**Why the WAF events and log lines stopped**
+- The dedicated NetScaler user documented in 1.21.0 had the built-in `read-only`
+  command policy - and that policy does not allow `show audit messages` or any
+  `show system ...` command. A dashboard signed in with that user could no longer
+  read the appliance's audit log, which is where WAF violations, policy hits and
+  failed logins come from when no syslog reaches the dashboard, nor the system
+  users and parameters. The documentation now adds a third command policy,
+  `Dashboard_Read_Policy`, that allows exactly those reads.
+- The Activity panel now says so: when the audit log, or any object the checklist
+  needs, is refused, it shows the appliance's own answer (for example "Not
+  authorized to execute this command") and what the user is missing; a
+  checklist item that could not be read says why.
+
+**Security checklist** (37 items)
+- Removed: Running configuration is saved.
+- *No default SNMP community* is now **SNMP v3 only**: no v1/v2c communities,
+  SNMPv3 users with authentication and encryption, traps over v3.
+- *Drop invalid HTTP requests* is split into three items: drop invalid requests,
+  **mark HTTP/0.9 requests as invalid**, **mark CONNECT requests as invalid**
+  (marking without dropping is Partly).
+- New: **management access limited by ACLs**, **geolocation** - only the
+  countries you serve, with the built-in location database (only if you use
+  it), **block TRACE and TRACK**, and **drop extra CRLF and extra data**.
+- The checklist groups are shown in two columns side by side on wide screens.
+
 ## 1.21.0
 - **Search on the Applications tab.** One box searches the applications (LB
   virtual servers) and the services and service groups at once - name, IP,

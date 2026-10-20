@@ -598,6 +598,7 @@
         <div>
           <h2 class="text-lg font-semibold text-white">Activity</h2>
           <p id="secRecv" class="text-xs text-slate-400 mt-1"></p>
+          <div id="secProblems" class="hidden text-xs text-amber-300 mt-2 space-y-1"></div>
         </div>
         <div class="flex gap-1" role="group" aria-label="Time range">
           <button class="range-btn text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300" data-range="1h" onclick="setSecRange('1h')">1 hour</button>
@@ -2145,7 +2146,7 @@ function renderChecklist() {
     $('secChecklist').innerHTML = groups.map(g => `
         <div>
           <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">${escapeHtml(g.name)}</div>
-          <div class="space-y-2">${g.items.map(([c, i]) => secRow(c, i)).join('')}</div>
+          <div class="grid grid-cols-1 xl:grid-cols-2 gap-2">${g.items.map(([c, i]) => secRow(c, i)).join('')}</div>
         </div>`).join('');
 }
 
@@ -2156,14 +2157,14 @@ function secRow(c, i) {
     const dot = mark === 'done' && c.status !== 'configured' ? 'bg-emerald-500/20 text-emerald-300' : st.dot;
     const icon = mark === 'irrelevant' ? '–' : (mark === 'done' ? '✓' : st.icon);
     const evidence = (c.evidence || [])[0] || '';
-    return `<div class="sec-row ${dim} flex flex-wrap md:flex-nowrap items-center gap-4 p-3 rounded-xl bg-slate-900/40 border border-slate-700/50 cursor-pointer" tabindex="0" role="button" aria-label="${escapeHtml(c.title)}: details" onclick="openCheck(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openCheck(${i})}">
+    return `<div class="sec-row ${dim} flex flex-wrap items-center gap-x-4 gap-y-2 p-3 rounded-xl bg-slate-900/40 border border-slate-700/50 cursor-pointer" tabindex="0" role="button" aria-label="${escapeHtml(c.title)}: details" onclick="openCheck(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openCheck(${i})}">
         <span class="sec-dot ${dot} shrink-0" aria-hidden="true">${icon}</span>
         <div class="flex-1 min-w-[14rem]">
           <div class="text-white font-medium">${escapeHtml(c.title)}${c.optional ? ' <span class="text-[10px] text-slate-500 font-normal ml-1">only if you use it</span>' : ''}</div>
           <div class="text-xs text-slate-400">${escapeHtml(c.summary)}</div>
-          ${evidence ? `<div class="text-[11px] text-slate-500 mt-1 truncate max-w-[52rem]" title="${escapeHtml(evidence)}">${escapeHtml(evidence)}</div>` : ''}
+          ${evidence ? `<div class="text-[11px] text-slate-500 mt-1 line-clamp-2 break-words" title="${escapeHtml(evidence)}">${escapeHtml(evidence)}</div>` : ''}
         </div>
-        <div class="flex items-center gap-2 shrink-0" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">
+        <div class="flex items-center gap-2 shrink-0 ml-auto" onclick="event.stopPropagation()" onkeydown="event.stopPropagation()">
           <span class="badge ${st.badge}" title="Detected on the appliance">${st.label}</span>
           <button class="mark-btn ${mark === 'done' ? 'on-done' : ''}" aria-pressed="${mark === 'done'}" onclick="setMark(${i}, '${mark === 'done' ? '' : 'done'}')">Done</button>
           <button class="mark-btn ${mark === 'irrelevant' ? 'on-irrelevant' : ''}" aria-pressed="${mark === 'irrelevant'}" onclick="setMark(${i}, '${mark === 'irrelevant' ? '' : 'irrelevant'}')">Not relevant</button>
@@ -2311,6 +2312,14 @@ async function loadSecActivity() {
     recv += from.length ? `Last log from this instance ${secAgo(Math.max(...from.map(([, v]) => v.last)))}.`
                         : `Nothing received from this instance yet - see "Send logs to this dashboard" above; until then the last 256 audit lines are read every ${a.poll_secs || 60} s.`;
     if ((rc.rejected || []).length) recv += ` Refused from ${rc.rejected.slice(0, 3).map(x => x.sender).join(', ')} (not a configured node address).`;
+    const problems = [];
+    Object.entries(a.poll || {}).forEach(([ip, p]) => {
+        if (p.audit_error) problems.push(`${ip}: the audit log could not be read - ${p.audit_error}.`
+            + (/authori|permission|insufficient|not allowed/i.test(p.audit_error) ? ` The NITRO user needs "show audit messages" (see the dedicated user in the documentation).` : ''));
+        if ((p.denied || []).length) problems.push(`${ip}: the NITRO user may not read ${p.denied.length} object(s) (${p.denied.slice(0, 4).join(', ')}${p.denied.length > 4 ? ', ...' : ''}), so some checklist items cannot be checked.`);
+    });
+    $('secProblems').innerHTML = problems.map(x => `<div>\u26A0 ${escapeHtml(x)}</div>`).join('');
+    $('secProblems').classList.toggle('hidden', !problems.length);
     if (rc.queue_dropped) recv += ` ${rc.queue_dropped} event(s) dropped because they arrived faster than they could be stored.`;
     $('secRecv').textContent = recv;
     renderSecCharts(a);

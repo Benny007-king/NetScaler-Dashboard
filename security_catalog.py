@@ -367,15 +367,42 @@ CHECKS += [
         "id": "http_invalid",
         "group": "Gateway settings",
         "title": "Drop invalid HTTP requests",
-        "summary": "Malformed requests, HTTP/0.9 and CONNECT requests are dropped by the default HTTP profile.",
+        "summary": "Requests that do not follow the HTTP standard are dropped by the default HTTP profile.",
         "about": (
-            "Requests that do not follow the HTTP standard are a common way to smuggle requests past inspection "
-            "(request smuggling) or to probe for parser flaws. The default HTTP profile can drop them, mark HTTP/0.9 "
-            "requests as invalid, and treat CONNECT requests as invalid."),
+            "Requests that break the HTTP standard are a common way to smuggle requests past inspection (request "
+            "smuggling) or to probe for parser flaws. With dropInvalReqs the appliance drops them instead of passing "
+            "them on."),
         "notes": ["An HTTP profile bound to a virtual server overrides the default profile for it."],
         "variants": [{"label": "All versions", "commands": [
-            ("Default HTTP profile", r"set ns httpProfile nshttp_default_profile -dropInvalReqs ENABLED -markHttp09Inval ENABLED -markConnReqInval ENABLED")]}],
+            ("Default HTTP profile", "set ns httpProfile nshttp_default_profile -dropInvalReqs ENABLED")]}],
         "detect": "http_invalid",
+    },
+    {
+        "id": "http09",
+        "group": "Gateway settings",
+        "title": "Mark HTTP/0.9 requests as invalid",
+        "summary": "HTTP/0.9 requests (no version, no headers) count as invalid.",
+        "about": (
+            "HTTP/0.9 has no headers and no version, so nothing in the request can be checked - no browser has sent "
+            "one for decades, but scanners and smuggling attempts do. Marked invalid, they are dropped together with "
+            "the other invalid requests."),
+        "notes": ["Takes effect with 'Drop invalid HTTP requests' - marking alone does not drop them."],
+        "variants": [{"label": "All versions", "commands": [
+            ("Default HTTP profile", "set ns httpProfile nshttp_default_profile -markHttp09Inval ENABLED")]}],
+        "detect": "http09",
+    },
+    {
+        "id": "http_connect",
+        "group": "Gateway settings",
+        "title": "Mark CONNECT requests as invalid",
+        "summary": "HTTP CONNECT (proxy tunnel) requests count as invalid.",
+        "about": (
+            "CONNECT asks a proxy to open a tunnel to another host. A Gateway is not a forward proxy, so a CONNECT "
+            "request is somebody trying to use it as one - to reach internal hosts or to hide where traffic goes."),
+        "notes": ["Takes effect with 'Drop invalid HTTP requests'."],
+        "variants": [{"label": "All versions", "commands": [
+            ("Default HTTP profile", "set ns httpProfile nshttp_default_profile -markConnReqInval ENABLED")]}],
+        "detect": "http_connect",
     },
     {
         "id": "auth_feedback",
@@ -569,31 +596,27 @@ CHECKS += [
         "detect": "mgmt_timeout",
     },
     {
-        "id": "snmp_community",
+        "id": "snmp_v3",
         "group": "Management and platform",
-        "title": "No default SNMP community",
-        "summary": "No SNMP community called 'public' or 'private'.",
+        "title": "SNMP v3 only",
+        "summary": "No SNMP v1/v2c communities or traps; monitoring uses SNMPv3 users with authentication and encryption.",
         "about": (
-            "'public' and 'private' are the first community strings anyone tries; SNMP v1/v2c sends them in clear "
-            "text and they give read (or write) access to the appliance's configuration and counters. Use SNMPv3 "
-            "with users, or at least a community string nobody can guess, limited to the monitoring hosts."),
-        "notes": [],
+            "SNMP v1 and v2c authenticate with a community string sent in clear text, and give read (or write) access "
+            "to the appliance's configuration and counters to anyone who sees it. SNMPv3 users authenticate every "
+            "request (SHA) and encrypt it (AES), so the monitoring traffic can neither be read nor forged."),
+        "notes": [
+            "Remove each community the appliance has (the dashboard lists them), and move traps to version 3.",
+            "Without any SNMPv3 user the appliance simply is not monitored over SNMP - that also counts as in place.",
+            "Give the monitoring system the same user, authentication and privacy passwords.",
+        ],
         "variants": [{"label": "All versions", "commands": [
-            ("Remove the default communities", "rm snmp community public\nrm snmp community private")]}],
-        "detect": "snmp_community",
-    },
-    {
-        "id": "config_saved",
-        "group": "Management and platform",
-        "title": "Running configuration is saved",
-        "summary": "No changes that would be lost at the next restart.",
-        "about": (
-            "Changes made on the CLI, the GUI or over NITRO live only in memory until they are saved. A hardening "
-            "change that is not saved is gone after a reboot or a failover to a node that restarts, and an attacker's "
-            "change that is not saved is easy to miss."),
-        "notes": [],
-        "variants": [{"label": "All versions", "commands": [("Save", "save ns config")]}],
-        "detect": "config_saved",
+            ("Remove the v1/v2c communities", "rm snmp community <COMMUNITY>"),
+            ("An SNMPv3 user with authentication and encryption", "add snmp view SNMPv3_All_View 1 -type included\n"
+             "add snmp group SNMPv3_Group authPriv -readViewName SNMPv3_All_View\n"
+             "add snmp user <SNMP_USER> -group SNMPv3_Group -authType SHA -authPasswd <AUTH_PASSWORD> -privType AES -privPasswd <PRIV_PASSWORD>"),
+            ("Traps over SNMPv3", "add snmp trap specific <TRAP_DESTINATION> -version V3 -userName <SNMP_USER>"),
+        ]}],
+        "detect": "snmp_v3",
     },
     {
         "id": "rpc_nodes",
@@ -626,6 +649,95 @@ CHECKS += [
         "variants": [{"label": "All versions", "commands": [
             ("A named administrator", "add system user <ADMIN_NAME> <PASSWORD>\nbind system user <ADMIN_NAME> superuser 100")]}],
         "detect": "admin_accounts",
+    },
+]
+CHECKS.sort(key=lambda c: GROUP_ORDER.index(c["group"]))
+
+
+# ------------------------------------------------------------ added in 1.22.0
+CHECKS += [
+    {
+        "id": "http_extra",
+        "group": "Gateway settings",
+        "title": "Drop extra CRLF and extra data",
+        "summary": "Stray line breaks between requests, and response data beyond Content-Length, are dropped.",
+        "about": (
+            "Extra CRLF between pipelined requests and response bodies longer than their Content-Length are the raw "
+            "material of request smuggling and response splitting: they make the appliance and the server disagree "
+            "on where one message ends and the next begins."),
+        "notes": ["An HTTP profile bound to a virtual server overrides the default profile for it."],
+        "variants": [{"label": "All versions", "commands": [
+            ("Default HTTP profile", "set ns httpProfile nshttp_default_profile -dropExtraCRLF ENABLED -dropExtraData ENABLED")]}],
+        "detect": "http_extra",
+    },
+    {
+        "id": "trace_track",
+        "group": "Gateway protection policies",
+        "title": "Block TRACE and TRACK requests",
+        "summary": "HTTP TRACE and TRACK requests are dropped before they reach anything.",
+        "about": (
+            "TRACE and TRACK echo the request back, headers included - with a cross-site scripting flaw that is a "
+            "way to read cookies marked HttpOnly (cross-site tracing). Nothing behind a Gateway needs them."),
+        "notes": [],
+        "variants": [{"label": "All versions", "commands": [
+            ("Responder policy, bound globally", "add responder policy Block_TRACE_TRACK_Policy \"HTTP.REQ.FULL_HEADER.STARTSWITH(\\\"TRACE \\\") || HTTP.REQ.FULL_HEADER.STARTSWITH(\\\"TRACK \\\")\" DROP\n"
+             "bind responder global Block_TRACE_TRACK_Policy 110 END -type REQ_DEFAULT")]}],
+        "policies": ["Block_TRACE_TRACK_Policy"],
+        "signatures": [["trace", "track"]],
+        "detect": "responder",
+    },
+    {
+        "id": "geo_block",
+        "group": "Gateway protection policies",
+        "title": "Allow only the countries you serve (geolocation)",
+        "summary": "Requests from countries outside an allowed list are dropped before the login page.",
+        "about": (
+            "Most password spraying and scanning against a Gateway comes from countries its users never connect "
+            "from. With the location database NetScaler ships, a responder policy drops every request whose source "
+            "address is not in the allowed countries - internal networks excepted, since private addresses have "
+            "no location."),
+        "notes": [
+            "Only if your users connect from known countries - otherwise mark it 'Not relevant'.",
+            "Add a country with another MATCHES_LOCATION(...) condition joined by ||, and keep your internal "
+            "networks in the IN_SUBNET exception (more than one: join them with ||).",
+            "Travelling users are refused in other countries; a VPN egress in an allowed country gets through.",
+        ],
+        "variants": [{"label": "All versions", "commands": [
+            ("The built-in location database", "add locationFile /var/netscaler/inbuilt_db/Citrix_Netscaler_InBuilt_GeoIP_DB_IPv4 -format netscaler"),
+            ("Responder policy (country codes as in IL, US, DE)",
+             "add responder policy Geo_Allowed_Countries_Policy \"CLIENT.IP.SRC.MATCHES_LOCATION(\\\"*.<COUNTRY_CODE>.*.*.*.*\\\").NOT && CLIENT.IP.SRC.IN_SUBNET(<INTERNAL_NETWORK>).NOT\" DROP"),
+            ("Bind to the Gateway (AAA request)",
+             "bind vpn vserver <GATEWAY_VSERVER> -policy Geo_Allowed_Countries_Policy -priority 90 -gotoPriorityExpression END -type AAA_REQUEST"),
+        ]}],
+        "policies": ["Geo_Allowed_Countries_Policy"],
+        "signatures": [["matches_location"]],
+        "detect": "geo",
+        "optional": True,
+    },
+    {
+        "id": "mgmt_acl",
+        "group": "Management and platform",
+        "title": "Management access limited by ACLs",
+        "summary": "Only the administrators' networks (and this dashboard) can reach the management address.",
+        "about": (
+            "Secure-only HTTPS and strong passwords still let anyone on the network try. Extended ACLs on the "
+            "management address allow the administrators' networks, this dashboard and the HA peer, and deny "
+            "everyone else - the GUI, NITRO and SSH are then unreachable from anywhere else."),
+        "notes": [
+            "Allow the dashboard and the HA peer, or the dashboard stops reading the node and HA stops synchronising.",
+            "ACLs take effect only after `apply ns acls`. Try it from the console, where a mistake can be undone "
+            "(`rm ns acl Deny_Mgmt_Others` then `apply ns acls`).",
+            "An address range is written as 192.0.2.10-192.0.2.50.",
+        ],
+        "variants": [{"label": "All versions", "commands": [
+            ("Allow the administrators, the dashboard and the HA peer; deny the rest",
+             "add ns acl Allow_Mgmt_Admins ALLOW -srcIP = <ADMIN_NETWORK> -destIP = <NSIP> -priority 10\n"
+             "add ns acl Allow_Mgmt_Dashboard ALLOW -srcIP = <DASHBOARD_ADDRESS> -destIP = <NSIP> -priority 20\n"
+             "add ns acl Allow_Mgmt_HA_Peer ALLOW -srcIP = <PEER_NSIP> -destIP = <NSIP> -priority 30\n"
+             "add ns acl Deny_Mgmt_Others DENY -destIP = <NSIP> -priority 1000\n"
+             "apply ns acls"),
+        ]}],
+        "detect": "mgmt_acl",
     },
 ]
 CHECKS.sort(key=lambda c: GROUP_ORDER.index(c["group"]))

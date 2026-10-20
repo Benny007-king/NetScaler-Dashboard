@@ -68,15 +68,30 @@ facts = security.collect_facts(FakeNitro(True))
 check(security.ns_version(facts) == "14.1-43.56", "version read from nsversion", security.ns_version(facts))
 res = {c["id"]: c for c in security.evaluate(facts, {"node_protocol": "http", "dashboard_addresses": {"192.0.2.200"}})}
 st = {k: v["status"] for k, v in res.items()}
-check(len(res) == len(security.security_catalog.CHECKS) == 32, "32 checklist entries", len(res))
+check(len(res) == len(security.security_catalog.CHECKS) == 37, "37 checklist entries", len(res))
+check("config_saved" not in res and "snmp_community" not in res, "running configuration saved and SNMP community are gone")
+check(st["snmp_v3"] == "configured" and any("monitor (SHA/AES)" in e for e in res["snmp_v3"]["evidence"]),
+      "SNMP v3 only: no communities, a v3 user with SHA and AES, v3 traps", res["snmp_v3"]["evidence"])
+check(st["http_invalid"] == "configured" and st["http09"] == "configured" and st["http_connect"] == "configured"
+      and st["http_extra"] == "configured", "invalid HTTP, HTTP/0.9 and CONNECT as their own items; extra CRLF and data",
+      {k: st[k] for k in ("http_invalid", "http09", "http_connect", "http_extra")})
+check(st["trace_track"] == "configured" and st["geo_block"] == "configured"
+      and any("Location database" in e for e in res["geo_block"]["evidence"]), "TRACE/TRACK block and geolocation policy",
+      (res["trace_track"]["evidence"], res["geo_block"]["evidence"]))
+check(st["mgmt_acl"] == "configured", "ACLs: allow the admins, deny the rest, applied", res["mgmt_acl"]["evidence"])
+nodeny = {c["id"]: c for c in security.evaluate(dict(facts, ns_acl=[a for a in facts["ns_acl"] if a["aclaction"] == "ALLOW"]), {})}
+check(nodeny["mgmt_acl"]["status"] == "partial", "ACLs that only allow do not protect anything", nodeny["mgmt_acl"]["evidence"])
+nofile = {c["id"]: c["status"] for c in security.evaluate(dict(facts, location_file=[]), {})}
+check(nofile["geo_block"] == "partial", "a geolocation policy without a location database is Partly")
+only09 = {c["id"]: c["status"] for c in security.evaluate(dict(facts, http_profile=[dict(facts["http_profile"][0], dropinvalreqs="DISABLED")]), {})}
+check(only09["http09"] == "partial" and only09["http_invalid"] == "missing", "marking without dropping is Partly")
 check(st["ciphers"] == "configured" and "Gateway_Strong_Ciphers" in res["ciphers"]["evidence"][0],
       "ciphers read from the SSL profile, the cipher group opened", res["ciphers"]["evidence"])
 check(st["gw_timeouts"] == "configured" and st["login_lockout"] == "configured" and st["clientless_off"] == "configured"
-      and st["mgmt_timeout"] == "configured" and st["snmp_community"] == "configured" and st["config_saved"] == "configured"
+      and st["mgmt_timeout"] == "configured"
       and st["rpc_nodes"] == "configured" and st["admin_accounts"] == "configured",
-      "timeouts, lockout, clientless off, management timeout, SNMP, saved config, RPC, named admins",
-      {k: st[k] for k in ("gw_timeouts", "login_lockout", "clientless_off", "mgmt_timeout", "snmp_community", "config_saved",
-                           "rpc_nodes", "admin_accounts")})
+      "timeouts, lockout, clientless off, management timeout, RPC, named admins",
+      {k: st[k] for k in ("gw_timeouts", "login_lockout", "clientless_off", "mgmt_timeout", "rpc_nodes", "admin_accounts")})
 check(any("cannot be read" in e for e in res["rpc_nodes"]["evidence"]), "RPC: the password cannot be checked, and it says so")
 check([c["group"] for c in security.security_catalog.CHECKS] == sorted((c["group"] for c in security.security_catalog.CHECKS),
       key=security.security_catalog.GROUP_ORDER.index), "entries in group order")
@@ -84,7 +99,6 @@ check(st["tls_versions"] == "configured" and "profile Gateway_SSL" in res["tls_v
       "TLS versions read from the bound SSL profile, not the virtual server's own settings", res["tls_versions"]["evidence"])
 check(st["hsts"] == "configured" and st["ssl_reneg"] == "configured" and st["auth_feedback"] == "configured",
       "HSTS (from the profile), secure renegotiation, auth feedback off")
-check(st["http_invalid"] == "partial", "invalid HTTP: CONNECT not marked -> partial", res["http_invalid"]["evidence"])
 check(st["mgmt_restrict"] == "configured" and st["mgmt_services"] == "configured" and st["sys_passwords"] == "configured"
       and st["ntp"] == "configured", "restrict access, Telnet/FTP off, strong passwords, NTP")
 check(st["firmware"] == "missing" and "14.1-47.48" in res["firmware"]["evidence"][0], "14.1-43.56 is older than the 2025 fixes",
@@ -129,7 +143,9 @@ check(empty["login_audit"] == "missing" and empty["waf"] == "partial" and empty[
       and empty["tls_versions"] == "missing" and empty["ssl_reneg"] == "missing" and empty["mgmt_services"] == "missing"
       and empty["sys_passwords"] == "missing" and empty["ntp"] == "missing" and empty["auth_feedback"] == "missing"
       and empty["ciphers"] == "missing" and empty["gw_timeouts"] == "partial" and empty["login_lockout"] == "missing"
-      and empty["clientless_off"] == "missing" and empty["snmp_community"] == "missing" and empty["config_saved"] == "missing"
+      and empty["clientless_off"] == "missing" and empty["snmp_v3"] == "missing" and empty["mgmt_acl"] == "missing"
+      and empty["http09"] == "missing" and empty["http_connect"] == "missing" and empty["http_extra"] == "missing"
+      and empty["trace_track"] == "missing" and empty["geo_block"] == "missing"
       and empty["rpc_nodes"] == "missing" and empty["admin_accounts"] == "missing" and empty["mgmt_timeout"] == "missing",
       "an appliance with nothing in place", empty)
 down = security.evaluate(security.collect_facts(FakeNitro(down=True)), {})
@@ -153,7 +169,7 @@ with c.session_transaction() as s:
 
 r = c.get("/api/security/checklist")
 j = r.get_json()
-check(r.status_code == 200 and len(j["checks"]) == 32 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["Exchange_OWA_LB", "Intranet_HTTP_LB", "StoreFront_LB"],
+check(r.status_code == 200 and len(j["checks"]) == 37 and j["vservers"] == ["GW_VS"] and j["portal_vservers"] == ["Exchange_OWA_LB", "Intranet_HTTP_LB", "StoreFront_LB"],
       "checklist endpoint: entries and the virtual servers for the commands", r.status_code)
 r = c.post("/api/security/mark", json={"id": "epa_referer", "state": "irrelevant"})
 r2 = c.post("/api/security/mark", json={"id": "saml_protection", "state": "done"})
@@ -191,6 +207,23 @@ check(r.status_code == 200 and {e["kind"] for e in ev} == {"waf", "brute_force",
 check(len(c.get("/api/security/events?range=24h&q=doAuthentication").get_json()["events"]) == 2, "events can be searched")
 check(len(c.get("/api/security/events?range=24h&kind=waf").get_json()["events"]) == 1, "events can be filtered by kind")
 check(c.get("/api/security/events?range=24h&q=%25").status_code == 200, "a search for % is harmless")
+
+print("-- a NITRO user with the built-in read-only policy")
+fake.denied = {"auditmessages", "systemuser", "systemparameter"}
+security.poll_once(dash._security_targets, dash._security_facts)
+j = c.get("/api/security/activity?range=24h").get_json()
+pl = j.get("poll", {}).get(NSIP, {})
+check("Not authorized" in pl.get("audit_error", "") and set(pl.get("denied", [])) >= {"sys_param", "sys_user"},
+      "the activity says the audit log was refused, and which objects", pl)
+ch = {x["id"]: x for x in c.get("/api/security/checklist?fresh=1").get_json()["checks"]}
+check(ch["sys_passwords"]["status"] == "unknown" and "Not authorized" in ch["sys_passwords"]["evidence"][0],
+      "a checklist item that may not be read says why", ch["sys_passwords"]["evidence"])
+fake.denied = set()
+security.poll_once(dash._security_targets, dash._security_facts)
+pl = c.get("/api/security/activity?range=24h").get_json().get("poll", {}).get(NSIP, {})
+check(pl.get("audit_error") == "" and pl.get("audit") == len(audit_lines()) and not pl.get("denied"),
+      "with the rights back, the audit log is read again", pl)
+security.collect_facts(fake, cache_key=(iid, "primary"), fresh=True)
 
 print("-- sessions")
 r = c.get("/api/user-sessions")
@@ -256,6 +289,12 @@ sk.bind(("127.0.0.1", 0))
 port = sk.getsockname()[1]
 sk.close()
 security.SYSLOG_PORT = security.receiver.port = port
+# let what the poll passes above queued reach the store first
+for _ in range(50):
+    if security.ingest.q.empty():
+        break
+    time.sleep(0.1)
+time.sleep(1.5)
 stored = []
 security.ingest.start(lambda batch: stored.extend(batch))
 security.ingest.store = lambda batch: stored.extend(batch)

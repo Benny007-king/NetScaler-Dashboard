@@ -52,12 +52,18 @@ class FakeNitro:
         self.configured, self.down, self.calls = configured, down, []
         self.extra_hits = 0
         self.lic_mode, self.lic_days, self.grace, self.grace_hours = "LAS (Fixed Bandwidth)", 21, 0, 0
+        self.denied = set()                # resources the NITRO user is not allowed to read (like the read-only policy)
 
     def _get(self, path, custom_timeout=None):
         self.calls.append(path)
         if self.down:
             raise requests.ConnectionError("node down")
         name = self.resource(path)
+        if name in self.denied:
+            r = requests.Response()
+            r.status_code = 400
+            r._content = b'{"errorcode": 1045, "message": "Not authorized to execute this command", "severity": "ERROR"}'
+            raise requests.HTTPError("400 Client Error: Bad Request", response=r)
         data = self.data()
         if name not in data:
             r = requests.Response()
@@ -82,11 +88,16 @@ class FakeNitro:
              "action": "DROP", "logaction": "Possible_Brute_Force_Login_Attack_Message_Action", "hits": str(7 + x // 3)},
             {"name": "My_Hijack_Guard", "rule": "AAA.USER.NAME.LENGTH.NE(0) && AAA.USER.SOURCEIP.NE(CLIENT.IP.SRC)", "action": "RESET", "hits": str(2 + x // 10)},
             {"name": "Drop_Malicious_IP", "rule": "CLIENT.IP.SRC.IPREP_IS_MALICIOUS", "action": "DROP", "hits": "0"},
+            {"name": "Block_TRACE_TRACK_Policy", "rule": 'HTTP.REQ.FULL_HEADER.STARTSWITH("TRACE ") || HTTP.REQ.FULL_HEADER.STARTSWITH("TRACK ")',
+             "action": "DROP", "hits": "3"},
+            {"name": "Geo_Allowed_Countries_Policy", "rule": 'CLIENT.IP.SRC.MATCHES_LOCATION("*.IL.*.*.*.*").NOT && CLIENT.IP.SRC.IN_SUBNET(192.0.2.0/24).NOT',
+             "action": "DROP", "hits": "41"},
             {"name": "unrelated", "rule": "true", "action": "NOOP", "hits": "5"},
         ] if c else [{"name": "unrelated", "rule": "true", "action": "NOOP", "hits": "5"}]
         bind = [{"name": n, "responderpolicy_vpnvserver_binding": [{"name": n, "boundto": "GW_VS", "priority": p, "activepolicy": "1"}]}
                 for n, p in (("Gateway_Login_Attempt_Audit_Responder_Policy", 110), ("ICA_Gateway_Login_Audit_Responder_Policy", 120),
-                             ("Error_Login_Block_Responder_Policy", 130), ("My_Hijack_Guard", 140))] if c else []
+                             ("Error_Login_Block_Responder_Policy", 130), ("My_Hijack_Guard", 140),
+                             ("Block_TRACE_TRACK_Policy", 110), ("Geo_Allowed_Countries_Policy", 90))] if c else []
         return {
             "nsversion": {"version": "NetScaler NS14.1: Build 43.56.nc, Date: Jun 1 2026"},
             "nsfeature": {"rep": False, "appfw": True, "responder": True, "rewrite": True},
@@ -121,13 +132,21 @@ class FakeNitro:
                             "tls13": "ENABLED", "hsts": "ENABLED", "maxage": 31536000}] if c else [],
             "sslparameter": {"denysslreneg": "NONSECURE" if c else "NO", "defaultprofile": "DISABLED"},
             "nshttpprofile": [{"name": "nshttp_default_profile", "dropinvalreqs": "ENABLED" if c else "DISABLED",
-                               "markhttp09inval": "ENABLED" if c else "DISABLED", "markconnreqinval": "DISABLED"}],
+                               "markhttp09inval": "ENABLED" if c else "DISABLED", "markconnreqinval": "ENABLED" if c else "DISABLED",
+                               "dropextracrlf": "ENABLED" if c else "DISABLED", "dropextradata": "ENABLED" if c else "DISABLED"}],
             "systemparameter": {"strongpassword": "enableall" if c else "disabled", "minpasswordlen": 8 if c else 4,
                                 "forcepasswordchange": "ENABLED" if c else "DISABLED", "timeout": 600 if c else 0},
             "ntpserver": [{"serverip": "192.0.2.123"}] if c else [],
             "ntpsync": {"state": "ENABLED" if c else "DISABLED"},
             "vpnparameter": {"sesstimeout": 30, "forcedtimeout": 720 if c else 0, "clientlessvpnmode": "OFF" if c else "ON"},
-            "snmpcommunity": [{"communityname": "nsd-monitor-7Qx"}] if c else [{"communityname": "public"}],
+            "snmpcommunity": [] if c else [{"communityname": "public"}],
+            "snmpuser": [{"name": "monitor", "group": "SNMPv3_Group", "authtype": "SHA", "privtype": "AES"}] if c else [],
+            "snmptrap": [{"trapclass": "specific", "trapdestination": "192.0.2.60", "version": "V3" if c else "V2"}],
+            "nsacl": [{"aclname": "Allow_Mgmt_Admins", "aclaction": "ALLOW", "srcipval": "192.0.2.50-192.0.2.60",
+                       "destipval": NSIP, "priority": 10, "kernelstate": "APPLIED", "state": "ENABLED"},
+                      {"aclname": "Deny_Mgmt_Others", "aclaction": "DENY", "destipval": NSIP, "priority": 1000,
+                       "kernelstate": "APPLIED", "state": "ENABLED"}] if c else [],
+            "locationfile": [{"Locationfile": "/var/netscaler/inbuilt_db/Citrix_Netscaler_InBuilt_GeoIP_DB_IPv4", "format": "netscaler"}] if c else [],
             "nsconfig": {"configchanged": False if c else True, "lastconfigsavetime": "Thu Oct 16 08:00:00 2026"},
             "nsrpcnode": [{"ipaddress": NSIP, "secure": "YES" if c else "NO"}],
             "sslprofile_sslcipher_binding": [{"cipheraliasname": "Gateway_Strong_Ciphers"}] if c else [],
@@ -308,8 +327,13 @@ def serve(port, syslog_target=None):
                 return self._send({"error": "not found"}, 404)
             try:
                 self._send(fake._get(self.path[len("/nitro/v1"):]))
-            except requests.HTTPError:
-                self._send({"errorcode": 344, "message": "No such resource", "severity": "ERROR"}, 404)
+            except requests.HTTPError as e:
+                resp = e.response
+                try:
+                    body = resp.json()
+                except Exception:
+                    body = {"errorcode": 344, "message": "No such resource", "severity": "ERROR"}
+                self._send(body, resp.status_code if resp is not None and resp.status_code else 404)
 
         def do_POST(self):
             self.rfile.read(int(self.headers.get("Content-Length") or 0))

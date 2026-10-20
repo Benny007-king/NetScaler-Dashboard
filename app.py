@@ -3322,9 +3322,10 @@ def _security_targets():
 def _security_facts(iid, nk, ip, nitro):
     facts = security.collect_facts(nitro, cache_key=(iid, nk), fresh=True)
     if len(facts.get('errors', {})) >= len(security._FACT_SOURCES):
-        return                                   # not reachable this time
+        return facts.get('errors', {})          # not reachable this time
     checks = security.evaluate(facts, {'dashboard_addresses': _dashboard_addresses()})
     security.series.add(iid, ip, security.sample_counts(checks))
+    return facts.get('errors', {})
 
 def _dashboard_addresses():
     addrs = set(security.own_addresses())
@@ -3458,6 +3459,11 @@ def api_security_activity():
                      'from_this_instance': {ip: v for ip, v in recv['senders'].items() if ip in node_ips},
                      'rejected': recv['rejected'], 'queue_dropped': recv['queue_dropped']},
         'poll_secs': security.POLL_SECS,
+        # what the background read of each node found: the audit log refused, objects not allowed
+        'poll': {ip: {'at': v['at'], 'audit': v['audit'], 'audit_error': v['audit_error'], 'denied': v['denied']}
+                 for (i, ip), v in security.poll_status.items() if i == iid and ip in node_ips},
+        'nitro_user': {n: (get_instance(inst).get(n) or {}).get('username', '') for n in ('primary', 'secondary')
+                       if (get_instance(inst).get(n) or {}).get('ip')},
     })
 
 @app.route('/api/security/events')

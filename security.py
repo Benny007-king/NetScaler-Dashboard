@@ -46,6 +46,26 @@ _FACTS_TTL = 45
 
 
 # ============================================================ small helpers
+def nitro_error(e) -> str:
+    """What the appliance said, not just the HTTP status: NITRO puts the reason
+    (not authorized, no such resource, ...) in the JSON body."""
+    resp = getattr(e, "response", None)
+    if resp is not None:
+        try:
+            body = resp.json()
+            msg = str(body.get("message") or "").strip()
+            if msg:
+                return f"{msg} (NITRO {body.get('errorcode', resp.status_code)})"
+        except Exception:
+            pass
+        return f"HTTP {resp.status_code}"
+    return str(e)[:160]
+
+
+def _denied(err) -> bool:
+    return bool(re.search(r"not authori[sz]ed|permission|insufficient|not allowed|1045|10006", str(err), re.I))
+
+
 def _norm(text) -> str:
     """A policy rule reduced to compare it: lower case, no spaces, plain quotes."""
     return re.sub(r"\s+", "", str(text or "").replace('\\"', '"')).lower()
@@ -104,7 +124,10 @@ _FACT_SOURCES = (
     ("ntp_sync", "/config/ntpsync", "ntpsync"),
     ("vpn_param", "/config/vpnparameter", "vpnparameter"),
     ("snmp_community", "/config/snmpcommunity", "snmpcommunity"),
-    ("ns_config", "/config/nsconfig", "nsconfig"),
+    ("snmp_user", "/config/snmpuser", "snmpuser"),
+    ("snmp_trap", "/config/snmptrap", "snmptrap"),
+    ("ns_acl", "/config/nsacl", "nsacl"),
+    ("location_file", "/config/locationfile", "locationfile"),
     ("rpc_node", "/config/nsrpcnode", "nsrpcnode"),
     ("sys_user", "/config/systemuser", "systemuser"),
 )
@@ -131,7 +154,7 @@ def collect_facts(nitro, cache_key=None, fresh=False) -> dict:
             v = d.get(key) if isinstance(d, dict) else None
             return name, (v if v is not None else []), None
         except Exception as e:
-            return name, None, str(e)[:160]
+            return name, None, nitro_error(e)
 
     facts, errors = {}, {}
     for name, value, err in _pool.map(one, _FACT_SOURCES):
@@ -580,18 +603,113 @@ def detect_ssl_reneg(check, facts, ctx):
     return _result("configured" if good else "missing", [f"ssl parameter denySSLReneg = {v}"])
 
 
-def detect_http_invalid(check, facts, ctx):
+def _http_profile_fields(facts, fields):
     u = _unknown(facts, "http_profile")
     if u:
         return u
     p = _one(facts, "http_profile")
     if not p:
         return _result("unknown", ["nshttp_default_profile was not returned."])
-    fields = (("dropinvalreqs", "drop invalid requests"), ("markhttp09inval", "HTTP/0.9 invalid"),
-              ("markconnreqinval", "CONNECT invalid"))
-    on = [lbl for k, lbl in fields if _yes(p.get(k))]
-    ev = [f"{lbl}: {p.get(k, '?')}" for k, lbl in fields]
-    return _result("configured" if len(on) == 3 else ("partial" if on else "missing"), ev)
+    ev = [f"nshttp_default_profile {lbl} = {p.get(k, '?')}" for k, lbl in fields]
+    on = [k for k, _ in fields if _yes(p.get(k))]
+    return _result("configured" if len(on) == len(fields) else ("partial" if on else "missing"), ev)
+
+
+def detect_http_invalid(check, facts, ctx):
+    return _http_profile_fields(facts, (("dropinvalreqs", "dropInvalReqs"),))
+
+
+def detect_http09(check, facts, ctx):
+    r = _http_profile_fields(facts, (("markhttp09inval", "markHttp09Inval"),))
+    if r["status"] == "configured" and not _yes(_one(facts, "http_profile").get("dropinvalreqs")):
+        r["status"] = "partial"
+        r["evidence"].append("Invalid requests are not dropped (dropInvalReqs), so marking them changes nothing.")
+    return r
+
+
+def detect_http_connect(check, facts, ctx):
+    r = _http_profile_fields(facts, (("markconnreqinval", "markConnReqInval"),))
+    if r["status"] == "configured" and not _yes(_one(facts, "http_profile").get("dropinvalreqs")):
+        r["status"] = "partial"
+        r["evidence"].append("Invalid requests are not dropped (dropInvalReqs), so marking them changes nothing.")
+    return r
+
+
+def detect_http_extra(check, facts, ctx):
+    return _http_profile_fields(facts, (("dropextracrlf", "dropExtraCRLF"), ("dropextradata", "dropExtraData")))
+
+
+def detect_snmp_v3(check, facts, ctx):
+    u = _unknown(facts, "snmp_community")
+    if u:
+        return u
+    comm = [str(x.get("communityname") or "") for x in facts.get("snmp_community") or [] if isinstance(x, dict)]
+    users = [x for x in facts.get("snmp_user") or [] if isinstance(x, dict)]
+    traps = [x for x in facts.get("snmp_trap") or [] if isinstance(x, dict)]
+    old_traps = [f"{t.get('trapdestination')} ({t.get('version')})" for t in traps
+                 if str(t.get("version") or "").upper() in ("V1", "V2")]
+    weak_users = [str(x.get("name")) for x in users
+                  if str(x.get("privtype") or "").upper() in ("", "NONE") or str(x.get("authtype") or "").upper() in ("", "NONE")]
+    ev = ["v1/v2c communities: " + (", ".join(comm) if comm else "none"),
+          "SNMPv3 users: " + (", ".join(f"{x.get('name')} ({x.get('authtype') or 'no auth'}/{x.get('privtype') or 'no privacy'})"
+                                        for x in users) if users else "none")]
+    if old_traps:
+        ev.append("v1/v2c traps: " + ", ".join(old_traps))
+    if comm:
+        return _result("missing", ev)
+    if old_traps or weak_users:
+        if weak_users:
+            ev.append("Without authentication and encryption: " + ", ".join(weak_users))
+        return _result("partial", ev)
+    if not users:
+        ev.append("SNMP is not used on this node.")
+    return _result("configured", ev)
+
+
+def detect_geo(check, facts, ctx):
+    r = _detect_responder(check, facts)
+    files = [str(x.get("Locationfile") or x.get("locationfile") or "") for x in facts.get("location_file") or []
+             if isinstance(x, dict)]
+    if r["status"] in ("configured", "partial") and "location_file" not in facts.get("errors", {}) and not any(files):
+        r["status"] = "partial"
+        r["evidence"].append("No location database is loaded (add locationFile), so locations never match.")
+    elif any(files):
+        r["evidence"].append("Location database: " + ", ".join(f for f in files if f))
+    return r
+
+
+def detect_mgmt_acl(check, facts, ctx):
+    u = _unknown(facts, "ns_acl", "nsip")
+    if u:
+        return u
+    acls = [x for x in facts.get("ns_acl") or [] if isinstance(x, dict)]
+    nsips = {str(x.get("ipaddress")) for x in _mgmt_ips(facts)}
+    if not acls:
+        return _result("missing", ["No extended ACLs on this node: every address can reach the management address."])
+
+    def to_mgmt(a):
+        dest = str(a.get("destipval") or "")
+        if not dest:
+            return True                                   # no destination: it applies to every address
+        lo, _, hi = dest.partition("-")
+        try:
+            import ipaddress as _ip
+            lo_a, hi_a = _ip.ip_address(lo.strip()), _ip.ip_address((hi or lo).strip())
+            return any(lo_a <= _ip.ip_address(n) <= hi_a for n in nsips if valid_ip(n))
+        except ValueError:
+            return dest in nsips
+
+    applied = lambda a: str(a.get("kernelstate") or "APPLIED").upper() in ("APPLIED", "") and \
+        str(a.get("state") or "ENABLED").upper() == "ENABLED"
+    deny = [a for a in acls if str(a.get("aclaction") or "").upper() == "DENY" and to_mgmt(a)]
+    allow = [a for a in acls if str(a.get("aclaction") or "").upper() == "ALLOW" and to_mgmt(a)]
+    ev = [f"{a.get('aclname')}: {a.get('aclaction')} {a.get('srcipval') or 'any'} -> {a.get('destipval') or 'any'}"
+          f" #{a.get('priority', '?')}, {a.get('kernelstate', '?')}" for a in sorted(acls, key=lambda a: _int(a.get("priority")))][:10]
+    if deny and all(applied(a) for a in deny) and allow:
+        return _result("configured", ev)
+    if deny and not all(applied(a) for a in deny):
+        return _result("partial", ev + ["A deny ACL is not applied yet (apply ns acls)."])
+    return _result("partial", ev + ["No applied ACL denies other addresses access to the management address."])
 
 
 def detect_auth_feedback(check, facts, ctx):
@@ -780,30 +898,6 @@ def detect_mgmt_timeout(check, facts, ctx):
     return _result("configured" if 0 < t <= 900 else ("partial" if t > 900 else "missing"), ev)
 
 
-def detect_snmp_community(check, facts, ctx):
-    u = _unknown(facts, "snmp_community")
-    if u:
-        return u
-    names = [str(x.get("communityname") or "") for x in facts.get("snmp_community") or [] if isinstance(x, dict)]
-    bad = [n for n in names if n.lower() in ("public", "private")]
-    ev = ["SNMP communities: " + (", ".join(names) if names else "none")]
-    return _result("missing" if bad else "configured", ev + ([f"Default name(s): {', '.join(bad)}"] if bad else []))
-
-
-def detect_config_saved(check, facts, ctx):
-    u = _unknown(facts, "ns_config")
-    if u:
-        return u
-    p = _one(facts, "ns_config")
-    if "configchanged" not in p:
-        return _result("unknown", ["The appliance did not say whether the configuration changed."])
-    changed = str(p.get("configchanged")).lower() in ("true", "1", "yes")
-    ev = ["Unsaved changes" if changed else "No unsaved changes"]
-    if p.get("lastconfigsavetime"):
-        ev.append(f"Last saved: {p.get('lastconfigsavetime')}")
-    return _result("missing" if changed else "configured", ev)
-
-
 def detect_rpc_nodes(check, facts, ctx):
     u = _unknown(facts, "rpc_node")
     if u:
@@ -838,7 +932,8 @@ DETECTORS = {
     "mgmt_services": detect_mgmt_services, "sys_passwords": detect_sys_passwords, "ntp": detect_ntp,
     "firmware": detect_firmware, "ciphers": detect_ciphers, "gw_timeouts": detect_gw_timeouts,
     "login_lockout": detect_login_lockout, "clientless_off": detect_clientless_off, "mgmt_timeout": detect_mgmt_timeout,
-    "snmp_community": detect_snmp_community, "config_saved": detect_config_saved, "rpc_nodes": detect_rpc_nodes,
+    "snmp_v3": detect_snmp_v3, "rpc_nodes": detect_rpc_nodes, "http09": detect_http09,
+    "http_connect": detect_http_connect, "http_extra": detect_http_extra, "geo": detect_geo, "mgmt_acl": detect_mgmt_acl,
     "admin_accounts": detect_admin_accounts,
 }
 
@@ -1381,6 +1476,9 @@ def sample_counts(checks) -> dict:
     return vals
 
 
+poll_status = {}                   # (instance, node ip) -> {'at', 'audit', 'audit_error', 'denied', 'facts_errors'}
+
+
 def read_audit_messages(nitro):
     """The appliance's own recent audit lines (at most 256)."""
     d = nitro._get("/config/auditmessages?args=loglevel:ALL,numofmesgs:256", custom_timeout=8) or {}
@@ -1397,24 +1495,37 @@ def start_poller(targets, on_facts):
         time.sleep(15)
         while True:
             start = time.time()
-            try:
-                for inst, node_key, ip, nitro in targets():
-                    try:
-                        for line in read_audit_messages(nitro):
-                            ev = parse_line(line, time.time())
-                            if ev is not None:
-                                ingest.put(make_row(ev, inst, ip))
-                    except Exception as e:
-                        logger.debug(f"audit messages from {ip}: {e}")
-                    try:
-                        on_facts(inst, node_key, ip, nitro)
-                    except Exception as e:
-                        logger.debug(f"security counters from {ip}: {e}")
-            except Exception as e:
-                logger.warning(f"Security poll failed: {e}")
+            poll_once(targets, on_facts)
             time.sleep(max(5, POLL_SECS - (time.time() - start)))
 
     threading.Thread(target=loop, name="security-poll", daemon=True).start()
+
+
+def poll_once(targets, on_facts):
+    """One pass over every node: its audit lines into the store, the checklist's
+    counters sampled, and what could not be read kept in poll_status."""
+    try:
+        for inst, node_key, ip, nitro in targets():
+            st = {"at": time.time(), "audit": None, "audit_error": "", "denied": [], "facts_errors": {}}
+            try:
+                lines = read_audit_messages(nitro)
+                st["audit"] = len(lines)
+                for line in lines:
+                    ev = parse_line(line, time.time())
+                    if ev is not None:
+                        ingest.put(make_row(ev, inst, ip))
+            except Exception as e:
+                st["audit_error"] = nitro_error(e)
+                logger.info(f"Audit messages from {ip} could not be read: {st['audit_error']}")
+            try:
+                errs = on_facts(inst, node_key, ip, nitro) or {}
+                st["facts_errors"] = errs
+                st["denied"] = sorted(k for k, v in errs.items() if _denied(v))
+            except Exception as e:
+                logger.debug(f"security counters from {ip}: {e}")
+            poll_status[(str(inst), str(ip))] = st
+    except Exception as e:
+        logger.warning(f"Security poll failed: {e}")
 
 
 # ============================================================ aggregates
