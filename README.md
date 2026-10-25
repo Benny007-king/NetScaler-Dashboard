@@ -39,6 +39,7 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 - **Authentication**: local admin account and/or **LDAP/Active Directory** (`AUTH_BACKENDS=local,ldap`), with optional allowed-group enforcement.
 - **Applications / Services**: one search box over both tables (name, IP, port, type, state) and a state filter; shows Next-Gen Applications when a node has them, and falls back to classic **LB vServers** otherwise; **Services and Service Groups** are listed with their real runtime state (`UP` / `DOWN` / `OUT OF SERVICE` / `PARTIAL-UP`) and bound-member counts.
 - **Tabs follow the live primary**: Applications, Failover, Sessions, Security, Certificates and Unlock User open on the node currently holding the PRIMARY role, so they track a failover automatically.
+- **Failover details**: click a failover event to open it. It shows which address became what (`192.0.2.11 Secondary → Primary`, `192.0.2.10 Primary → Unknown`), **why** - an administrator's `force ha failover` / `set ha node -hastatus` / `reboot` with the user, address and GUI/CLI/API (from the appliance's CMD_EXECUTED lines), a forced change, a health failure (partial failure with the interface, complete failure, SSL card, route monitor, restart), **heartbeats lost** (the node stopped answering, or the link between the nodes failed while both still answer), both nodes primary - and both nodes **before and after**: role, health, HA status, how the peer saw it, whether the dashboard could reach it, heartbeats received, sync, interfaces, time in the role, the HA settings and the appliance's log lines around it. Both nodes are read every `HA_POLL_SECS` (15 s) in the background, so a failover is recorded with the state it happened in even when nobody has the dashboard open. See [Failover tab](#failover-tab).
 - **Failover History & User Sessions**: date-range filters with a pop-up picker (a session is shown when it overlaps the range); **Excel/PDF** export (client-side). The Sessions tab is about **Gateway / AAA end users** only - management logins and system accounts never appear. Live sessions come from NITRO `aaasession` (one row per user, address and virtual server; the Gateway named from its virtual server address; group, intranet IP, destinations) and the live ICA connections (application server by name, TCP or EDT). The Gateway's own log lines - received by [syslog](#security-tab) or read from the audit log - add the real **login and logout time**, duration and **why it ended** (logoff, idle timeout, forced logoff), the Gateway and AAA **session ids**, the **client type** (ICA proxy, clientless, full VPN), **OS** and **Workspace app or browser** (from the login audit policy on the Security tab), the Gateway FQDN, user agent, bytes, and each **published application** with its server, start and end. Sessions that ended before the dashboard saw them appear from their log lines. **Failed sign-ins** (status `Failed`, attempt time, source IP, failure reason) and **locked accounts** (`Locked`) are kept for the retention period. `GET /api/session-debug` dumps per-node reachability and the raw (redacted) NITRO session and audit fields.
 - **SDX**: an instance in `sdx` mode points at the SDX **Management Service** (NITRO v2, read-only) and shows the platform, its hardware health (power supplies, fans, temperatures, voltages, interfaces, disks), the platform license, and every NetScaler (VPX) instance on it with state, role, version, load and allocation. An instance that is also added to the dashboard opens from there, and its own overview says which SDX it runs on.
 - **License & Capacity**: edition, license type (LAS fixed bandwidth, LAS online, pooled, local file, vCPU), capacity, expiry date and grace period - amber within 30 days or in grace, red within 7 days - also flagged on the All Instances card.
@@ -213,6 +214,23 @@ Every `/api/...` endpoint needs a signed-in session (an unauthenticated call get
 
 Tune with `RETENTION_DAYS`, `RETENTION_INTERVAL_SECS`, `DASHBOARD_DB_FILE` (see `.env.example`). The DB is gitignored.
 
+### Failover tab
+
+Every `HA_POLL_SECS` (default 15; 0 = only when the tab is opened) the dashboard reads `show ha node` (both nodes, as each node sees them) and `stat ha node` (the node's own role, health, last transition and heartbeat counters) from both nodes, and compares them with the previous read. A change of a node's role, health or HA status becomes **one event**:
+
+| Event | When |
+|---|---|
+| Failover | the primary role moved to the other node |
+| Node unreachable | a node became UNKNOWN to its peer (no heartbeats) without a failover |
+| Node back | it answers heartbeats again |
+| Health failure / recovered | partial or complete failure, SSL card, route monitor, and back to UP |
+| HA setting changed | HA status changed (STAYSECONDARY, DISABLED, ...) |
+| Both nodes primary | both act as primary - they cannot hear each other |
+
+The event keeps both nodes' state before and after. **Why** is worked out when the tab is opened, so log lines that arrive a little later count: an administrator's command (the appliance logs `CMD_EXECUTED` with the user, their address and GUI / CLI / API - kept for `force ha failover`, `set|unset|enable|disable ha ...`, `reboot`, `shutdown`, `install ns` and interface changes, nothing else), then a forced change (`FORCE CHANGE`), then the node's health, then heartbeats: the peer reported the node UNKNOWN - if the dashboard cannot reach it either, the node stopped answering; if it can, the link between the nodes failed. The appliance's `STATECHANGE` lines for the self and remote node are shown with it.
+
+The commands come from the appliance's log, so the reason names a user only when [syslog](#security-tab) reaches the dashboard (the checklist's syslog commands include the INFORMATIONAL level the commands are logged at) or the dashboard can read the audit log (`show audit messages` - see the dedicated user above).
+
 ### Security tab
 
 **Checklist.** Each entry is looked for on the selected node over NITRO (read-only): by its usual policy name or, when renamed, by what its rule does. The badge says what was found - *In place*, *Partly* (for example a policy that is not bound, a feature that is off, a log action that does not exist), *Not found*, or *Could not check* (the NITRO user may not read that object, or the build does not have it). Mark an entry **Done** or **Not relevant** yourself; marks are kept per instance (`security_checklist.json`, also copied to an external database). **Excel** and **PDF** export the checklist - every entry with what was detected, your mark (who and when), what counts towards the score, and what was found. Clicking an entry shows what it does, what to watch out for, and the commands for the node's version, filled in with the instance's Gateway virtual server, the node address and this dashboard's address. The entries live in `security_catalog.py`.
@@ -233,7 +251,7 @@ What goes into it:
 | | Tables | Notes |
 |---|---|---|
 | Session history | `nsd_sessions` | one row per session, same retention as the built-in store |
-| Failover history | `nsd_failover_events` | |
+| Failover history | `nsd_failover_events` | one row per HA change; `detail` holds both nodes before and after (JSON) |
 | A copy of the settings | `nsd_settings` | instances (**including NetScaler passwords**), the admin login (hash), LDAP settings, last HA state |
 
 Not stored there: the TLS certificate and its CA, the session secret, and the database connection itself — those belong to one appliance.
@@ -351,7 +369,7 @@ python app.py            # serves HTTPS on :443 by default
 - `GET  /api/system-stats?node=primary|secondary`
 - `GET  /api/ha-status` — HA nodes (or cluster members in cluster mode)
 - `GET  /api/lb-vservers?node=...` / `GET /api/services?node=...` (NITRO)
-- `GET  /api/failover-history` · `GET /api/user-sessions?node=...` · `GET /api/session-ica?user=...`
+- `GET  /api/failover-history` (each event with `detail`, `cause` and the appliance's log lines as `evidence`) · `GET /api/user-sessions?node=...` · `GET /api/session-ica?user=...`
 - `GET  /api/security/checklist?node=...` — the checklist with what was found on the node (`fresh=1` reads it again)
 - `POST /api/security/mark` — `{ "id": "epa_referer", "state": "done" | "irrelevant" | "" }`
 - `GET  /api/security/activity?range=1h|24h|7d` — counts, charts, policy hit counters, syslog receiver state

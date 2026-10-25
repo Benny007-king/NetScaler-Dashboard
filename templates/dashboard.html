@@ -461,19 +461,19 @@
         <div class="grid gap-1">
             <label class="text-xs text-slate-400 ml-1">Type</label>
             <select id="failType" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3">
-              <option value="">All</option><option value="automatic">Automatic</option><option value="manual">Manual</option><option value="failure">Failure</option><option value="role-change">Role Change</option>
+              <option value="">All</option><option value="failover">Failover</option><option value="unreachable">Node unreachable</option><option value="back">Node back</option><option value="health">Health</option><option value="setting">HA setting</option><option value="both nodes">Both nodes primary</option><option value="change">Older events</option>
             </select>
         </div>
         <div class="flex gap-2 ml-auto">
             <button id="failSearch" onclick="loadFailover()" class="bg-blue-600 hover:bg-blue-500 text-white px-5 py-2 rounded-lg font-medium">Search</button>
-            <button onclick="exportToExcel('failTable', 'Failover_History')" class="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg border border-green-600 transition-colors">Excel</button>
-            <button onclick="exportToPDF('failTable', 'Failover_History')" class="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg border border-red-600 transition-colors">PDF</button>
+            <button onclick="exportFailover('xlsx')" class="bg-green-700 hover:bg-green-600 text-white px-4 py-2 rounded-lg border border-green-600 transition-colors">Excel</button>
+            <button onclick="exportFailover('pdf')" class="bg-red-700 hover:bg-red-600 text-white px-4 py-2 rounded-lg border border-red-600 transition-colors">PDF</button>
         </div>
       </div>
       <div class="table-container">
-        <table>
-          <thead><tr><th class="w-12">#</th><th>Timestamp</th><th>Event Type</th><th>Reason</th><th>Role Change</th></tr></thead>
-          <tbody id="failTable" class="text-slate-300"><tr><td colspan="5" class="text-center py-8 text-slate-500">Set filters and click Search...</td></tr></tbody>
+        <table class="table-fixed w-full min-w-[56rem]">
+          <thead><tr><th class="w-10"></th><th class="w-12">#</th><th class="w-44">Time</th><th class="w-44">Event</th><th>Which node became what</th><th class="w-[32%]">Why</th></tr></thead>
+          <tbody id="failTable" class="text-slate-300"><tr><td colspan="6" class="text-center py-8 text-slate-500">Set filters and click Search...</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -1876,20 +1876,208 @@ function filterApps() {
 async function loadFailover() {
     const r = await getJSON(`/api/failover-history`);
     const arr = r.ok ? (r.data.events || []) : [];
-    
     const fromTime = $('failFrom').value ? new Date($('failFrom').value).getTime() : 0;
     const toTime = rangeEnd('failTo');
     const filterType = $('failType').value.toLowerCase();
-    
-    const filteredArr = arr.filter(e => {
+    const filtered = arr.filter(e => {
         const t = parseDateFlexible(e.timestamp);
         const inTime = isNaN(t) ? true : (t >= fromTime && t <= toTime);
         const inType = filterType ? (e.type || '').toLowerCase().includes(filterType) : true;
         return inTime && inType;
     });
+    window._failData = filtered;      // for the detail rows and the export
+    const empty = r.ok ? 'No events found in this time range.' : escapeHtml(r.data?.error || 'The failover history could not be read.');
+    $('failTable').innerHTML = filtered.length ? filtered.map((e, i) => {
+        const caret = `<svg class="w-4 h-4 transition-transform text-slate-400" data-fcaret="${i}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg>`;
+        return `<tr class="cursor-pointer hover:bg-white/5" tabindex="0" aria-expanded="false" id="failRow${i}" onclick="toggleFailover(${i})" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleFailover(${i})}">
+            <td>${caret}</td>
+            <td class="text-slate-500">${i + 1}</td>
+            <td class="text-xs whitespace-nowrap">${escapeHtml(formatILTime(e.timestamp))}</td>
+            <td><span class="badge ${failBadge(e.type)}">${escapeHtml(e.type || '')}</span></td>
+            <td class="text-xs">${failChanges(e)}</td>
+            <td class="text-xs"><span class="${FAIL_CAUSE_CLS[e.cause?.code] || 'text-slate-300'}">${escapeHtml(e.reason || '')}</span></td></tr>
+            <tr id="failDetail${i}" class="hidden"><td colspan="6" class="bg-slate-900/60 p-0"><div id="failDetailBody${i}" class="p-4"></div></td></tr>`;
+    }).join('') : `<tr><td colspan="6" class="text-center py-8 text-slate-500">${empty}</td></tr>`;
+}
 
-    const rows = filteredArr.length ? filteredArr.map((e, i) => `<tr><td class="text-slate-500">${i + 1}</td><td>${escapeHtml(formatILTime(e.timestamp))}</td><td>${escapeHtml(e.type)}</td><td>${escapeHtml(e.reason)}</td><td>${escapeHtml(e.role_change)}</td></tr>`).join('') : '<tr><td colspan="5" class="text-center py-8 text-slate-500">No events found in this time range.</td></tr>';
-    $('failTable').innerHTML = rows;
+const FAIL_CAUSE_CLS = {
+    forced: 'text-sky-300', admin_ha: 'text-sky-300', admin_iface: 'text-sky-300', restart: 'text-sky-300',
+    heartbeat: 'text-red-300', heartbeat_link: 'text-red-300', split: 'text-red-300', health: 'text-amber-300',
+    recovered: 'text-emerald-300', unknown: 'text-slate-400',
+};
+const FAIL_HEALTH = { UP: 'Up', DISABLED: 'HA disabled', INIT: 'Starting (INIT)', DUMB: 'Listen only', PARTIALFAIL: 'Partial failure',
+    COMPLETEFAIL: 'Complete failure', PARTIALFAILSSL: 'SSL card failure', ROUTEMONITORFAIL: 'Route monitor failure', DOWN: 'Down (no heartbeats)' };
+
+function failBadge(type) {
+    const t = String(type || '').toLowerCase();
+    if (/unreachable|both nodes|health failure/.test(t)) return 'badge-danger';
+    if (/back|recovered/.test(t)) return 'badge-success';
+    if (/failover/.test(t)) return 'badge-warning';
+    return 'badge-muted';
+}
+
+function failNodeName(e, ip) {
+    const n = e.detail?.after?.nodes?.[ip] || e.detail?.before?.nodes?.[ip] || {};
+    return n.name ? `${n.name} (${ip})` : ip;
+}
+
+function failRoleCls(role) {
+    return role === 'Primary' ? 'text-emerald-300' : role === 'Unknown' ? 'text-red-300' : 'text-slate-200';
+}
+
+// Which address became what, from the recorded changes (older events: their text).
+function failChanges(e) {
+    const ch = (e.detail?.changes || []).filter(c => c.field === 'role');
+    const list = ch.length ? ch : (e.detail?.changes || []);
+    if (!list.length) return escapeHtml(e.role_change || '');
+    return list.map(c => `<div class="break-words"><span class="font-mono text-blue-300">${escapeHtml(c.ip)}</span>${c.name ? ` <span class="text-slate-500">${escapeHtml(c.name)}</span>` : ''}
+        ${c.field === 'role' ? '' : `<span class="text-slate-500">${escapeHtml(c.label.toLowerCase())}</span>`}
+        <span class="${failRoleCls(c.from)}">${escapeHtml(FAIL_HEALTH[c.from] || c.from)}</span> <span class="text-slate-500">→</span>
+        <span class="${failRoleCls(c.to)} font-semibold">${escapeHtml(FAIL_HEALTH[c.to] || c.to)}</span></div>`).join('');
+}
+
+function failDuration(secs) {
+    if (secs === null || secs === undefined || secs === '') return '';
+    const s = Number(secs);
+    if (!isFinite(s)) return String(secs);
+    if (s < 90) return `${s} s`;
+    if (s < 5400) return `${Math.round(s / 60)} min`;
+    if (s < 172800) return `${Math.floor(s / 3600)} h ${Math.round((s % 3600) / 60)} min`;
+    return `${Math.floor(s / 86400)} days`;
+}
+
+function failEpochTime(t) {
+    return t ? new Date(t * 1000).toLocaleString('en-GB', { timeZone: APP_TZ, hour12: false }) : '';
+}
+
+function toggleFailover(i) {
+    const row = $('failDetail' + i);
+    const caret = document.querySelector(`[data-fcaret="${i}"]`);
+    if (!row) return;
+    const opening = row.classList.contains('hidden');
+    row.classList.toggle('hidden');
+    $('failRow' + i)?.setAttribute('aria-expanded', String(opening));
+    if (caret) caret.style.transform = opening ? 'rotate(90deg)' : '';
+    if (!opening) return;
+
+    const e = (window._failData || [])[i] || {};
+    const d = e.detail || null;
+    const cause = e.cause || {};
+    const shown = v => v !== undefined && v !== null && String(v).trim() !== '';
+    const cell = (label, val) => `<div><div class="text-[10px] uppercase tracking-wider text-slate-500">${escapeHtml(label)}</div><div class="text-sm text-slate-200 break-words">${escapeHtml(val)}</div></div>`;
+    const head = t => `<div class="text-slate-400 mb-2 mt-4 text-xs font-semibold uppercase tracking-wider">${t}</div>`;
+
+    // why
+    let html = `<div class="rounded-xl border border-slate-700/60 bg-slate-950/40 p-4">
+        <div class="text-[10px] uppercase tracking-wider text-slate-500">Why</div>
+        <div class="text-base font-semibold ${FAIL_CAUSE_CLS[cause.code] || 'text-white'}">${escapeHtml(cause.title || e.reason || '')}</div>
+        ${cause.text ? `<div class="text-sm text-slate-300 mt-1">${escapeHtml(cause.text)}</div>` : ''}
+        ${(cause.notes || []).map(n => `<div class="text-xs text-slate-400 mt-1">• ${escapeHtml(n)}</div>`).join('')}
+      </div>`;
+
+    if (!d) {
+        html += `<div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-4">${cell('Time', formatILTime(e.timestamp))}${cell('Type', e.type)}${cell('Role change', e.role_change)}${cell('Node', e.ip)}</div>
+            <div class="text-xs text-slate-500 mt-3">Recorded by an older version of the dashboard: only the time, the type and the role were kept, not the nodes' state.</div>`;
+    } else {
+        // the nodes, before and after
+        const before = d.before?.nodes || {}, after = d.after?.nodes || {};
+        const ips = [...new Set([...Object.keys(after), ...Object.keys(before)])];
+        const roleCell = ip => {
+            const a = before[ip]?.role || '', b = after[ip]?.role || '';
+            if (a && b && a !== b) return `<span class="${failRoleCls(a)}">${escapeHtml(a)}</span> <span class="text-slate-500">→</span> <span class="${failRoleCls(b)} font-semibold">${escapeHtml(b)}</span>`;
+            return `<span class="${failRoleCls(b || a)}">${escapeHtml(b || a || '—')}</span>`;
+        };
+        const healthCell = ip => {
+            const a = before[ip]?.health || '', b = after[ip]?.health || '';
+            const lab = x => FAIL_HEALTH[x] || x;
+            const cls = x => x === 'UP' ? 'text-emerald-300' : (x ? 'text-amber-300' : 'text-slate-500');
+            if (a && b && a !== b) return `<span class="${cls(a)}">${escapeHtml(lab(a))}</span> <span class="text-slate-500">→</span> <span class="${cls(b)}">${escapeHtml(lab(b))}</span>`;
+            return `<span class="${cls(b || a)}">${escapeHtml(lab(b || a) || '—')}</span>`;
+        };
+        const ifaces = n => [n.failed_ifaces && `failed: ${n.failed_ifaces}`, n.no_traffic_ifaces && `no traffic: ${n.no_traffic_ifaces}`,
+                             n.disabled_ifaces && `disabled: ${n.disabled_ifaces}`, n.hb_off_ifaces && `heartbeats off: ${n.hb_off_ifaces}`].filter(Boolean).join('; ');
+        const hb = (ip) => {
+            const a = before[ip]?.hb_rx, b = after[ip]?.hb_rx;
+            if (b === null || b === undefined) return '—';
+            const rate = after[ip]?.hb_rx_rate;
+            return `${Number(b).toLocaleString()}${a !== null && a !== undefined && a !== b ? ` <span class="text-slate-500">(+${(b - a).toLocaleString()})</span>` : (a === b ? ' <span class="text-red-300">(none new)</span>' : '')}${rate !== null && rate !== undefined ? ` <span class="text-slate-500">${rate}/s</span>` : ''}`;
+        };
+        html += head('The nodes - before and after') + `<div class="table-container"><table class="w-full text-xs"><thead><tr>
+            <th>Node</th><th>Role</th><th>Health</th><th>HA status</th><th>Its peer sees it as</th><th>Dashboard</th><th>Heartbeats received</th><th>Sync</th><th>In this role for</th><th>Interfaces</th></tr></thead><tbody>
+            ${ips.map(ip => {
+                const n = after[ip] || before[ip] || {};
+                const peer = n.seen_by_peer;
+                return `<tr>
+                    <td><div class="font-mono text-blue-300">${escapeHtml(ip)}</div>${n.name ? `<div class="text-slate-500">${escapeHtml(n.name)}</div>` : ''}</td>
+                    <td class="whitespace-nowrap">${roleCell(ip)}${n.master_state && !/^(PRIMARY|SECONDARY)$/i.test(n.master_state) ? `<div class="text-[11px] text-amber-300">${escapeHtml(n.master_state)}</div>` : ''}</td>
+                    <td class="whitespace-nowrap">${healthCell(ip)}</td>
+                    <td>${escapeHtml(n.ha_status || '—')}</td>
+                    <td>${peer ? `<span class="${failRoleCls(peer.role)}">${escapeHtml(peer.role || '—')}</span>${peer.health ? ` <span class="text-slate-500">${escapeHtml(FAIL_HEALTH[peer.health] || peer.health)}</span>` : ''}` : '<span class="text-slate-600">—</span>'}</td>
+                    <td>${n.configured === false ? '<span class="text-slate-500">not configured</span>' : (n.reachable ? '<span class="text-emerald-300">answers</span>' : `<span class="text-red-300">${escapeHtml(n.error ? 'unreachable: ' + n.error : 'unreachable')}</span>`)}</td>
+                    <td class="whitespace-nowrap">${hb(ip)}</td>
+                    <td>${escapeHtml(n.sync || '—')}${n.sync_failure ? `<div class="text-amber-300">${escapeHtml(n.sync_failure)}</div>` : ''}${n.sync_failures ? `<div class="text-slate-500">${n.sync_failures} sync failure(s)</div>` : ''}</td>
+                    <td class="whitespace-nowrap">${escapeHtml(failDuration(n.time_in_state) || '—')}</td>
+                    <td>${escapeHtml(ifaces(n) || '—')}${n.ssl_card && !/^(UP|NOT PRESENT)$/i.test(n.ssl_card) ? `<div class="text-amber-300">SSL card ${escapeHtml(n.ssl_card)}</div>` : ''}${n.route_monitor && !/^UP$/i.test(n.route_monitor) ? `<div class="text-amber-300">route monitor ${escapeHtml(n.route_monitor)}</div>` : ''}</td></tr>`;
+            }).join('')}</tbody></table></div>`;
+
+        const set = d.after?.settings || {};
+        const times = [
+            cell('Role change on the appliance', formatILTime(e.timestamp)),
+            cell('Seen by the dashboard', formatILTime(d.detected_at)),
+            d.before?.at ? cell('Previous read', failEpochTime(d.before.at)) : '',
+            shown(set.dead_interval) ? cell('Dead interval', `${set.dead_interval} s`) : '',
+            shown(set.hello_interval) ? cell('Hello interval', `${set.hello_interval} ms`) : '',
+            shown(set.failsafe) ? cell('Fail-safe', set.failsafe) : '',
+            shown(set.max_flips) ? cell('Max flips', `${set.max_flips}${shown(set.max_flip_time) ? ' in ' + set.max_flip_time + ' s' : ''}`) : '',
+            shown(set.inc) ? cell('INC mode', set.inc) : '',
+        ].filter(Boolean).join('');
+        html += head('Times and HA settings') + `<div class="grid grid-cols-2 md:grid-cols-4 gap-4">${times}</div>`;
+    }
+
+    // what the appliance logged
+    const ev = e.evidence || [];
+    html += head('What the appliance logged around it');
+    html += ev.length ? `<div class="table-container"><table class="w-full text-xs"><thead><tr><th>Time</th><th>Node</th><th>What</th><th>User</th><th>From</th><th>Via</th><th>Command / state</th><th>Result</th></tr></thead><tbody>
+        ${ev.map(x => `<tr title="${escapeHtml(x.raw)}">
+            <td class="whitespace-nowrap">${escapeHtml(failEpochTime(x.ts))}</td>
+            <td class="font-mono">${escapeHtml(x.node)}</td>
+            <td>${x.kind === 'ha_command' ? 'Command' : escapeHtml(x.etype === 'STATECHANGE' ? 'State change' : (x.etype || 'HA'))}</td>
+            <td class="text-white">${escapeHtml(x.user || '')}</td>
+            <td class="font-mono">${escapeHtml(x.kind === 'ha_command' ? x.from : '')}</td>
+            <td>${escapeHtml(x.interface || '')}</td>
+            <td class="font-mono break-all">${escapeHtml(x.message)}</td>
+            <td>${escapeHtml(x.status || '')}</td></tr>`).join('')}
+        </tbody></table></div>`
+        : `<div class="text-xs text-slate-500">No HA log line from the appliance around this time. Who ran a command (force ha failover, reboot, set ha node ...) is logged at INFO level: send the NetScalers' syslog to the dashboard with the INFO level included, or let the dashboard read the audit log (the NITRO user needs <span class="font-mono">show audit messages</span>).</div>`;
+    $('failDetailBody' + i).innerHTML = html;
+}
+
+function exportFailover(kind) {
+    const rows = window._failData || [];
+    if (!rows.length) { alert('Search first - there is nothing to export.'); return; }
+    const name = `Failover_History_${new Date().toISOString().slice(0, 10)}`;
+    const nodesAfter = e => Object.values(e.detail?.after?.nodes || {}).map(n => `${n.ip}${n.name ? ' (' + n.name + ')' : ''}: ${n.role || '?'}, ${FAIL_HEALTH[n.health] || n.health || '?'}${n.reachable === false && n.configured ? ', unreachable' : ''}`).join('\n');
+    const logged = e => (e.evidence || []).map(x => `${failEpochTime(x.ts)} ${x.node} ${x.user ? x.user + ': ' : ''}${x.message}${x.status ? ' [' + x.status + ']' : ''}`).join('\n');
+    const head = ['Time', 'Event', 'Which node became what', 'Why', 'Explanation', 'Nodes after', 'Logged by the appliance'];
+    const body = rows.map(e => [formatILTime(e.timestamp), e.type || '', (e.detail?.changes?.length ? e.detail.changes.map(c => `${c.ip} ${c.field === 'role' ? '' : c.label.toLowerCase() + ' '}${c.from} -> ${c.to}`).join('\n') : (e.role_change || '').replace(/→/g, '->')),
+                               e.reason || '', [e.cause?.text, ...(e.cause?.notes || [])].filter(Boolean).join('\n'), nodesAfter(e), logged(e)]);
+    if (kind === 'xlsx') {
+        const ws = XLSX.utils.aoa_to_sheet([head, ...body]);
+        ws['!cols'] = [20, 18, 44, 36, 70, 50, 80].map(w => ({ wch: w }));
+        const wb = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(wb, ws, 'Failover');
+        XLSX.writeFile(wb, name + '.xlsx');
+        return;
+    }
+    const t = v => String(v ?? '').replace(/\u2192/g, '->').replace(/[\u2013\u2014]/g, '-').replace(/[^\x00-\xFF]/g, '?');
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+    doc.setFontSize(14);
+    doc.text('Failover history', 14, 14);
+    doc.autoTable({ startY: 19, head: [head.slice(0, 6)], body: body.map(r => r.slice(0, 6).map(t)),
+                    styles: { fontSize: 7.5, cellPadding: 1.5, overflow: 'linebreak', valign: 'top' }, headStyles: { fillColor: [15, 23, 42] },
+                    columnStyles: { 0: { cellWidth: 28 }, 1: { cellWidth: 24 }, 2: { cellWidth: 50 }, 3: { cellWidth: 40 } } });
+    doc.save(name + '.pdf');
 }
 
 async function loadSessions() {

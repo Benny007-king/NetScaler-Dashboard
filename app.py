@@ -28,6 +28,7 @@ import requests
 
 import appliance
 import db
+import ha_events
 import security
 from flask import (
     Flask, render_template, jsonify, request, redirect, url_for,
@@ -1244,72 +1245,62 @@ def _get_ha_data_fast(instance_id=None):
         except Exception: pass
     return {}
 
-_ha_track_lock = threading.Lock()
+# One HA watch at a time: the background loop and an open Failover tab both read.
+_ha_watch_lock = threading.Lock()
 
-def track_ha_state_changes(nodes, instance_id=None):
-    # Several browser tabs poll at once: without the lock each of them saw the old
-    # state and recorded the same failover again.
-    with _ha_track_lock:
-        _track_ha_state_changes(nodes, instance_id)
-
-def _track_ha_state_changes(nodes, instance_id=None):
-    inst_key = str(get_instance(instance_id).get('id'))
-    last_states = {}
-    if os.path.exists(HA_STATE_FILE):
-        try:
-            with open(HA_STATE_FILE, 'r', encoding='utf-8') as f: last_states = json.load(f)
-        except Exception: pass
-    _states_before = json.dumps(last_states, sort_keys=True)
-
-    history = load_failover_history()
-    changed = False
-    new_events = []
-
-    for n in nodes:
-        if not isinstance(n, dict): continue
-        ip = n.get('ipaddress') or n.get('ip') or n.get('nsip') or ''
-        role = str(n.get('state') or n.get('hacurstate') or n.get('haStatus') or n.get('status') or '').upper()
-        if ip and role:
-            # Kept per instance: two deployments may use the same management
-            # addresses, and their roles must not be compared with each other.
-            key = f"{inst_key}|{ip}"
-            prev = last_states.get(key) or last_states.pop(ip, None)     # second form: files from before 1.16.3
-            if prev and prev != role and 'UNKNOWN' not in role:
-                _inst = get_instance(instance_id)
-                evt = {
-                    'timestamp': datetime.now(APP_TZ).isoformat(),
-                    'type': 'Role Change',
-                    'reason': f"Node HA State Shift",
-                    'role_change': f"{prev} -> {role}",
-                    'ip': ip,
-                    'instance': str(_inst.get('id')),
-                    'instance_name': _inst.get('name'),
-                }
-                history.append(evt)
-                new_events.append(evt)
-                changed = True
-            last_states[key] = role
-
-    if changed:
-        save_failover_history(history)
-        try: db.add_failover_events(new_events)
-        except Exception as e: logger.warning(f"Could not persist failover events: {e}")
+def _ha_roles_load() -> dict:
     try:
-        if json.dumps(last_states, sort_keys=True) != _states_before:     # only when something changed
-            _write_json(HA_STATE_FILE, last_states)
-            db.documents_changed()
-    except Exception: pass
+        if os.path.exists(HA_STATE_FILE):
+            with open(HA_STATE_FILE, 'r', encoding='utf-8') as f:
+                d = json.load(f)
+                return d if isinstance(d, dict) else {}
+    except Exception:
+        pass
+    return {}
 
-def _roles_from_ha(instance_id=None) -> tuple[dict, dict]:
-    raw = _get_ha_data_fast(instance_id)
-    roles = {}
-    nodes = raw.get('hanode', []) if isinstance(raw, dict) else []
-    track_ha_state_changes(nodes, instance_id)
-    for n in nodes:
-        if isinstance(n, dict):
-            ip = n.get('ipaddress') or n.get('ip') or n.get('nsip') or ''
-            if ip: roles[ip] = str(n.get('state') or n.get('hacurstate') or 'Unknown')
-    return roles, raw
+def _record_failover(ev):
+    history = load_failover_history()
+    history.append(ev)
+    save_failover_history(history)
+    try: db.add_failover_events([ev])
+    except Exception as e: logger.warning(f"Could not persist failover events: {e}")
+    logger.info(f"HA {ev['type']} on {ev.get('instance_name') or ev.get('instance')}: {ev['role_change']} - {ev['reason']}")
+
+def ha_poll(instance_id=None):
+    """Read both nodes of an HA instance and record what changed since the last
+    read (see ha_events). Returns the event, or None."""
+    inst = get_instance(instance_id)
+    if str(inst.get('mode')) != 'ha':
+        return None
+    iid = str(inst.get('id'))
+    targets, keys = [], {}
+    for nk in active_node_keys(iid):
+        node = inst.get(nk) or {}
+        if node.get('ip'):
+            try:
+                targets.append((str(node['ip']), get_nitro(nk, iid)))
+                keys[str(node['ip'])] = nk
+            except Exception:
+                continue
+    name_of = lambda ip: _HOSTNAME_CACHE.get((iid, keys.get(ip))) or ''
+    with _ha_watch_lock:
+        roles = _ha_roles_load()
+        before = json.dumps(roles, sort_keys=True)
+        ev = ha_events.poll_instance(iid, inst.get('name'), targets, roles, name_of, APP_TZ)
+        if json.dumps(roles, sort_keys=True) != before:
+            try:
+                _write_json(HA_STATE_FILE, roles)
+                db.documents_changed()
+            except Exception: pass
+    if ev:
+        _record_failover(ev)
+    return ev
+
+def ha_poll_all():
+    for inst in get_instances():
+        if str(inst.get('mode')) == 'ha':
+            try: ha_poll(inst.get('id'))
+            except Exception as e: logger.warning(f"HA watch of {inst.get('name')}: {e}")
 
 # ======================================================================================
 # License & Capacity
@@ -2394,7 +2385,6 @@ def api_ha_status():
     inst = request.args.get('instance')
     ha_data = _get_ha_data_fast(inst)
     nodes = ha_data.get('hanode', []) if isinstance(ha_data, dict) else []
-    track_ha_state_changes(nodes, inst)
 
     def get_config_changed(node_key):
         try:
@@ -3181,52 +3171,43 @@ def api_session_ica():
 def api_failover_history():
     inst = request.args.get('instance')
     instance_id = str(get_instance(inst).get('id'))
-    inst_name = get_instance(inst).get('name')
-    history = load_failover_history()
-    changed = False
-    new_events = []
-
-    ha_data = _get_ha_data_fast(inst)
-    nodes = ha_data.get('hanode', []) if isinstance(ha_data, dict) else []
-
-    for n in nodes:
-        last_transition = n.get('transtime', '')
-        state = n.get('hacurstate') or n.get('state') or 'Unknown'
-        ip = n.get('ipaddress', 'Unknown')
-
-        if last_transition:
-            exists = any(ev.get('timestamp') == last_transition and ev.get('ip') == ip for ev in history)
-            if not exists:
-                new_event = {
-                    'timestamp': last_transition,
-                    'type': 'State Change',
-                    'reason': f"Node {ip} state is {state}",
-                    'role_change': f"Current: {state}",
-                    'ip': ip,
-                    'instance': instance_id,
-                    'instance_name': inst_name,
-                }
-                history.append(new_event)
-                new_events.append(new_event)
-                changed = True
-
-    if changed:
-        save_failover_history(history)
-        try: db.add_failover_events(new_events)
-        except Exception as e: logger.warning(f"Could not persist failover events: {e}")
+    try:
+        ha_poll(inst)                    # what changed since the last background read
+    except Exception as e:
+        logger.warning(f"HA read for the Failover tab failed: {e}")
 
     # The history DB is authoritative (retention-bounded). Only fall back to the
     # legacy JSON if the DB is genuinely unavailable — an empty DB is a valid
     # answer, otherwise purged-but-stale JSON rows would reappear.
     try:
         events = db.get_failover_events(days=db.RETENTION_DAYS, instance=instance_id)
-        return jsonify({'events': events, 'retention_days': db.RETENTION_DAYS})
     except Exception as e:
         logger.warning(f"Failover history DB unavailable, falling back to JSON: {e}")
+        events = [dict(e) for e in load_failover_history() if str(e.get('instance', instance_id)) == instance_id]
+        events.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
+    return jsonify({'events': _explain_failovers(instance_id, events), 'retention_days': db.RETENTION_DAYS,
+                    'watch_secs': ha_events.POLL_SECS})
 
-    history = [e for e in history if str(e.get('instance', instance_id)) == instance_id]
-    history.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-    return jsonify({'events': history})
+def _explain_failovers(instance_id, events):
+    """Each event with the HA log lines around it and the most likely reason."""
+    for e in events:
+        if not e.get('ts_epoch'):
+            e['ts_epoch'] = db._epoch(e.get('timestamp'))
+    lines = []
+    if events:
+        try:
+            lines = db.get_security_events(instance=instance_id, since=min(e['ts_epoch'] for e in events) - 300,
+                                           until=max(e['ts_epoch'] for e in events) + 120,
+                                           kinds=list(ha_events.HA_KINDS), limit=20000)
+        except Exception as ex:
+            logger.warning(f"HA log lines could not be read: {ex}")
+    for e in events:
+        detail = e.get('detail') if isinstance(e.get('detail'), dict) else None
+        e['evidence'] = ha_events.evidence_for(e['ts_epoch'], lines)
+        e['cause'] = ha_events.explain(detail, e['evidence'])
+        if detail or e['cause']['code'] != 'unknown':
+            e['reason'] = e['cause']['title']
+    return events
 
 @app.route('/api/unlock-user', methods=['POST'])
 @login_required
@@ -3530,6 +3511,13 @@ try:
     security.start_poller(_security_targets, _security_facts)
 except Exception as e:
     logger.error(f"Security event collection could not start: {e}")
+
+# HA: both nodes read every HA_POLL_SECS, so a failover is recorded with the state
+# it happened in, also when nobody has the dashboard open.
+try:
+    ha_events.start_watcher(ha_poll_all)
+except Exception as e:
+    logger.error(f"HA watch could not start: {e}")
 
 # Which API each node speaks is found out in the background (NITRO until known).
 # Doing it here made the start wait for every unreachable appliance in turn - long

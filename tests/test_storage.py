@@ -128,9 +128,18 @@ def history_suite(db, label):
     fa = db.get_failover_events(days=36500, instance="a")
     check(len(fa) == 2 and fa[0]["timestamp"].endswith("10:00:05+03:00"), "failover events per instance, newest first")
     check(db.get_failover_events(days=36500, instance="b")[0]["reason"] == HEBREW, "Unicode reason round-trips")
+    snap = {"kind": "Failover", "changes": [{"ip": "192.0.2.2", "field": "role", "from": "Secondary", "to": "Primary"}],
+            "after": {"nodes": {"192.0.2.2": {"name": HEBREW, "hb_rx": 123456789, "error": "x" * 3000}}}}
+    check(db.add_failover_events([{"timestamp": "2026-10-12T11:00:00+03:00", "type": "Failover", "reason": "r",
+                                   "role_change": "192.0.2.2 Secondary → Primary", "ip": "192.0.2.2", "instance": "c",
+                                   "detail": snap}]) == 1, "a failover with the nodes' state")
+    got = db.get_failover_events(days=36500, instance="c")[0]
+    check(got["detail"] == snap and got["role_change"].endswith("→ Primary") and got["ts_epoch"] > 0,
+          "the nodes' state round-trips as JSON")
+    check(fa[0]["detail"] is None, "events without it read as before")
 
     st = db.stats()
-    check(st["sessions"] == 7 and st["failover_events"] == 3, f"stats count rows: {st}")
+    check(st["sessions"] == 7 and st["failover_events"] == 4, f"stats count rows: {st}")
     security_suite(db)
 
     # --- retention and cleanup
@@ -139,7 +148,7 @@ def history_suite(db, label):
     check(db.purge_types(("Mgmt login", "Management")) == 1, "purge_types removes the matching type")
     time.sleep(0.3)
     res = db.purge(days=1e-6)                     # everything older than ~0.1 s
-    check(res["sessions_removed"] == 7 and res["failover_removed"] == 3 and res["security_removed"] == 5,
+    check(res["sessions_removed"] == 7 and res["failover_removed"] == 4 and res["security_removed"] == 5,
           f"purge removes old rows: {res}")
     check(db.get_sessions(days=7) == [] and db.get_failover_events() == [] and db.get_security_events() == [],
           "nothing left after purge")
@@ -218,11 +227,35 @@ def wait_for(cond, what, secs=15):
     raise AssertionError("timed out waiting for: " + what)
 
 
+def failover_upgrade(db, b, label):
+    """A failover table from before 1.24.0 (no detail column) is brought up to date."""
+    import sqlalchemy as sa
+    md = sa.MetaData()
+    sa.Table(b.failover.name, md, *[sa.Column(c.name, c.type, primary_key=c.primary_key, nullable=c.nullable)
+                                    for c in b.failover.columns if c.name != "detail"])
+    md.create_all(b.engine)
+    with b.engine.begin() as c:
+        c.execute(sa.insert(md.tables[b.failover.name]), [{"ts_epoch": 1.0, "timestamp": "2026-01-01T00:00:00",
+                                                          "type": "Role Change", "role_change": "PRIMARY -> SECONDARY",
+                                                          "ip": "192.0.2.1", "instance": "a"}])
+    db._init(b)
+    cols = {c["name"] for c in sa.inspect(b.engine).get_columns(b.failover.name)}
+    check("detail" in cols, f"{label}: an older failover table gets the detail column")
+    check(db._add_failover(b, [{"ts_epoch": 2.0, "timestamp": "2026-01-02T00:00:00", "type": "Failover", "role_change": "y",
+                                "ip": "192.0.2.2", "instance": "a", "detail": json.dumps({"k": HEBREW})}]) == 1,
+          f"{label}: and stores the nodes' state in it")
+    rows = db._get_failover(b, None, "a")
+    check([r["detail"] for r in rows] == [{"k": HEBREW}, None], f"{label}: old and new rows read back")
+    b.metadata.drop_all(b.engine)
+
+
 def external_suite(tmp, url):
     db = fresh(tmp)
     cfg = db.clean_config({"type": "url", "url": url})
     shown = db._public_config(cfg)["url"]
     check("***" in shown and (db._normalise_url(cfg["url"])[0].password or "") not in shown, "the password is never shown back")
+    wipe(db, cfg)
+    failover_upgrade(db, db._make_backend(cfg), db._normalise_url(cfg["url"])[1])
     wipe(db, cfg)
 
     # settings documents kept by the "application"
@@ -374,6 +407,9 @@ if __name__ == "__main__":
     tmp = os.path.join(tempfile.gettempdir(), "nsd-storage-test")
     builtin_suite(tmp)
     legacy_suite(tmp)
+    import sqlalchemy
+    _db = fresh(tmp)
+    failover_upgrade(_db, _db._Backend(sqlalchemy.create_engine("sqlite:///" + os.path.join(tmp, "old.db").replace("\\", "/")), "", "sqlite"), "built-in")
     for url in sys.argv[1:]:
         external_suite(tmp, url)
     shutil.rmtree(tmp, ignore_errors=True)

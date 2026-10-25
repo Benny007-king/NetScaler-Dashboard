@@ -141,6 +141,7 @@ class _Backend:
             sa.Column("role_change", key(128)),
             sa.Column("ip", key(64)),
             sa.Column("instance", sa.Unicode(64)),
+            sa.Column("detail", big),                 # JSON: both nodes before and after, the changes
             sa.UniqueConstraint("timestamp", "ip", "role_change", name=prefix + "uq_failover"),
             sa.Index(prefix + "idx_fo_ts", "ts_epoch"),
             **opts)
@@ -278,6 +279,26 @@ def _init(b: _Backend) -> None:
                 with b.engine.begin() as c:
                     c.execute(sa.text(f'ALTER TABLE "{b.failover.name}" ADD COLUMN instance TEXT'))
     b.metadata.create_all(b.engine)
+    _add_columns(b, b.failover, ("detail",))
+
+
+def _add_columns(b: _Backend, table, names) -> None:
+    """Columns a newer release added to a table that already exists, on every kind
+    of database (they are all nullable, so old rows simply have none)."""
+    insp = sa.inspect(b.engine)
+    if not insp.has_table(table.name):
+        return
+    have = {c["name"] for c in insp.get_columns(table.name)}
+    prep = b.engine.dialect.identifier_preparer
+    for name in names:
+        if name in have:
+            continue
+        col = table.c[name]
+        kw = "ADD" if b.engine.dialect.name == "mssql" else "ADD COLUMN"
+        ddl = f"ALTER TABLE {prep.format_table(table)} {kw} {prep.quote(name)} {col.type.compile(dialect=b.engine.dialect)}"
+        with b.engine.begin() as c:
+            c.execute(sa.text(ddl))
+        logger.info(f"Added column {name} to {table.name}")
 
 
 def _epoch(ts) -> float:
@@ -295,7 +316,7 @@ def _epoch(ts) -> float:
 
 
 # =========================================================== backend operations
-_FO_COLS = ("ts_epoch", "timestamp", "type", "reason", "role_change", "ip", "instance")
+_FO_COLS = ("ts_epoch", "timestamp", "type", "reason", "role_change", "ip", "instance", "detail")
 _SE_COLS = ("instance", "node", "session_id", "username", "type", "ip", "gateway",
             "start_time", "duration", "detail", "status", "first_seen", "last_seen")
 _BLANK = (None, "", "Unknown", "N/A", "—")
@@ -448,13 +469,22 @@ def _trim_security(b: _Backend, keep: int) -> int:
 
 def _get_failover(b: _Backend, days, instance) -> list:
     t = b.failover
-    q = sa.select(t.c.timestamp, t.c.type, t.c.reason, t.c.role_change, t.c.ip)
+    q = sa.select(t.c.ts_epoch, t.c.timestamp, t.c.type, t.c.reason, t.c.role_change, t.c.ip, t.c.detail)
     if days:
         q = q.where(t.c.ts_epoch >= time.time() - days * 86400)
     if instance is not None:
         q = q.where(sa.or_(t.c.instance == str(instance), t.c.instance.is_(None)))
+    out = []
     with b.engine.connect() as c:
-        return [dict(r._mapping) for r in c.execute(q.order_by(t.c.ts_epoch.desc()))]
+        for r in c.execute(q.order_by(t.c.ts_epoch.desc())):
+            row = dict(r._mapping)
+            try:
+                d = json.loads(row["detail"]) if row["detail"] else None
+            except Exception:
+                d = None
+            row["detail"] = d if isinstance(d, dict) else None
+            out.append(row)
+    return out
 
 
 def _session_lookup(t):
@@ -1330,6 +1360,8 @@ def add_failover_events(events) -> int:
         "ts_epoch": _epoch(e.get("timestamp")), "timestamp": str(e.get("timestamp") or ""),
         "type": e.get("type"), "reason": e.get("reason"), "role_change": e.get("role_change"),
         "ip": e.get("ip"), "instance": str(e.get("instance") or "default"),
+        "detail": (e["detail"] if isinstance(e.get("detail"), str)
+                   else json.dumps(e["detail"], ensure_ascii=False, default=str) if e.get("detail") else None),
     } for e in (events or []) if isinstance(e, dict)]
     if not rows:
         return 0

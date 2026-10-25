@@ -6,6 +6,43 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.24.0
+**Failover tab: every detail of each HA change**
+- Click an event to open it, as on the Sessions tab. It shows **which address
+  became what** (192.0.2.11 Secondary → Primary, 192.0.2.10 Primary → Unknown),
+  **why it happened**, both nodes **before and after** - role, health (UP,
+  partial / complete failure, SSL card, route monitor, INIT, disabled), HA status
+  (ENABLED, STAYSECONDARY, ...), how its peer saw it, whether the dashboard could
+  still reach it and why not, heartbeat packets received, sync state and sync
+  failures, failed / silent / disabled interfaces, time in the role - the HA
+  settings (dead and hello interval, fail-safe, max flips, INC), the appliance's
+  own time of the change, and the appliance's log lines around it.
+- **Why** is worked out from what the appliance says:
+  - an administrator: `force ha failover`, `set ha node -hastatus`, `disable ha
+    node`, `reboot`, `shutdown`, `install ns`, interface changes - with the user,
+    their address and GUI / CLI / API, from the CMD_EXECUTED log lines;
+  - a forced change (FORCE CHANGE) when no log line names the user;
+  - the node's health: partial failure (with the interface), complete failure,
+    SSL card failure, route monitor failure, restart (INIT), HA disabled;
+  - **heartbeats lost**: the peer saw the node as UNKNOWN. When the dashboard
+    cannot reach it either, the node stopped answering (powered off, crashed,
+    restarting, network); when it still can, the link between the nodes failed;
+  - **both nodes primary**, a node that is unreachable without a failover, and a
+    node that answers heartbeats again.
+- Both nodes are read every `HA_POLL_SECS` (default 15) in the background, so a
+  failover is recorded with the state it happened in, also when nobody has the
+  dashboard open. One event per change - no more separate "Role Change" and
+  "State Change" rows per node. A change while the dashboard was stopped is found
+  from the roles it kept.
+- The appliance's HA log lines (STATECHANGE of the self / remote node, heartbeat
+  messages) and HA-related commands are kept with the security events, from
+  syslog or the audit log; other commands are not kept.
+- Excel and PDF export of the Failover tab include the reason, the nodes after the
+  change and the log lines.
+- The failover table has a new `detail` column; an existing built-in or external
+  database (PostgreSQL, MySQL / MariaDB, SQL Server) gets it on start. Older
+  events stay and say they were recorded before the details were kept.
+
 ## 1.23.0
 **Security tab**
 - **Export the checklist** to Excel or PDF (buttons next to *Check again*): every

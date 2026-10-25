@@ -26,6 +26,7 @@ from collections import deque
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 
+import ha_events
 import security_catalog
 
 logger = logging.getLogger("security")
@@ -1132,7 +1133,7 @@ def _custom(body):
 
 def parse_line(line, received=None):
     """One audit/syslog line -> an event dict, or None for lines that are not
-    security events (the appliance sends many other kinds)."""
+    security, session or HA events (the appliance sends many other kinds)."""
     received = received or time.time()
     line = str(line or "").strip()
     if not line:
@@ -1202,6 +1203,13 @@ def parse_line(line, received=None):
             base.update(sl)
             base["fields"] = fields
             return base
+    ha = ha_events.parse_ns(module, event, body)
+    if ha:
+        fields = dict(base["fields"])
+        fields.update(ha.pop("fields", {}))
+        base.update(ha)
+        base["fields"] = fields
+        return base
     cust = _custom(body)
     if cust:
         fields = dict(base["fields"])
