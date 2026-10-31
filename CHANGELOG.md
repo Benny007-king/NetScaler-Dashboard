@@ -6,6 +6,46 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.25.0
+**Security: every library up to date, no known vulnerability left**
+
+The image of 1.24.0 carried 14 known vulnerabilities in its Python packages and
+81 fixable HIGH / CRITICAL ones in its Debian layer: its base, `python:3.9-slim`,
+stopped receiving updates when Python 3.9 reached end of life (October 2025).
+1.25.0 has none that has a fix (pip-audit and Trivy, every severity).
+
+- **Python 3.15** (was 3.9, end of life), on Debian 13.7; the Debian packages
+  are upgraded at every build, so a release carries the fixes published until
+  that day. pip is removed from the image after installing (it is not used at
+  run time and bundles its own old copies of urllib3 and msgpack).
+- **Python packages**: Flask 3.1.3 (was 2.3.3 - CVE-2026-27205), requests 2.34.2
+  (was 2.31.0 - CVE-2024-35195, CVE-2024-47081, CVE-2026-25645), urllib3 2.8.0
+  (was 2.0.4 - CVE-2023-43804, CVE-2023-45803, CVE-2024-37891, CVE-2025-50181,
+  CVE-2025-66418, CVE-2025-66471, CVE-2026-21441, CVE-2026-44431,
+  CVE-2026-97687, CVE-2026-97689), python-dotenv 1.2.4 (CVE-2026-28684),
+  gunicorn 26.2.0, SQLAlchemy 2.1.6, pg8000 1.31.6; cryptography 50.0.2,
+  PyMySQL 1.2.3, pymssql 2.4.6 and ldap3 2.9.1 were already the newest.
+- gunicorn's new local control socket (25.1+) is switched off; HTTP/2 stays off
+  and the HTTPS port still accepts TLS 1.2 and 1.3 only.
+- **Browser libraries**: Chart.js 4.6.1 (was 4.5.1), jsPDF 4.2.1 (was 2.5.1 -
+  CVE-2025-29907, CVE-2025-57810), jsPDF-AutoTable 5.0.9 (was 3.8.2), SheetJS
+  0.20.3 (was 0.18.5 - CVE-2023-30533, CVE-2024-22363; newer SheetJS releases are
+  published only on SheetJS's own CDN). Each file was checked against the
+  publisher's checksum. Tailwind stays 3.4.17 - the newest in-browser build of v3.
+- **Release pipeline**: every release build now fails when pip-audit or Trivy
+  finds a known, fixable vulnerability in the image, and runs a new test of the
+  NITRO client over HTTPS (self-signed certificate; an old appliance that offers
+  only TLS 1.2 with AES256-SHA, which a default OpenSSL 3.5 client refuses; TLS
+  1.3; verification on). GitHub Actions checkout and upload-artifact v7.
+- Running from source now needs **Python 3.11** or newer (SQLAlchemy 2.1);
+  `preflight.sh` / `preflight.bat` check for it.
+
+Checked before release: every test suite on the new image; external databases on
+PostgreSQL 18, MariaDB 11.8, MySQL 8.4 and SQL Server 2022; LDAP and LDAPS sign-in
+with group membership against OpenLDAP; the HTTPS server, its headers and TLS
+versions; the charts and all eight Excel / PDF exports in a browser; and the
+appliance build, boot, upgrade and rollback test.
+
 ## 1.24.0
 **Failover tab: every detail of each HA change**
 - Click an event to open it, as on the Sessions tab. It shows **which address

@@ -61,21 +61,21 @@ REM ---- running from source --------------------------------------------------
 set "PYOK="
 where python >nul 2>&1
 if not errorlevel 1 (
-  python -c "import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)" >nul 2>&1
+  python -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1
   if not errorlevel 1 set "PYOK=python"
 )
 if not defined PYOK (
   where py >nul 2>&1
   if not errorlevel 1 (
-    py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)" >nul 2>&1
+    py -3 -c "import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)" >nul 2>&1
     if not errorlevel 1 set "PYOK=py -3"
   )
 )
 if not defined PYOK (
-  call :bad "Python 3.9+" "the app targets Python 3.9 or newer" "%L_PY%"
+  call :bad "Python 3.11+" "the app targets Python 3.11 or newer" "%L_PY%"
 ) else (
   for /f "delims=" %%v in ('%PYOK% --version 2^>^&1') do set "PYV=%%v"
-  call :ok "Python 3.9+" "!PYV!"
+  call :ok "Python 3.11+" "!PYV!"
   %PYOK% -m pip --version >nul 2>&1
   if errorlevel 1 (
     call :bad "pip" "needed for: pip install -r requirements.txt" "%L_PY%"

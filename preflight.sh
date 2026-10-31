@@ -59,19 +59,19 @@ if [ "$MODE" = "python" ]; then
   # ---- running from source -------------------------------------------------
   PY=""
   for c in python3 python; do
-    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if sys.version_info>=(3,9) else 1)' 2>/dev/null; then
+    if command -v "$c" >/dev/null 2>&1 && "$c" -c 'import sys; sys.exit(0 if sys.version_info>=(3,11) else 1)' 2>/dev/null; then
       PY="$c"; break
     fi
   done
   if [ -n "$PY" ]; then
-    ok "Python 3.9+" "$($PY --version 2>&1)"
+    ok "Python 3.11+" "$($PY --version 2>&1)"
     if "$PY" -m pip --version >/dev/null 2>&1; then
       ok "pip" "$($PY -m pip --version 2>&1 | cut -d' ' -f1-2)"
     else
       bad "pip" "needed for: pip install -r requirements.txt"; link "$L_PY"
     fi
   else
-    bad "Python 3.9+" "the app targets Python 3.9 or newer"; link "$L_PY"
+    bad "Python 3.11+" "the app targets Python 3.11 or newer"; link "$L_PY"
   fi
 else
   # ---- containerised (default) ---------------------------------------------

@@ -6,11 +6,11 @@ lists them and `tests/test_vendor.py` checks them.
 
 | File | What | Version | Licence | Taken from |
 |---|---|---|---|---|
-| `tailwindcss-3.4.17.js` | Tailwind CSS (in-browser build) | 3.4.17 | MIT | `https://cdn.tailwindcss.com/3.4.17` |
-| `chart-4.5.1.umd.js` | Chart.js | 4.5.1 | MIT | npm `chart.js@4.5.1`, `dist/chart.umd.js` |
-| `xlsx-0.18.5.full.min.js` | SheetJS (Excel export) | 0.18.5 | Apache-2.0 | cdnjs `xlsx/0.18.5/xlsx.full.min.js` |
-| `jspdf-2.5.1.umd.min.js` | jsPDF (PDF export) | 2.5.1 | MIT | cdnjs `jspdf/2.5.1/jspdf.umd.min.js` |
-| `jspdf-autotable-3.8.2.min.js` | jsPDF AutoTable | 3.8.2 | MIT | cdnjs `jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js` |
+| `tailwindcss-3.4.17.js` | Tailwind CSS (in-browser build) | 3.4.17 | MIT | `https://cdn.tailwindcss.com/3.4.17` (the newest in-browser build of v3; v4 is a different framework) |
+| `chart-4.6.1.umd.js` | Chart.js | 4.6.1 | MIT | npm `chart.js@4.6.1`, `dist/chart.umd.js` |
+| `xlsx-0.20.3.full.min.js` | SheetJS (Excel export) | 0.20.3 | Apache-2.0 | `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz`, `dist/xlsx.full.min.js` (SheetJS publishes releases after 0.18.5 only on its own CDN) |
+| `jspdf-4.2.1.umd.min.js` | jsPDF (PDF export) | 4.2.1 | MIT | npm `jspdf@4.2.1`, `dist/jspdf.umd.min.js` |
+| `jspdf-autotable-5.0.9.min.js` | jsPDF AutoTable | 5.0.9 | MIT | npm `jspdf-autotable@5.0.9`, `dist/jspdf.plugin.autotable.min.js` |
 | `fonts/inter-*.woff2` | Inter (variable) | fontsource 5.3.0 | OFL-1.1 | npm `@fontsource-variable/inter@5.3.0` |
 | `fonts/jetbrains-mono-*.woff2` | JetBrains Mono (variable) | fontsource 5.3.0 | OFL-1.1 | npm `@fontsource-variable/jetbrains-mono@5.3.0` |
 

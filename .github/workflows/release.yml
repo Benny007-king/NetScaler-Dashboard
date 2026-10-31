@@ -26,7 +26,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: The tag must match the VERSION file
         if: startsWith(github.ref, 'refs/tags/v')
@@ -42,13 +42,26 @@ jobs:
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm || true
 
-      - name: Unit tests (login, certificates, LDAP group rule, storage, offline pages, security and sessions, license and SDX, upgrade agent)
+      - name: Unit tests (login, certificates, LDAP group rule, storage, offline pages, security and sessions, license and SDX, failover, NITRO over TLS, upgrade agent)
         run: |
           docker build -q --build-arg APP_VERSION="$(cat VERSION)" -t nsd-ci-test . >/dev/null
-          for t in test_auth test_certs test_ldap_group test_storage test_offline test_security test_platform test_failover; do
+          for t in test_auth test_certs test_ldap_group test_storage test_offline test_security test_platform test_failover test_nitro_tls; do
             docker run --rm -v "$PWD:/app:ro" -w /tmp nsd-ci-test python "/app/tests/$t.py"
           done
           docker run --rm -v "$PWD:/src:ro" debian:13 bash /src/appliance/test-upgrade-agent.sh
+
+      # A release never ships a dependency or system package with a known,
+      # fixable vulnerability: the Python packages in the image are checked with
+      # pip-audit (PyPI advisory database, OSV), the whole image with Trivy.
+      # Debian advisories without a fix yet are left out - nothing could be done.
+      - name: Known vulnerabilities (pip-audit, Trivy)
+        run: |
+          docker run --rm nsd-ci-test python -c 'import importlib.metadata as m; [print(d.metadata["Name"] + "==" + d.version) for d in m.distributions()]' > installed.txt
+          cat installed.txt
+          docker run --rm -v "$PWD/installed.txt:/r.txt:ro" python:3-slim sh -c \
+            'pip install -q --root-user-action=ignore pip-audit==2.10.1 && pip-audit --progress-spinner off --strict --no-deps --disable-pip -r /r.txt'
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock aquasec/trivy:0.76.1 image --quiet \
+            --scanners vuln --ignore-unfixed --severity MEDIUM,HIGH,CRITICAL --exit-code 1 nsd-ci-test
 
       - name: Build the appliance (OVA) and the upgrade bundle (.nsu)
         run: bash appliance/build.sh
@@ -108,7 +121,7 @@ jobs:
 
       - name: Keep the files from a manual run
         if: github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: netscaler-dashboard-artefacts
           path: |

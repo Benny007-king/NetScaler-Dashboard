@@ -314,7 +314,7 @@ The appliance is the supported way to run the dashboard. The same image runs dir
 ### Check dependencies first (optional)
 
 A read-only preflight script reports anything missing on your machine — Docker, the Docker
-daemon, Compose v2, Git (or Python 3.9+/pip for the source install), plus whether ports 443/80
+daemon, Compose v2, Git (or Python 3.11+/pip for the source install), plus whether ports 443/80
 are free — and prints a download link for each gap:
 
 ```bash
@@ -436,9 +436,11 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 
 ## Third-party components
 
-The appliance image contains Debian, Docker and the Python packages in `requirements.txt` (Flask, SQLAlchemy, requests, cryptography, ldap3, gunicorn, pg8000, PyMySQL, and pymssql with its bundled FreeTDS), each under its own license. The disk image is written with VMware's open-vmdk.
+The appliance image contains Debian, Docker, Python 3.15 and the Python packages in `requirements.txt` (Flask, SQLAlchemy, requests, cryptography, ldap3, gunicorn, pg8000, PyMySQL, and pymssql with its bundled FreeTDS), each under its own license. The disk image is written with VMware's open-vmdk.
 
-The web UI's browser libraries and fonts are bundled in `static/vendor` and served by the dashboard itself, so the administrator's browser needs no internet access: Tailwind CSS 3.4.17 (MIT), Chart.js 4.5.1 (MIT), SheetJS 0.18.5 (Apache-2.0), jsPDF 2.5.1 with AutoTable 3.8.2 (MIT), and the Inter and JetBrains Mono fonts (SIL Open Font License 1.1). Each is the published file; `static/vendor/README.md` lists where it came from, `static/vendor/SHA256SUMS` its checksum, and `static/vendor/licenses/` the license texts.
+**Known vulnerabilities.** Every release build checks the dashboard image with [pip-audit](https://github.com/pypa/pip-audit) (Python packages) and [Trivy](https://github.com/aquasecurity/trivy) (the whole image, Debian packages included) and fails when either finds a known vulnerability that has a fix. The Debian packages in the image are upgraded at every build; the appliance's own Debian installs security updates every day (`unattended-upgrades`).
+
+The web UI's browser libraries and fonts are bundled in `static/vendor` and served by the dashboard itself, so the administrator's browser needs no internet access: Tailwind CSS 3.4.17 (MIT), Chart.js 4.6.1 (MIT), SheetJS 0.20.3 (Apache-2.0), jsPDF 4.2.1 with AutoTable 5.0.9 (MIT), and the Inter and JetBrains Mono fonts (SIL Open Font License 1.1). Each is the published file; `static/vendor/README.md` lists where it came from, `static/vendor/SHA256SUMS` its checksum, and `static/vendor/licenses/` the license texts.
 
 NetScaler and Citrix are trademarks of Cloud Software Group, Inc. This is an independent project; it is not affiliated with, endorsed by or supported by Cloud Software Group.
 

@@ -23,6 +23,9 @@ try:
 except ValueError:
     threads = 8
 
+# gunicorn 25.1+ opens a local control socket by default; nothing here uses it.
+control_socket_disable = True
+
 # Serve TLS directly unless APP_SSL=0 (e.g. when a reverse proxy terminates TLS).
 _use_ssl = os.getenv("APP_SSL", "1").lower() in ("1", "true", "yes")
 if _use_ssl:

@@ -72,7 +72,7 @@ check(fonts and all(os.path.isfile(os.path.join(VENDOR, f)) for f in fonts) and 
 
 csp = dashboard.headers.get("Content-Security-Policy", "")
 check("http" not in csp, "the content security policy allows no other host")
-r = c.get("/static/vendor/chart-4.5.1.umd.js")
+r = c.get("/static/vendor/chart-4.6.1.umd.js")
 check("immutable" in r.headers.get("Cache-Control", ""), "bundled files are cached by the browser")
 check("immutable" not in dashboard.headers.get("Cache-Control", ""), "...and the pages are not")
 
