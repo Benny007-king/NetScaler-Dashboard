@@ -6,6 +6,45 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.26.0
+**Clusters: every node, the coordinator, and cluster events**
+- **Every member is a node of its own.** The node list at the top shows the
+  Cluster IP (CLIP) and each cluster node, the configuration coordinator marked
+  (`ns-c1 · CCO`). A member is read at its own NSIP with the CLIP's account
+  (system users are the same on every node of a cluster). Configuration tabs
+  (Applications, Sessions, Security, Certificates, Unlock User) keep using the
+  CLIP, where a cluster takes its configuration.
+- **Node Statistics** shows the **cluster role** instead of "Unknown":
+  *Configuration coordinator (CCO)* or *Member - not the coordinator* (on the
+  CLIP: which node it reaches), with the node ID and priority, operational state,
+  admin state (ACTIVE / SPARE / PASSIVE), health and sync state. The Cluster Nodes
+  panel lists every node with the same.
+- **All Instances**: a cluster's card lists every member with its own CPU and
+  memory, CCO or operational state and health, and warns when a member is
+  unreachable, not UP, out of service while its admin state is ACTIVE, out of
+  sync, when there is no coordinator, or when the CLIP does not answer.
+- **Failover tab for clusters**: the CLIP and every member are read every
+  `HA_POLL_SECS`. A change becomes one event - **CCO change**, node unreachable,
+  node out of service, node back, health failure / recovered, node setting
+  changed - with every node before and after (role, operational and admin state,
+  health, how the coordinator sees it, whether the dashboard reaches it, sync,
+  priority, failed interfaces) and the cluster settings. The reason: an
+  administrator's cluster command (`set cluster node -state`, `rm cluster node`,
+  ...) with user and address, a health failure, a node that stopped answering or
+  that answers but not to the cluster (backplane / heartbeats), an admin state set
+  to SPARE / PASSIVE, or **preemption** (the node with the lower priority value
+  taking the coordinator role back).
+- Syslog from a member's NSIP is accepted for its cluster (only the CLIP was
+  before, so the members' log lines were refused), and each member's own audit
+  log is read; the checklist is still read once, through the CLIP.
+
+**CPU usage of 4294967295%**
+- NetScaler reports 4294967295 (-1 as an unsigned 32-bit number) while a CPU
+  counter has no reading, typically on a node that just changed role. The Overview
+  and the All Instances card now use the next counter that has a real reading
+  (packet-engine, then management CPU) and show "—" when none has; only values
+  from 0 to 100 are shown as a percentage. The same for memory.
+
 ## 1.25.0
 **Security: every library up to date, no known vulnerability left**
 

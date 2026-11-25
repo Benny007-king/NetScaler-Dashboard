@@ -30,7 +30,7 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 
 - **All-instances health wall**: the **All Instances** tab shows every deployment as a card — Operational / Degraded / Unreachable, nodes up, and per node the hostname, IP, HA role + status and live CPU/memory, with warnings for unreachable nodes and forced HA modes. Click a card to drill into that instance. Powered by `GET /api/instances-health` (all instances and nodes probed in parallel).
 - **Multiple instances**: manage many deployments at once. Add / rename / remove them in **Settings → NetScaler Instances** and pick the active one from the header **Instance** switcher; every tab, plus session and failover history, is scoped to it.
-- **Deployment modes** (per instance): `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode`), `sdx` (the node is an SDX Management Service - see below). Selectable in **Settings**.
+- **Deployment modes** (per instance): `standalone` (single node), `ha` (primary + secondary), `cluster` (primary points at the Cluster IP / CLIP; members read from `/config/clusternode` - each member is a node of its own in the node list, read at its NSIP with the CLIP's account; the Overview shows whether it is the configuration coordinator (CCO), its operational and admin state, health and sync), `sdx` (the node is an SDX Management Service - see below). Selectable in **Settings**.
 - **HA status at a glance**: the HA panel shows each node's role *and* its NITRO `hastatus` — including the forced **STAYPRIMARY / STAYSECONDARY** modes (flagged amber, since they suppress failover), `Up`, and failure states like route-monitor/partial/complete failure.
 - **HA resilience**: if one node of an HA pair is down, the dashboard keeps polling — HA status fails over to whichever node answers, the dead node is shown offline, the role change is logged as a failover, and the dead node fails fast (~3s connect timeout) instead of hanging.
 - **Dual-Stack** runtime: auto-detect Next-Gen per node, fall back to NITRO. Detection is explainable — the capability line shows *why* a node is on NITRO — and **re-runs automatically** every `API_DETECT_INTERVAL_SECS` (default 600s), so enabling Next-Gen on an appliance, or a node that was unreachable at boot, is picked up without a restart. `GET /api/nextgen-debug` reports the version, which management paths answer and the real login error; `NEXTGEN_BASE_PATH` overrides the path.
@@ -228,6 +228,8 @@ Every `HA_POLL_SECS` (default 15; 0 = only when the tab is opened) the dashboard
 | Both nodes primary | both act as primary - they cannot hear each other |
 
 The event keeps both nodes' state before and after. **Why** is worked out when the tab is opened, so log lines that arrive a little later count: an administrator's command (the appliance logs `CMD_EXECUTED` with the user, their address and GUI / CLI / API - kept for `force ha failover`, `set|unset|enable|disable ha ...`, `reboot`, `shutdown`, `install ns` and interface changes, nothing else), then a forced change (`FORCE CHANGE`), then the node's health, then heartbeats: the peer reported the node UNKNOWN - if the dashboard cannot reach it either, the node stopped answering; if it can, the link between the nodes failed. The appliance's `STATECHANGE` lines for the self and remote node are shown with it.
+
+**Clusters.** The CLIP and every member are read (`show cluster node`, `show cluster instance`), and a change of the configuration coordinator, a node's operational state (ACTIVE / INACTIVE / UNKNOWN), health or admin state (ACTIVE / SPARE / PASSIVE) becomes one event: *CCO change*, *Node unreachable*, *Node out of service*, *Node back*, *Health failure / recovered*, *Node setting changed*. Why: an administrator's cluster command (`set cluster node -state`, `rm cluster node`, ...), a health failure with the interface, a node that stopped answering (the dashboard cannot reach it either) or answers but not to the cluster (backplane or heartbeats), an admin state set to SPARE / PASSIVE, or preemption - the node with the lower priority value taking the coordinator role back.
 
 The commands come from the appliance's log, so the reason names a user only when [syslog](#security-tab) reaches the dashboard (the checklist's syslog commands include the INFORMATIONAL level the commands are logged at) or the dashboard can read the audit log (`show audit messages` - see the dedicated user above).
 
@@ -430,7 +432,8 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 - **Applications tab empty:** node doesn't support Next-Gen (cap bar shows `nitro`) — you'll see LB vServers/Services instead.
 - **No failover/sessions:** check the selected date range; empty windows are normal.
 - **TLS warning in browser:** expected with the default self-signed cert; upload a trusted cert from Settings.
-- **Cluster shows no nodes:** confirm `primary` points at the CLIP and NITRO is reachable there.
+- **Cluster shows no nodes:** confirm `primary` points at the CLIP and NITRO is reachable there. The members are read at their own NSIPs with the same account - the dashboard must reach those addresses too.
+- **CPU shows "—":** the appliance has no CPU reading at that moment (NetScaler reports 4294967295 then, typically right after a role change); it comes back by itself.
 
 ---
 

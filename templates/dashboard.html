@@ -461,7 +461,7 @@
         <div class="grid gap-1">
             <label class="text-xs text-slate-400 ml-1">Type</label>
             <select id="failType" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3">
-              <option value="">All</option><option value="failover">Failover</option><option value="unreachable">Node unreachable</option><option value="back">Node back</option><option value="health">Health</option><option value="setting">HA setting</option><option value="both nodes">Both nodes primary</option><option value="change">Older events</option>
+              <option value="">All</option><option value="failover">Failover</option><option value="unreachable">Node unreachable</option><option value="back">Node back</option><option value="health">Health</option><option value="setting">HA / node setting</option><option value="both nodes">Both nodes primary</option><option value="cco">CCO change (cluster)</option><option value="out of service">Out of service (cluster)</option><option value="change">Older events</option>
             </select>
         </div>
         <div class="flex gap-2 ml-auto">
@@ -1497,13 +1497,17 @@ async function fetchCaps() {
         unlockNode.innerHTML = '';
         
         if (r.data.nodes) {
-            for (const [key, nodeData] of Object.entries(r.data.nodes)) {
+            for (const key of (r.data.node_order || Object.keys(r.data.nodes))) {
+                const nodeData = r.data.nodes[key];
+                if (!nodeData) continue;
                 const opt = document.createElement('option');
                 opt.value = key;
                 opt.textContent = nodeData.name; 
                 if (key === currentValue) opt.selected = true;
                 nodeSelect.appendChild(opt);
                 
+                // unlocking is configuration: a cluster takes it only through the CLIP
+                if (state.mode === 'cluster' && /^node\d+$/.test(key)) continue;
                 const opt2 = document.createElement('option');
                 opt2.value = key;
                 opt2.textContent = nodeData.name; 
@@ -1513,7 +1517,9 @@ async function fetchCaps() {
 
         state.apiDetect = r.data.api_detect || {};
         state.primaryNode = r.data.primary_node || 'primary';
-        const parts = Object.entries(r.data.nodes || {}).map(([key, nd]) => {
+        // the picked node may be gone (a cluster member removed, another instance)
+        if (!(r.data.nodes || {})[state.node]) { state.node = state.primaryNode; nodeSelect.value = state.node; }
+        const parts = (r.data.node_order || Object.keys(r.data.nodes || {})).map(key => [key, (r.data.nodes || {})[key]]).filter(([, nd]) => nd).map(([key, nd]) => {
             const m = (state.apiModes[key] || 'nitro').toUpperCase();
             const why = (state.apiDetect[key] || {}).reason || '';
             const cls = m === 'NEXTGEN' ? 'text-green-400' : 'text-blue-400';
@@ -1563,8 +1569,10 @@ function wallNodeRow(n) {
     const label = escapeHtml(n.name || (n.key || '').replace(/^./, c => c.toUpperCase()));
     const ip = escapeHtml(n.ip || '—');
     const state = n.state ? `<span class="badge ${haStateBadge(n.state)}">${escapeHtml(n.state.toUpperCase())}</span>` : '';
-    const load = (n.cpu !== null && n.cpu !== undefined)
-        ? `<span class="font-mono text-slate-400 text-[11px] whitespace-nowrap">cpu ${escapeHtml(String(n.cpu))}% · mem ${n.mem === null || n.mem === undefined ? '—' : escapeHtml(String(n.mem))}%</span>`
+    const has = v => v !== null && v !== undefined;
+    // a node that answers but has no CPU reading at the moment shows "—", not "no data"
+    const load = n.reachable || has(n.cpu)
+        ? `<span class="font-mono text-slate-400 text-[11px] whitespace-nowrap">cpu ${has(n.cpu) ? escapeHtml(String(n.cpu)) + '%' : '<span title="The appliance has no CPU reading at the moment">—</span>'} · mem ${has(n.mem) ? escapeHtml(String(n.mem)) + '%' : '—'}</span>`
         : `<span class="text-slate-600 text-[11px]">${escapeHtml(n.error || 'no data')}</span>`;
     const forced = (n.ha_status && n.ha_status.forced)
         ? `<span class="badge badge-warning" title="Failover suppressed">\u26A0 ${escapeHtml(n.ha_status.code)}</span>` : '';
@@ -1660,7 +1668,9 @@ const HA_SEV_CLS = { ok: 'badge-success', warn: 'badge-warning', bad: 'badge-dan
 
 function haStateBadge(state) {
     const s = String(state || '').toUpperCase();
-    if (s.includes('PRIMARY')) return 'badge-success';
+    if (s.includes('PRIMARY') || s === 'CCO' || s.includes('COORDINATOR (CCO)')) return 'badge-success';
+    if (s.includes('INACTIVE') || s.includes('UNKNOWN')) return 'badge-danger';
+    if (s.includes('MEMBER') || s.includes('CLUSTER IP')) return 'badge-info';
     if (s.includes('SECONDARY')) return 'badge-info';
     if (s.includes('UP') || s.includes('ACTIVE')) return 'badge-success';
     if (s.includes('DOWN') || s.includes('FAIL')) return 'badge-danger';
@@ -1719,12 +1729,15 @@ async function loadOverview(background) {
 
     if (r.ok) {
         const d = r.data.ns_stats?.ns || r.data.ns_stats || {};
-        let cpu = parseFloat(d.cpuusagepcnt || d.cpuusage || 0);
-        let mem = parseFloat(d.memusagepcnt || d.memusagepct || 0);
+        // The server picks a counter with a real reading; NetScaler reports 4294967295
+        // while it has none, which is not a percentage. Anything outside 0-100: "—".
+        const pct = v => { const f = parseFloat(v); return isFinite(f) && f >= 0 && f <= 100 ? f : null; };
+        const cpu = 'cpu' in r.data ? pct(r.data.cpu) : pct(d.cpuusagepcnt ?? d.cpuusage);
+        const mem = 'mem' in r.data ? pct(r.data.mem) : pct(d.memusagepcnt ?? d.memusagepct);
         let http = parseFloat(d.httprequestsrate || 0);
 
-        if (cpuChart) { cpuChart.data.datasets[0].data = [cpu, 100 - cpu]; cpuChart.update(); $('valCpu').innerText = cpu.toFixed(1) + '%'; }
-        if (memChart) { memChart.data.datasets[0].data = [mem, 100 - mem]; memChart.update(); $('valMem').innerText = mem.toFixed(1) + '%'; }
+        if (cpuChart) { cpuChart.data.datasets[0].data = cpu === null ? [0, 100] : [cpu, 100 - cpu]; cpuChart.update(); $('valCpu').innerText = cpu === null ? '—' : cpu.toFixed(1) + '%'; $('valCpu').title = cpu === null ? 'The appliance has no CPU reading at the moment' : ''; }
+        if (memChart) { memChart.data.datasets[0].data = mem === null ? [0, 100] : [mem, 100 - mem]; memChart.update(); $('valMem').innerText = mem === null ? '—' : mem.toFixed(1) + '%'; }
         if (httpChart) {
             let now; try { now = new Date().toLocaleTimeString('en-GB', { timeZone: APP_TZ, hour12: false }); } catch (e) { now = new Date().toLocaleTimeString('en-GB', { hour12: false }); }
             if (httpHistory.labels.length > 20) { httpHistory.labels.shift(); httpHistory.data.shift(); }
@@ -1744,12 +1757,23 @@ async function loadOverview(background) {
             ? `<tr class="border-t border-slate-700"><td class="text-slate-500">Runs on</td><td><button class="text-sky-300 hover:text-white" onclick="openInstance('${escapeHtml(ho.sdx_id)}')">${/sdx/i.test(ho.sdx_name) ? '' : 'SDX '}${escapeHtml(ho.sdx_name)}</button> <span class="text-slate-500 text-xs">as ${escapeHtml(ho.vpx_name)}</span></td></tr>`
             : '';
         
+        const cl = r.data.cluster;
+        const clRow = (label, html) => `<tr class="border-t border-slate-700"><td class="text-slate-500">${label}</td><td>${html}</td></tr>`;
+        const okBadge = (v, good) => v ? `<span class="badge ${new RegExp('^(' + good + ')$', 'i').test(v) ? 'badge-success' : 'badge-warning'}">${escapeHtml(v)}</span>` : '<span class="text-slate-600">—</span>';
+        const clusterRows = cl ? [
+            cl.via_clip ? clRow('Coordinator', `<span class="font-mono text-white">${escapeHtml(cl.ip || '')}</span> <span class="text-slate-500 text-xs">node ${escapeHtml(String(cl.id ?? ''))}</span>`) : clRow('Node ID', `<span class="text-white">${escapeHtml(String(cl.id ?? ''))}</span>${cl.priority !== undefined && cl.priority !== null ? ` <span class="text-slate-500 text-xs">priority ${escapeHtml(String(cl.priority))}</span>` : ''}`),
+            clRow('Operational state', okBadge(cl.op_state, 'ACTIVE')),
+            clRow('Admin state', okBadge(cl.admin_state, 'ACTIVE|SPARE|PASSIVE')),
+            clRow('Health', okBadge(cl.health, 'UP') + (cl.failed_ifaces ? ` <span class="text-amber-300 text-xs">failed: ${escapeHtml(cl.failed_ifaces)}</span>` : '')),
+            clRow('Sync', escapeHtml(cl.sync || '—') + (cl.sync_failure ? ` <span class="text-amber-300 text-xs">${escapeHtml(cl.sync_failure)}</span>` : '')),
+        ].join('') : '';
+        const isCluster = state.mode === 'cluster';
         $('sysStats').innerHTML = `
         <table class="w-full">
             <tr class="border-b border-slate-700"><td class="text-slate-500 w-32">IP Address</td><td class="font-mono text-white">${escapeHtml(r.data.ip)}</td></tr>
             <tr class="border-b border-slate-700"><td class="text-slate-500">Version</td><td class="text-white">${escapeHtml(r.data.version)}</td></tr>
-            <tr><td class="text-slate-500">HA Role</td><td><span class="badge ${badge}">${escapeHtml(role)}</span></td></tr>
-            ${haStRow}
+            <tr><td class="text-slate-500">${isCluster ? 'Cluster role' : 'HA Role'}</td><td><span class="badge ${badge}">${escapeHtml(role)}</span></td></tr>
+            ${isCluster ? clusterRows : haStRow}
             ${hostRow}
         </table>`;
         
@@ -1775,7 +1799,19 @@ async function loadOverview(background) {
             banner.classList.remove('flex');
         }
 
-        if (ha.data.hanode) {
+        if (ha.data.hanode && state.mode === 'cluster') {
+            const st = (v, good) => v ? `<span class="badge ${new RegExp('^(' + good + ')$', 'i').test(v) ? 'badge-success' : 'badge-warning'}">${escapeHtml(v)}</span>` : '<span class="text-slate-600">—</span>';
+            const rows = ha.data.hanode.map((n, i) => {
+                const c = n.cluster || {};
+                const admin = c.admin_state && !/^ACTIVE$/i.test(c.admin_state) ? `<div class="text-[11px] text-amber-300">admin ${escapeHtml(c.admin_state)}</div>` : '';
+                const sync = c.sync_failure ? `<div class="text-[11px] text-amber-300" title="${escapeHtml(c.sync_failure)}">sync failed</div>` : '';
+                return `<tr class="border-b border-slate-800/50">` +
+                    `<td><div class="text-white">${escapeHtml(n.name || '')} <span class="text-slate-500 text-xs">#${escapeHtml(String(n.id ?? i + 1))}</span></div><div class="font-mono text-slate-400 text-xs">${escapeHtml(n.ipaddress || '')}</div></td>` +
+                    `<td>${c.cco ? '<span class="badge badge-success">CCO</span>' : '<span class="text-slate-400 text-xs">member</span>'}</td>` +
+                    `<td>${st(c.op_state, 'ACTIVE')}${admin}</td><td>${st(c.health, 'UP')}${sync}</td></tr>`;
+            }).join('');
+            $('haStatus').innerHTML = `<table><thead><tr><th>Node</th><th>Role</th><th>State</th><th>Health</th></tr></thead><tbody>${rows}</tbody></table>`;
+        } else if (ha.data.hanode) {
             const rows = ha.data.hanode.map((n, i) => {
                 const s = (n.state || 'Unknown').toUpperCase();
                 return `<tr class="border-b border-slate-800/50"><td class="text-slate-500">${i + 1}</td>` +
@@ -1910,9 +1946,9 @@ const FAIL_HEALTH = { UP: 'Up', DISABLED: 'HA disabled', INIT: 'Starting (INIT)'
 
 function failBadge(type) {
     const t = String(type || '').toLowerCase();
-    if (/unreachable|both nodes|health failure/.test(t)) return 'badge-danger';
+    if (/unreachable|both nodes|health failure|out of service/.test(t)) return 'badge-danger';
     if (/back|recovered/.test(t)) return 'badge-success';
-    if (/failover/.test(t)) return 'badge-warning';
+    if (/failover|cco change/.test(t)) return 'badge-warning';
     return 'badge-muted';
 }
 
@@ -1922,18 +1958,49 @@ function failNodeName(e, ip) {
 }
 
 function failRoleCls(role) {
-    return role === 'Primary' ? 'text-emerald-300' : role === 'Unknown' ? 'text-red-300' : 'text-slate-200';
+    return role === 'Primary' || role === 'Coordinator' || role === 'ACTIVE' ? 'text-emerald-300'
+        : role === 'Unknown' || role === 'UNKNOWN' || role === 'INACTIVE' ? 'text-red-300' : 'text-slate-200';
 }
 
 // Which address became what, from the recorded changes (older events: their text).
 function failChanges(e) {
-    const ch = (e.detail?.changes || []).filter(c => c.field === 'role');
+    const ch = (e.detail?.changes || []).filter(c => c.field === 'role' || c.field === 'op_state');
     const list = ch.length ? ch : (e.detail?.changes || []);
     if (!list.length) return escapeHtml(e.role_change || '');
     return list.map(c => `<div class="break-words"><span class="font-mono text-blue-300">${escapeHtml(c.ip)}</span>${c.name ? ` <span class="text-slate-500">${escapeHtml(c.name)}</span>` : ''}
         ${c.field === 'role' ? '' : `<span class="text-slate-500">${escapeHtml(c.label.toLowerCase())}</span>`}
         <span class="${failRoleCls(c.from)}">${escapeHtml(FAIL_HEALTH[c.from] || c.from)}</span> <span class="text-slate-500">→</span>
         <span class="${failRoleCls(c.to)} font-semibold">${escapeHtml(FAIL_HEALTH[c.to] || c.to)}</span></div>`).join('');
+}
+
+// A cluster event: every node before and after, as the coordinator and the node itself saw it.
+function failClusterTable(d, roleCell, healthCell) {
+    const before = d.before?.nodes || {}, after = d.after?.nodes || {};
+    const ips = [...new Set([...Object.keys(after), ...Object.keys(before)])];
+    const pair = (ip, f, good) => {
+        const a = before[ip]?.[f] || '', b = after[ip]?.[f] || '';
+        const cls = x => new RegExp('^(' + good + ')$', 'i').test(x) ? 'text-emerald-300' : (x ? 'text-amber-300' : 'text-slate-500');
+        if (a && b && a !== b) return `<span class="${cls(a)}">${escapeHtml(a)}</span> <span class="text-slate-500">→</span> <span class="${cls(b)} font-semibold">${escapeHtml(b)}</span>`;
+        return `<span class="${cls(b || a)}">${escapeHtml(b || a || '—')}</span>`;
+    };
+    return `<div class="text-slate-400 mb-2 mt-4 text-xs font-semibold uppercase tracking-wider">The nodes - before and after</div>
+        <div class="table-container"><table class="w-full text-xs"><thead><tr>
+        <th>Node</th><th>Role</th><th>Operational</th><th>Health</th><th>Admin</th><th>The coordinator sees it as</th><th>Dashboard</th><th>Sync</th><th>Priority</th><th>Interfaces</th></tr></thead><tbody>
+        ${ips.map(ip => {
+            const n = after[ip] || before[ip] || {};
+            const cv = n.seen_by_cco;
+            return `<tr>
+                <td><div class="font-mono text-blue-300">${escapeHtml(ip)}</div><div class="text-slate-500">${escapeHtml([n.name, n.id !== undefined && n.id !== null ? 'node ' + n.id : ''].filter(Boolean).join(' · '))}</div></td>
+                <td class="whitespace-nowrap">${roleCell(ip)}</td>
+                <td class="whitespace-nowrap">${pair(ip, 'op_state', 'ACTIVE')}</td>
+                <td class="whitespace-nowrap">${pair(ip, 'health', 'UP')}</td>
+                <td class="whitespace-nowrap">${pair(ip, 'admin_state', 'ACTIVE|SPARE|PASSIVE')}</td>
+                <td>${cv ? `${escapeHtml(cv.op_state || '—')} <span class="text-slate-500">${escapeHtml(cv.health || '')}</span>` : '<span class="text-slate-600">—</span>'}</td>
+                <td>${n.reachable ? '<span class="text-emerald-300">answers</span>' : `<span class="text-red-300">${escapeHtml(n.error ? 'unreachable: ' + n.error : 'unreachable')}</span>`}</td>
+                <td>${escapeHtml(n.sync || '—')}${n.sync_failure ? `<div class="text-amber-300">${escapeHtml(n.sync_failure)}</div>` : ''}</td>
+                <td>${escapeHtml(n.priority ?? '—')}</td>
+                <td>${escapeHtml([n.failed_ifaces && 'failed: ' + n.failed_ifaces, n.disabled_ifaces && 'disabled: ' + n.disabled_ifaces].filter(Boolean).join('; ') || '—')}</td></tr>`;
+        }).join('')}</tbody></table></div>`;
 }
 
 function failDuration(secs) {
@@ -2002,7 +2069,8 @@ function toggleFailover(i) {
             const rate = after[ip]?.hb_rx_rate;
             return `${Number(b).toLocaleString()}${a !== null && a !== undefined && a !== b ? ` <span class="text-slate-500">(+${(b - a).toLocaleString()})</span>` : (a === b ? ' <span class="text-red-300">(none new)</span>' : '')}${rate !== null && rate !== undefined ? ` <span class="text-slate-500">${rate}/s</span>` : ''}`;
         };
-        html += head('The nodes - before and after') + `<div class="table-container"><table class="w-full text-xs"><thead><tr>
+        if (d.cluster) html += failClusterTable(d, roleCell, healthCell);
+        else html += head('The nodes - before and after') + `<div class="table-container"><table class="w-full text-xs"><thead><tr>
             <th>Node</th><th>Role</th><th>Health</th><th>HA status</th><th>Its peer sees it as</th><th>Dashboard</th><th>Heartbeats received</th><th>Sync</th><th>In this role for</th><th>Interfaces</th></tr></thead><tbody>
             ${ips.map(ip => {
                 const n = after[ip] || before[ip] || {};
@@ -2022,7 +2090,7 @@ function toggleFailover(i) {
 
         const set = d.after?.settings || {};
         const times = [
-            cell('Role change on the appliance', formatILTime(e.timestamp)),
+            cell(d.cluster ? 'Time' : 'Role change on the appliance', formatILTime(e.timestamp)),
             cell('Seen by the dashboard', formatILTime(d.detected_at)),
             d.before?.at ? cell('Previous read', failEpochTime(d.before.at)) : '',
             shown(set.dead_interval) ? cell('Dead interval', `${set.dead_interval} s`) : '',
@@ -2030,8 +2098,12 @@ function toggleFailover(i) {
             shown(set.failsafe) ? cell('Fail-safe', set.failsafe) : '',
             shown(set.max_flips) ? cell('Max flips', `${set.max_flips}${shown(set.max_flip_time) ? ' in ' + set.max_flip_time + ' s' : ''}`) : '',
             shown(set.inc) ? cell('INC mode', set.inc) : '',
+            shown(set.preemption) ? cell('Preemption', set.preemption) : '',
+            shown(set.quorum) ? cell('Quorum', set.quorum) : '',
+            shown(set.cluster_state) ? cell('Cluster state', set.cluster_state) : '',
+            d.clip?.ip ? cell('Cluster IP', `${d.clip.ip} - ${d.clip.reachable ? 'answers' : 'not answering' + (d.clip.error ? ': ' + d.clip.error : '')}`) : '',
         ].filter(Boolean).join('');
-        html += head('Times and HA settings') + `<div class="grid grid-cols-2 md:grid-cols-4 gap-4">${times}</div>`;
+        html += head(d.cluster ? 'Times and cluster settings' : 'Times and HA settings') + `<div class="grid grid-cols-2 md:grid-cols-4 gap-4">${times}</div>`;
     }
 
     // what the appliance logged

@@ -15,6 +15,9 @@ part of it:
   - heartbeats: the peer saw the node as UNKNOWN; whether the dashboard could
     still reach it tells a dead node from a broken link between the nodes
   - STATECHANGE lines the appliance logs for the self and remote node
+
+A cluster is read the same way through its CLIP and each member's NSIP
+(`clusternode`, `clusterinstance`): see "clusters" below.
 """
 import logging
 import os
@@ -55,7 +58,7 @@ _CMD = re.compile(r'Command\s+"(?P<cmd>.*)"\s*-\s*Status\s+"(?P<status>[^"]*)"',
 HA_COMMAND = re.compile(
     r"^\s*(force\s+(ha\s+)?(failover|sync)|(set|unset|add|rm|enable|disable)\s+ha\b|sync\s+ha\b|reboot\b|"
     r"shutdown\b|install\s+ns\b|(set|enable|disable|reset)\s+interface\b|(set|enable|disable)\s+channel\b|"
-    r"(enable|disable|set)\s+cluster\b|force\s+cluster\b)", re.I)
+    r"(add|rm|set|unset|enable|disable|join|sync|force)\s+cluster\b)", re.I)
 
 
 def parse_ns(module, event, body):
@@ -86,7 +89,8 @@ def parse_ns(module, event, body):
                     "message": f'{d.group("dev").strip()}: {state}'[:500],
                     "fields": {"device": d.group("dev").strip(), "node": n.group("which").lower(), "node_ip": ip,
                                "state": state}}
-    if ev.startswith("HA") or re.search(r"\bheart\s?beat", body, re.I):
+    if ev.startswith(("HA", "CLUSTER")) or re.search(
+            r"\bheart\s?beat|\bcluster\s+(node|instance)\b|\bconfiguration\s+coordinator", body, re.I):
         return {"kind": "ha_state", "etype": ev, "message": body.strip()[:500], "fields": {}}
     return None
 
@@ -217,12 +221,15 @@ def _primaries(snap) -> list:
     return sorted(ip for ip, n in (snap.get("nodes") or {}).items() if n.get("role") == "Primary")
 
 
-def changes(prev, cur) -> list:
+HA_FIELDS = (("role", "Role"), ("health", "Health"), ("ha_status", "HA status"))
+
+
+def changes(prev, cur, fields=HA_FIELDS) -> list:
     out = []
     pn, cn = prev.get("nodes") or {}, cur.get("nodes") or {}
     for ip in sorted(set(pn) | set(cn)):
         a, b = pn.get(ip) or {}, cn.get(ip) or {}
-        for field, label in (("role", "Role"), ("health", "Health"), ("ha_status", "HA status")):
+        for field, label in fields:
             x, y = a.get(field) or "", b.get(field) or ""
             if x and y and x != y:
                 out.append({"ip": ip, "name": b.get("name") or a.get("name") or "", "field": field, "label": label,
@@ -299,21 +306,279 @@ def make_event(iid, name, prev, cur, ch, tz=None) -> dict:
             "instance_name": name, "detail": detail}
 
 
+# ============================================================== clusters
+# A cluster has no primary: every ACTIVE node serves traffic, and one of them is
+# the configuration coordinator (CCO), the node the cluster IP (CLIP) reaches.
+# What is watched: which node is the CCO, each node's operational state (ACTIVE /
+# INACTIVE / UNKNOWN), health and admin state (ACTIVE / SPARE / PASSIVE).
+CLUSTER_FIELDS = (("role", "Role"), ("op_state", "Operational state"), ("health", "Health"),
+                  ("admin_state", "Admin state"))
+CCO, MEMBER = "Coordinator", "Member"
+
+
+def read_cluster_node(nitro, timeout=4) -> dict:
+    """The cluster's nodes and its settings, as one node (or the CLIP) sees them."""
+    out = {"reachable": False, "error": "", "nodes": [], "instance": {}}
+    try:
+        r = nitro._get("/config/clusternode", custom_timeout=timeout) or {}
+        out["nodes"] = [n for n in (r.get("clusternode") or []) if isinstance(n, dict)]
+        out["reachable"] = True
+    except Exception as e:
+        out["error"] = _why_unreachable(e)
+        return out
+    try:
+        out["instance"] = _first(nitro._get("/config/clusterinstance", custom_timeout=timeout), "clusterinstance")
+    except Exception:
+        pass
+    return out
+
+
+def _yes(v) -> bool:
+    return str(v).strip().lower() in ("true", "yes", "1", "enabled", "on")
+
+
+def cluster_snapshot(clip_ip, readings: dict, name_of=None) -> dict:
+    """readings {address: read_cluster_node()} for the CLIP and every member the
+    dashboard reaches -> a snapshot like snapshot(): {'at', 'nodes', 'settings',
+    'clip', 'cluster': True}. The coordinator's view (through the CLIP) wins; a
+    member that the CLIP cannot tell about is described by its own answer."""
+    clip = readings.get(clip_ip) or {}
+    view = clip.get("nodes") or []
+    if not view:                     # the CLIP does not answer: any member's view of the cluster
+        view = next((r.get("nodes") for ip, r in readings.items() if ip != clip_ip and r.get("nodes")), [])
+    ips = [_ip_of(n) for n in view if _ip_of(n)]
+    ips += [ip for ip in readings if ip != clip_ip and ip not in ips]
+    inst = clip.get("instance") or next((r.get("instance") for r in readings.values() if r.get("instance")), {}) or {}
+    nodes = {}
+    for ip in ips:
+        seen = next((n for n in view if _ip_of(n) == ip), None)
+        own = readings.get(ip) or {}
+        mine = next((n for n in (own.get("nodes") or []) if _ip_of(n) == ip or _yes(n.get("islocalnode"))), None)
+        src = seen or mine or {}
+        role = ""
+        if src:
+            role = CCO if _yes(src.get("isconfigurationcoordinator")) else MEMBER
+        nodes[ip] = {
+            "ip": ip, "name": (name_of(ip) if name_of else "") or str(src.get("name") or ""),
+            "id": src.get("nodeid"), "configured": ip in readings,
+            "reachable": bool(own.get("reachable")), "error": own.get("error") or "",
+            "role": role,
+            "op_state": str(src.get("masterstate") or "").upper(),
+            "health": str(src.get("health") or "").upper(),
+            "admin_state": str(src.get("state") or "").upper(),
+            "sync": str(src.get("operationalsyncstate") or src.get("syncstate") or ""),
+            "sync_failure": str(src.get("syncfailurereason") or ""),
+            "priority": _num(src.get("priority")),
+            "nodegroup": str(src.get("nodegroup") or ""),
+            "backplane": str(src.get("backplane") or ""),
+            "failed_ifaces": str(src.get("partialfailifaces") or ""),
+            "disabled_ifaces": str(src.get("disabledifaces") or ""),
+            "seen_by_cco": ({"role": CCO if _yes(seen.get("isconfigurationcoordinator")) else MEMBER,
+                             "op_state": str(seen.get("masterstate") or "").upper(),
+                             "health": str(seen.get("health") or "").upper()} if seen else None),
+            "own_view": ({"op_state": str(mine.get("masterstate") or "").upper(),
+                          "health": str(mine.get("health") or "").upper()} if mine else None),
+        }
+    settings = {"dead_interval": inst.get("deadinterval"), "hello_interval": inst.get("hellointerval"),
+                "preemption": inst.get("preemption"), "quorum": inst.get("quorumtype"), "inc": inst.get("inc"),
+                "cluster_state": inst.get("operationalstate") or inst.get("status"),
+                "no_heartbeat_on_node": inst.get("clusternoheartbeatonnode"),
+                "clip_failure": inst.get("clusterclipfailure")}
+    return {"at": time.time(), "nodes": nodes, "settings": {k: v for k, v in settings.items() if v not in (None, "")},
+            "cluster": True, "clip": {"ip": clip_ip, "reachable": bool(clip.get("reachable")), "error": clip.get("error") or ""}}
+
+
+def _ccos(snap) -> list:
+    return sorted(ip for ip, n in (snap.get("nodes") or {}).items() if n.get("role") == CCO)
+
+
+_OUT = ("INACTIVE", "UNKNOWN", "DOWN", "NOT UP")
+
+
+def cluster_kind(prev, cur, ch) -> str:
+    pc, cc = _ccos(prev), _ccos(cur)
+    if pc and cc and set(pc) != set(cc):
+        return "CCO change"
+    ops = [c for c in ch if c["field"] == "op_state"]
+    health = [c for c in ch if c["field"] == "health"]
+    gone = [c for c in ops if c["to"] in _OUT] + [c for c in health if c["to"] in ("DOWN", "UNKNOWN", "NOT UP")]
+    if gone:
+        n = (cur.get("nodes") or {}).get(gone[0]["ip"]) or {}
+        return "Node unreachable" if not n.get("reachable") or n.get("health") in ("DOWN", "UNKNOWN") else "Node out of service"
+    if any("FAIL" in c["to"] for c in health):          # also when it comes back failed
+        return "Health failure"
+    if any(c["to"] == "ACTIVE" for c in ops) or any(c["from"] in ("DOWN", "UNKNOWN", "NOT UP") for c in health):
+        return "Node back"
+    if any("FAIL" in c["from"] and c["to"] == "UP" for c in health):
+        return "Health recovered"
+    if any(c["field"] == "admin_state" for c in ch):
+        return "Node setting changed"
+    return "Cluster change"
+
+
+def cluster_summary(ch) -> str:
+    """'192.0.2.21 Member → Coordinator · 192.0.2.20 Coordinator → Member, ACTIVE → UNKNOWN'."""
+    by = {}
+    for c in ch:
+        by.setdefault(c["ip"], []).append(c)
+    parts = []
+    for ip, cs in by.items():
+        cs = sorted(cs, key=lambda c: [f for f, _ in CLUSTER_FIELDS].index(c["field"]))
+        txt = ", ".join((f'{c["from"]} → {c["to"]}' if c["field"] in ("role", "op_state")
+                         else f'{c["label"].lower()} {c["from"]} → {c["to"]}') for c in cs)
+        parts.append(f"{ip} {txt}")
+    return " · ".join(parts)
+
+
+def make_cluster_event(iid, name, prev, cur, ch, tz=None) -> dict:
+    kind = cluster_kind(prev, cur, ch)
+    pc, cc = _ccos(prev), _ccos(cur)
+    now = datetime.fromtimestamp(cur["at"], tz) if tz else datetime.fromtimestamp(cur["at"]).astimezone()
+    detail = {
+        "version": 1, "cluster": True, "kind": kind, "changes": ch, "old_cco": pc, "new_cco": cc,
+        "before": {"at": prev.get("at"), "nodes": prev.get("nodes") or {}, "settings": prev.get("settings") or {}},
+        "after": {"at": cur["at"], "nodes": cur["nodes"], "settings": cur.get("settings") or {}},
+        "clip": cur.get("clip") or {}, "detected_at": now.isoformat(timespec="seconds"),
+    }
+    cause = explain(detail, [])
+    first = (cc if kind == "CCO change" and cc else [ch[0]["ip"]])[0]
+    return {"timestamp": now.isoformat(timespec="seconds"), "type": kind, "reason": cause["title"],
+            "role_change": cluster_summary(ch), "ip": first, "instance": str(iid), "instance_name": name,
+            "detail": detail}
+
+
+def explain_cluster(detail, evidence) -> dict:
+    after = (detail.get("after") or {}).get("nodes") or {}
+    before = (detail.get("before") or {}).get("nodes") or {}
+    nodes = {**before, **after}
+    settings = (detail.get("after") or {}).get("settings") or {}
+    kind = detail.get("kind") or ""
+    ch = detail.get("changes") or []
+    old, new = detail.get("old_cco") or [], detail.get("new_cco") or []
+    notes = []
+    if _yes(settings.get("no_heartbeat_on_node")):
+        notes.append("The cluster reports a node it gets no heartbeats from (clusternoheartbeatonnode).")
+    for ip, n in after.items():
+        if n.get("sync_failure"):
+            notes.append(f'{_label(nodes, ip)}: configuration sync failed - {n["sync_failure"]}')
+    cmds = [e for e in evidence if e["kind"] == "ha_command" and _ok(e["status"])]
+
+    def cmd(rx):
+        return next((e for e in reversed(cmds) if re.search(rx, e["message"], re.I)), None)
+
+    def by(e, title, code="admin_ha"):
+        return {"code": code, "title": f'{title} by {e["user"] or "an administrator"}',
+                "text": f'{_who(e)} ran "{e["message"]}"' + (f' on {e["node"]}' if e["node"] else "") + ".", "notes": notes}
+
+    e = cmd(r"^\s*(set|unset)\s+cluster\s+node\b.*-state|^\s*(rm|add)\s+cluster\s+node|^\s*(disable|enable)\s+cluster")
+    if e:
+        return by(e, "Cluster node changed")
+    e = cmd(r"^\s*(reboot|shutdown|install\s+ns)\b")
+    if e:
+        low = e["message"].lower()
+        return by(e, "Node " + ("upgraded" if "install" in low else "shut down" if "shutdown" in low else "restarted"),
+                  "restart")
+    e = cmd(r"^\s*(disable|set|reset)\s+(interface|channel)\b")
+    if e:
+        return by(e, "Interface changed")
+
+    affected = [ip for ip in old if ip not in new] or list(dict.fromkeys(c["ip"] for c in ch)) or list(after)
+    dead = settings.get("dead_interval") or 3
+    if kind == "CCO change":
+        gone = affected[0] if affected else ""
+        newc = new[0] if new else ""
+        g, nb, nn = after.get(gone) or {}, before.get(gone) or {}, after.get(newc) or {}
+        if g.get("admin_state") in ("SPARE", "PASSIVE") and nb.get("admin_state") == "ACTIVE":
+            return {"code": "admin_ha", "title": f'Coordinator set to {g["admin_state"]}',
+                    "text": f'The admin state of {_label(nodes, gone)} was changed to {g["admin_state"]} (set cluster node '
+                            f'-state), so {_label(nodes, newc)} became the coordinator.', "notes": notes}
+        # The old coordinator is fine and the new one has the lower priority value:
+        # with preemption on, a returning node takes the role back.
+        healthy = (g.get("op_state") == "ACTIVE" and g.get("health") in ("UP", "") and g.get("reachable", True))
+        if (healthy and _yes(settings.get("preemption")) and nn.get("priority") is not None
+                and g.get("priority") is not None and nn["priority"] < g["priority"]):
+            return {"code": "admin_ha", "title": "Coordinator taken back (preemption)",
+                    "text": f"{_label(nodes, newc)} (priority {nn['priority']}) took the coordinator role back from "
+                            f"{_label(nodes, gone)} (priority {g['priority']}): preemption is on, and the node with the "
+                            "lower priority value is the coordinator whenever it is in the cluster.", "notes": notes}
+    hs = next((c for c in ch if c["field"] == "admin_state" and c["to"] in ("SPARE", "PASSIVE")), None)
+    if hs and kind != "CCO change":
+        return {"code": "admin_ha", "title": f'Admin state set to {hs["to"]}',
+                "text": f'The admin state of {_label(nodes, hs["ip"])} changed from {hs["from"]} to {hs["to"]} '
+                        "(set cluster node -state): a SPARE or PASSIVE node does not serve traffic, so it is INACTIVE. "
+                        "Who changed it is not in the log lines the dashboard received.", "notes": notes}
+    for ip in affected:
+        n = after.get(ip) or {}
+        h = n.get("health") or ""
+        if "FAIL" in h:
+            ifs = n.get("failed_ifaces")
+            return {"code": "health", "title": f"{h.title()} on {_label(nodes, ip)}",
+                    "text": f"{_label(nodes, ip)} reports {h}" + (f": interface(s) {ifs} failed" if ifs else "")
+                            + (" - the coordinator role moved to " + _label(nodes, new[0]) if kind == "CCO change" and new else "")
+                            + ".", "notes": notes}
+        if h == "INIT":
+            return {"code": "restart", "title": "Node restarting",
+                    "text": f"{_label(nodes, ip)} is starting up (INIT) - it was restarted or is rejoining.", "notes": notes}
+    if kind == "Node back":
+        back = next((c["ip"] for c in ch if c["field"] == "op_state" and c["to"] == "ACTIVE"), affected[0] if affected else "")
+        return {"code": "recovered", "title": "Node back in the cluster",
+                "text": f"{_label(nodes, back)} is ACTIVE in the cluster again.", "notes": notes}
+    if kind == "Health recovered":
+        return {"code": "recovered", "title": "Health back to UP", "text": "The node's health is UP again.", "notes": notes}
+    for ip in affected:
+        n = after.get(ip) or {}
+        cco_view = n.get("seen_by_cco") or {}
+        lost = ((cco_view.get("op_state") in _OUT or cco_view.get("health") in ("DOWN", "UNKNOWN", "NOT UP")
+                 or n.get("op_state") in _OUT)
+                and n.get("admin_state") in ("", "ACTIVE"))          # SPARE / PASSIVE nodes are INACTIVE by design
+        if not lost and kind != "CCO change":
+            continue
+        role_txt = " The coordinator role moved to " + _label(nodes, new[0]) + "." if kind == "CCO change" and new else ""
+        if not n.get("reachable") and n.get("configured"):
+            return {"code": "heartbeat", "title": "Node stopped answering",
+                    "text": f"The cluster got no heartbeats from {_label(nodes, ip)} for the dead interval ({dead} s) and "
+                            f"took it out of the cluster.{role_txt} The dashboard cannot reach it either "
+                            f"({n.get('error') or 'no answer'}): it was powered off, crashed or restarting, or lost its network.",
+                    "notes": notes}
+        if n.get("reachable") and lost:
+            return {"code": "heartbeat_link", "title": "Node answers, but not to the cluster",
+                    "text": f"{_label(nodes, ip)} still answers the dashboard, but the cluster sees it as "
+                            f"{cco_view.get('op_state') or n.get('op_state') or 'out of the cluster'}: the backplane or "
+                            f"heartbeat link between the nodes failed, or it lost quorum.{role_txt}", "notes": notes}
+    hs = next((c for c in ch if c["field"] == "admin_state"), None)
+    if hs:
+        return {"code": "admin_ha", "title": f'Admin state set to {hs["to"]}',
+                "text": f'The admin state of {_label(nodes, hs["ip"])} changed from {hs["from"]} to {hs["to"]} '
+                        "(set cluster node -state). Who changed it is not in the log lines the dashboard received.",
+                "notes": notes}
+    return {"code": "unknown", "title": "Reason not recorded by the appliance",
+            "text": "The cluster's state does not show why, and no log line about it reached the dashboard. "
+                    "Send the cluster nodes' syslog to the dashboard (with INFO level, for the commands) to see who did what.",
+            "notes": notes}
+
+
 # ============================================================== polling
 _last = {}                    # instance id -> last snapshot
 _lock = threading.Lock()
 _pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ha-read")
 
 
-def poll_instance(iid, name, targets, roles_store: dict, name_of=None, tz=None):
+def poll_instance(iid, name, targets, roles_store: dict, name_of=None, tz=None, clip=None):
     """Read every node of one HA instance, compare with the last read and return
     the event for a change (or None). targets: [(ip, nitro)]. roles_store keeps
-    each node's last role across restarts ({'<instance>|<ip>': role}), updated here."""
+    each node's last role across restarts ({'<instance>|<ip>': role}), updated here.
+    A cluster passes its members as targets and clip=(CLIP address, nitro)."""
     targets = [(str(ip), nit) for ip, nit in targets if ip]
-    if not targets:
-        return None
-    readings = dict(zip([ip for ip, _ in targets], _pool.map(lambda t: read_node(t[1]), targets)))
-    cur = snapshot(readings, [ip for ip, _ in targets], name_of)
+    if clip:
+        clip = (str(clip[0]), clip[1])
+        alls = [clip] + [t for t in targets if t[0] != clip[0]]
+        readings = dict(zip([ip for ip, _ in alls], _pool.map(lambda t: read_cluster_node(t[1]), alls)))
+        cur = cluster_snapshot(clip[0], readings, name_of)
+    else:
+        if not targets:
+            return None
+        readings = dict(zip([ip for ip, _ in targets], _pool.map(lambda t: read_node(t[1]), targets)))
+        cur = snapshot(readings, [ip for ip, _ in targets], name_of)
     iid = str(iid)
     with _lock:
         prev = _last.get(iid)
@@ -324,8 +589,12 @@ def poll_instance(iid, name, targets, roles_store: dict, name_of=None, tz=None):
                               if k.startswith(prefix) and isinstance(v, str)}}
         if not any(n.get("role") for n in cur["nodes"].values()):
             return None           # nothing could be read: compare at the next read
-        ch = changes(prev, cur)
-        ev = make_event(iid, name, prev, cur, ch, tz) if ch else None
+        if clip:
+            ch = changes(prev, cur, CLUSTER_FIELDS)
+            ev = make_cluster_event(iid, name, prev, cur, ch, tz) if ch else None
+        else:
+            ch = changes(prev, cur)
+            ev = make_event(iid, name, prev, cur, ch, tz) if ch else None
         # A node nobody could say anything about keeps its last known state.
         keep = dict(cur, nodes=dict(cur["nodes"]))
         for ip, n in cur["nodes"].items():
@@ -400,6 +669,8 @@ def explain(detail, evidence) -> dict:
     """{'code', 'title', 'text', 'notes'} - the most likely reason for the event."""
     detail = detail or {}
     evidence = evidence or []
+    if detail.get("cluster"):
+        return explain_cluster(detail, evidence)
     after = (detail.get("after") or {}).get("nodes") or {}
     before = (detail.get("before") or {}).get("nodes") or {}
     nodes = {**before, **after}

@@ -274,8 +274,8 @@ def _check_scope_params():
     if inst is not None and inst != '' and str(inst) not in {str(i.get('id')) for i in get_instances()}:
         return jsonify({'error': 'Unknown instance', 'code': 'unknown_instance'}), 404
     node = request.args.get('node')
-    if node is not None and node != '' and node not in ('primary', 'secondary'):
-        return jsonify({'error': "node must be 'primary' or 'secondary'"}), 400
+    if node is not None and node != '' and node not in ('primary', 'secondary') and not MEMBER_KEY.fullmatch(node):
+        return jsonify({'error': "node must be 'primary', 'secondary' or a cluster node (node<id>)"}), 400
     if request.path.startswith(_NETSCALER_ONLY) and get_mode(inst) == 'sdx':
         return jsonify({'error': 'This instance is an SDX Management Service. Open one of its NetScaler instances '
                                  'for this (add it as an instance of its own).', 'code': 'sdx'}), 409
@@ -1155,9 +1155,64 @@ def _nextgen_probe(cfg):
                         'error': str(e)[:300]}
     return out
 
+# Cluster members, read through the cluster IP (CLIP). Each one is reached at its
+# own NSIP with the CLIP's account - system users are the same on every node of a
+# cluster - under the node key 'node<id>'.
+MEMBER_KEY = re.compile(r'node(\d{1,5})')
+_CLUSTER_CACHE = {}                  # instance id -> (read at, [member])
+
+def _true(v) -> bool:
+    return str(v).strip().lower() in ('true', 'yes', '1')
+
+def cluster_members(instance_id=None, max_age=20) -> list:
+    """[{key, id, ip, cco, raw}] for a cluster instance, by node id; the last list
+    read when the CLIP does not answer."""
+    inst = get_instance(instance_id)
+    iid = str(inst.get('id'))
+    if str(inst.get('mode')) != 'cluster' or not (inst.get('primary') or {}).get('ip'):
+        return []
+    hit = _CLUSTER_CACHE.get(iid)
+    if hit and time.time() - hit[0] < max_age:
+        return hit[1]
+    try:
+        r = get_nitro('primary', iid)._get('/config/clusternode', custom_timeout=4) or {}
+        rows = [n for n in (r.get('clusternode') or []) if isinstance(n, dict)]
+    except Exception:
+        return hit[1] if hit else []
+    members = []
+    for n in rows:
+        nid, ip = n.get('nodeid'), str(n.get('ipaddress') or '').strip()
+        if str(nid).strip().isdigit() and ip:
+            members.append({'key': f'node{int(nid)}', 'id': int(nid), 'ip': ip, 'raw': n,
+                            'cco': _true(n.get('isconfigurationcoordinator'))})
+    members.sort(key=lambda m: m['id'])
+    _CLUSTER_CACHE[iid] = (time.time(), members)
+    return members
+
+def node_cfg(node_key, instance_id=None) -> dict:
+    """The connection settings of a node key: primary / secondary from the instance,
+    a cluster member from the CLIP's settings with the member's address."""
+    inst = get_instance(instance_id)
+    key = node_key or 'primary'
+    if key in ('primary', 'secondary'):
+        c = inst.get(key)
+        return c if isinstance(c, dict) else {}
+    if MEMBER_KEY.fullmatch(str(key)) and str(inst.get('mode')) == 'cluster':
+        mem = next((m for m in cluster_members(inst.get('id')) if m['key'] == key), None)
+        if mem:
+            return {**(inst.get('primary') or {}), 'ip': mem['ip'], 'member': mem}
+    return {}
+
+def view_node_keys(instance_id=None) -> list:
+    """The nodes a person can pick: in a cluster the CLIP and every member."""
+    keys = list(active_node_keys(instance_id))
+    if get_mode(instance_id) == 'cluster':
+        keys += [m['key'] for m in cluster_members(instance_id)]
+    return keys
+
 def get_nitro(node_key: str, instance_id=None) -> NetScalerAPI:
-    cfg = get_instance(instance_id).get(node_key or 'primary') if (node_key or 'primary') in ('primary', 'secondary') else None
-    if not isinstance(cfg, dict): raise KeyError(f"Unknown node '{node_key}'")
+    cfg = node_cfg(node_key, instance_id)
+    if not cfg: raise KeyError(f"Unknown node '{node_key}'")
     return NetScalerAPI(cfg['ip'], cfg['username'], cfg['password'], cfg['port'], cfg['protocol'])
 
 def get_sdx(instance_id=None) -> SdxAPI:
@@ -1207,23 +1262,31 @@ def _ha_status_meta(node):
     return {'code': code, 'label': label, 'severity': severity,
             'forced': code in ('STAYPRIMARY', 'STAYSECONDARY')}
 
+def _cluster_node_view(raw: dict) -> dict:
+    """What the dashboard shows of one cluster node."""
+    return {'id': raw.get('nodeid'), 'cco': _true(raw.get('isconfigurationcoordinator')),
+            'admin_state': str(raw.get('state') or ''), 'op_state': str(raw.get('masterstate') or ''),
+            'health': str(raw.get('health') or ''),
+            'sync': str(raw.get('operationalsyncstate') or raw.get('syncstate') or ''),
+            'sync_failure': str(raw.get('syncfailurereason') or ''), 'priority': raw.get('priority'),
+            'nodegroup': str(raw.get('nodegroup') or ''), 'backplane': str(raw.get('backplane') or ''),
+            'failed_ifaces': str(raw.get('partialfailifaces') or '')}
+
 def _get_cluster_nodes_normalized(instance_id=None):
-    """Read cluster members from the CLIP (primary) and map them to the hanode shape."""
-    try:
-        r = get_nitro('primary', instance_id)._get('/config/clusternode', custom_timeout=4)
-        nodes = r.get('clusternode', []) if isinstance(r, dict) else []
-    except Exception:
-        return {}
+    """Cluster members (read through the CLIP) in the hanode shape, plus what is
+    particular to a cluster: the coordinator, admin and operational state."""
+    iid = str(get_instance(instance_id).get('id'))
     norm = []
-    for n in nodes:
-        if not isinstance(n, dict): continue
+    for m in cluster_members(instance_id, max_age=5):
+        cv = _cluster_node_view(m['raw'])
         norm.append({
-            'id': n.get('nodeid'),
-            'name': (f"Cluster Node {n.get('nodeid')}" if n.get('nodeid') is not None else None),
-            'ipaddress': n.get('ipaddress') or n.get('nodeip') or n.get('ip') or '',
-            'state': str(n.get('masterstate') or n.get('state') or n.get('health') or 'Unknown'),
-            'hasync': str(n.get('operationalsyncstate') or n.get('effectivestate') or ''),
-            'hastatus': str(n.get('hastatus') or n.get('health') or ''),
+            'id': m['id'], 'key': m['key'],
+            'name': _HOSTNAME_CACHE.get((iid, m['key'])) or f"Node {m['id']}",
+            'ipaddress': m['ip'],
+            'state': cv['op_state'] or 'Unknown',
+            'hasync': cv['sync'],
+            'hastatus': cv['health'],
+            'cluster': cv,
         })
     return {'hanode': norm} if norm else {}
 
@@ -1270,23 +1333,36 @@ def ha_poll(instance_id=None):
     """Read both nodes of an HA instance and record what changed since the last
     read (see ha_events). Returns the event, or None."""
     inst = get_instance(instance_id)
-    if str(inst.get('mode')) != 'ha':
+    mode = str(inst.get('mode'))
+    if mode not in ('ha', 'cluster'):
         return None
     iid = str(inst.get('id'))
-    targets, keys = [], {}
-    for nk in active_node_keys(iid):
-        node = inst.get(nk) or {}
-        if node.get('ip'):
+    targets, keys, clip = [], {}, None
+    if mode == 'cluster':
+        cfg = inst.get('primary') or {}
+        if not cfg.get('ip'):
+            return None
+        clip = (str(cfg['ip']), get_nitro('primary', iid))
+        for m in cluster_members(iid, max_age=10):
             try:
-                targets.append((str(node['ip']), get_nitro(nk, iid)))
-                keys[str(node['ip'])] = nk
+                targets.append((m['ip'], get_nitro(m['key'], iid)))
+                keys[m['ip']] = m['key']
             except Exception:
                 continue
+    else:
+        for nk in active_node_keys(iid):
+            node = inst.get(nk) or {}
+            if node.get('ip'):
+                try:
+                    targets.append((str(node['ip']), get_nitro(nk, iid)))
+                    keys[str(node['ip'])] = nk
+                except Exception:
+                    continue
     name_of = lambda ip: _HOSTNAME_CACHE.get((iid, keys.get(ip))) or ''
     with _ha_watch_lock:
         roles = _ha_roles_load()
         before = json.dumps(roles, sort_keys=True)
-        ev = ha_events.poll_instance(iid, inst.get('name'), targets, roles, name_of, APP_TZ)
+        ev = ha_events.poll_instance(iid, inst.get('name'), targets, roles, name_of, APP_TZ, clip=clip)
         if json.dumps(roles, sort_keys=True) != before:
             try:
                 _write_json(HA_STATE_FILE, roles)
@@ -1298,7 +1374,7 @@ def ha_poll(instance_id=None):
 
 def ha_poll_all():
     for inst in get_instances():
-        if str(inst.get('mode')) == 'ha':
+        if str(inst.get('mode')) in ('ha', 'cluster'):
             try: ha_poll(inst.get('id'))
             except Exception as e: logger.warning(f"HA watch of {inst.get('name')}: {e}")
 
@@ -1409,7 +1485,7 @@ def _cached_license(instance_id, node_key):
     return info
 
 def _build_node_overview(node_key: str, instance_id=None) -> dict:
-    cfg = get_instance(instance_id).get(node_key, {})
+    cfg = node_cfg(node_key, instance_id)
     ip = cfg.get('ip')
 
     try:
@@ -1428,11 +1504,27 @@ def _build_node_overview(node_key: str, instance_id=None) -> dict:
 
     role = 'Unknown'
     ha_status = {}
-    ha_data = _get_ha_data_fast(instance_id)
-    for n in ha_data.get('hanode', []):
-        if isinstance(n, dict) and (n.get('ipaddress') or n.get('ip') or n.get('nsip')) == ip:
-            role = n.get('state') or n.get('hacurstate') or n.get('haStatus') or 'Unknown'
-            ha_status = _ha_status_meta(n)
+    cluster = None
+    if get_mode(instance_id) == 'cluster':
+        # A cluster has no primary: say whether this node is the configuration coordinator.
+        members = cluster_members(instance_id, max_age=5)
+        if node_key == 'primary':
+            cco = next((m for m in members if m['cco']), None)
+            role = 'Cluster IP' + (f" - reaches the coordinator, node {cco['id']}" if cco else '')
+            mem = cco
+        else:
+            mem = next((m for m in members if m['ip'] == ip), None)
+            if mem:
+                role = 'Configuration coordinator (CCO)' if mem['cco'] else 'Member - not the coordinator'
+        if mem:
+            cluster = dict(_cluster_node_view(mem['raw']), ip=mem['ip'], key=mem['key'], via_clip=node_key == 'primary')
+            ha_status = _ha_status_meta({'hastatus': cluster['health']})
+    else:
+        ha_data = _get_ha_data_fast(instance_id)
+        for n in ha_data.get('hanode', []):
+            if isinstance(n, dict) and (n.get('ipaddress') or n.get('ip') or n.get('nsip')) == ip:
+                role = n.get('state') or n.get('hacurstate') or n.get('haStatus') or 'Unknown'
+                ha_status = _ha_status_meta(n)
 
     # BULLETPROOF configchanged check
     config_changed = False
@@ -1450,8 +1542,11 @@ def _build_node_overview(node_key: str, instance_id=None) -> dict:
     lic = license_info(nitro)
     _LIC_CACHE[(str(get_instance(instance_id).get('id')), node_key)] = (time.time(), lic)
 
+    ns = (stats or {}).get('ns') if isinstance(stats, dict) else {}
+    ns = (ns[0] if ns else {}) if isinstance(ns, list) else (ns or {})
     return {
-        'connected': connected, 'ha_role': role, 'ha_status': ha_status, 'ns_stats': stats,
+        'connected': connected, 'ha_role': role, 'ha_status': ha_status, 'ns_stats': stats, 'cluster': cluster,
+        'cpu': _stat_pct(ns, _CPU_KEYS), 'mem': _stat_pct(ns, _MEM_KEYS),
         'version': version, 'ip': ip, 'config_changed': config_changed,
         # the three keys earlier pages read, and everything else in 'license'
         'license_type': lic['edition'], 'license_mode': lic['mode'], 'bandwidth': lic['capacity'],
@@ -1859,6 +1954,19 @@ def _to_pct(v):
     except Exception:
         return None
 
+# The CPU counters in order of preference. NetScaler reports 4294967295 (-1 as an
+# unsigned 32-bit number) while a counter has no reading - typically on a node
+# that just became primary or secondary - so a value outside 0-100 means "none".
+_CPU_KEYS = ('cpuusagepcnt', 'pktcpuusagepcnt', 'rescpuusagepcnt', 'mgmtcpuusagepcnt', 'cpuusage')
+_MEM_KEYS = ('memusagepcnt', 'memusagepct')
+
+def _stat_pct(ns, keys):
+    for k in keys:
+        v = _to_pct((ns or {}).get(k))
+        if v is not None and 0 <= v <= 100:
+            return v
+    return None
+
 def _node_probe(instance_id, node_key, cfg):
     """Cheap reachability + load probe for one node (powers the health wall)."""
     out = {'key': node_key, 'ip': cfg.get('ip', ''), 'name': '',
@@ -1872,8 +1980,8 @@ def _node_probe(instance_id, node_key, cfg):
         if isinstance(ns, list):
             ns = ns[0] if ns else {}
         out['reachable'] = bool(ns)
-        out['cpu'] = _to_pct(ns.get('cpuusagepcnt', ns.get('cpuusage')))
-        out['mem'] = _to_pct(ns.get('memusagepcnt', ns.get('memusagepct')))
+        out['cpu'] = _stat_pct(ns, _CPU_KEYS)
+        out['mem'] = _stat_pct(ns, _MEM_KEYS)
     except Exception as e:
         out['error'] = str(e)[:100]
     if out['reachable']:
@@ -1900,6 +2008,8 @@ def _instance_health(inst):
     iid = str(inst.get('id'))
     if str(inst.get('mode')) == 'sdx':
         return _sdx_health(inst)
+    if str(inst.get('mode')) == 'cluster' and cluster_members(iid):
+        return _cluster_health(inst)
     keys = active_node_keys(iid)
     nodes = []
     if keys:
@@ -1959,6 +2069,46 @@ def _instance_health(inst):
             'mode': str(inst.get('mode', 'ha')).lower(), 'status': status,
             'nodes_up': up, 'nodes_total': total, 'nodes': nodes,
             'warnings': warnings}
+
+def _cluster_health(inst):
+    """A cluster's card: every member with its own load, its role (coordinator or
+    not), operational state and health, and whether the CLIP answers."""
+    iid = str(inst.get('id'))
+    members = cluster_members(iid)
+    clip_cfg = inst.get('primary') or {}
+    with ThreadPoolExecutor(max_workers=len(members) + 1) as ex:
+        clip_f = ex.submit(_node_probe, iid, 'primary', clip_cfg)
+        nodes = list(ex.map(lambda m: _node_probe(iid, m['key'], node_cfg(m['key'], iid)), members))
+        clip = clip_f.result()
+    warnings = []
+    trouble = False
+    for m, nd in zip(members, nodes):
+        cv = _cluster_node_view(m['raw'])
+        nd['cluster'] = cv
+        nd['state'] = 'CCO' if cv['cco'] else (cv['op_state'] or 'UNKNOWN')
+        nd['ha_status'] = _ha_status_meta({'hastatus': cv['health']}) if cv['health'] else {}
+        who = nd.get('name') or f"Node {m['id']}"
+        if not nd.get('reachable'):
+            warnings.append(f"{who} unreachable")
+        if cv['health'] and cv['health'].upper() != 'UP':
+            warnings.append(f"{who}: health {cv['health']}"); trouble = True
+        if cv['admin_state'].upper() == 'ACTIVE' and cv['op_state'] and cv['op_state'].upper() != 'ACTIVE':
+            warnings.append(f"{who}: {cv['op_state']} (admin state ACTIVE)"); trouble = True
+        if cv['sync_failure']:
+            warnings.append(f"{who}: sync failed - {cv['sync_failure']}")
+        if nd.get('license'):
+            warnings.append(f"{who}: " + ' '.join(nd['license']['notes']))
+    if not any(m['cco'] for m in members):
+        warnings.append("No configuration coordinator"); trouble = True
+    if not clip.get('reachable'):
+        warnings.append(f"Cluster IP {clip_cfg.get('ip', '')} not answering"); trouble = True
+    up = sum(1 for n in nodes if n.get('reachable'))
+    total = len(nodes)
+    status = ('down' if up == 0 and not clip.get('reachable') else
+              'degraded' if up < total or trouble else 'up')
+    return {'id': iid, 'name': inst.get('name') or iid, 'mode': 'cluster', 'status': status,
+            'nodes_up': up, 'nodes_total': total, 'nodes': nodes, 'warnings': warnings,
+            'clip': {'ip': clip_cfg.get('ip', ''), 'reachable': bool(clip.get('reachable'))}}
 
 # ======================================================================================
 # SDX
@@ -2318,25 +2468,39 @@ def api_caps():
                         'api_detect': {'primary': {'mode': 'sdx', 'reason': 'SDX Management Service (NITRO v2)'}},
                         'nodes': {'primary': {'ip': v.get('ip', ''), 'protocol': v.get('protocol', 'https'),
                                               'port': v.get('port', 443), 'name': name}}})
-    default_name = {'primary': 'Cluster (CLIP)' if mode == 'cluster' else 'Primary', 'secondary': 'Secondary'}
-    nodes_data = {}
-    for k in active_node_keys(inst):
-        v = get_instance(inst).get(k, {})
+    default_name = {'primary': 'Cluster IP (CLIP)' if mode == 'cluster' else 'Primary', 'secondary': 'Secondary'}
+    members = {m['key']: m for m in cluster_members(inst)} if mode == 'cluster' else {}
+
+    def one(k):
+        v = node_cfg(k, inst)
         cache_key = (iid, k)
-        try:
-            if v.get('ip'):
-                hn = get_nitro(k, inst)._get('/config/nshostname', custom_timeout=3).get('nshostname', [{}])[0].get('hostname')
-                if hn:
-                    _HOSTNAME_CACHE[cache_key] = hn      # remember the real hostname
+        fallback = default_name.get(k) or (f"Node {members[k]['id']}" if k in members else k.title())
+        if k == 'primary' and mode == 'cluster':
+            hn = fallback                            # the CLIP answers with the coordinator's hostname
+        else:
+            try:
+                if v.get('ip'):
+                    hn = get_nitro(k, inst)._get('/config/nshostname', custom_timeout=3).get('nshostname', [{}])[0].get('hostname')
+                    if hn:
+                        _HOSTNAME_CACHE[cache_key] = hn      # remember the real hostname
+                    else:
+                        hn = _HOSTNAME_CACHE.get(cache_key) or fallback
                 else:
-                    hn = _HOSTNAME_CACHE.get(cache_key) or default_name.get(k, k.title())
-            else:
-                hn = f"{default_name.get(k, k.title())} Node"
-        except Exception:
-            # Node briefly unreachable — keep the last-known hostname if we have one
-            # so a network blip doesn't blank the name (e.g. the secondary).
-            hn = _HOSTNAME_CACHE.get(cache_key) or default_name.get(k, k.title())
-        nodes_data[k] = {'ip': v.get('ip', ''), 'protocol': v.get('protocol', 'https'), 'port': v.get('port', 443), 'name': hn }
+                    hn = f"{fallback} Node"
+            except Exception:
+                # Node briefly unreachable — keep the last-known hostname if we have one
+                # so a network blip doesn't blank the name (e.g. the secondary).
+                hn = _HOSTNAME_CACHE.get(cache_key) or fallback
+        out = {'ip': v.get('ip', ''), 'protocol': v.get('protocol', 'https'), 'port': v.get('port', 443), 'name': hn}
+        if k in members:
+            out.update(cluster_node=members[k]['id'], cco=members[k]['cco'])
+            if members[k]['cco']:
+                out['name'] = f"{hn} · CCO"
+        return k, out
+
+    keys = view_node_keys(inst)
+    with ThreadPoolExecutor(max_workers=max(1, len(keys))) as ex:
+        nodes_data = dict(ex.map(one, keys))
     api_mode = {k: get_api_mode(inst, k) for k in active_node_keys(inst)}
     detect = {k: get_detect_info(inst, k) for k in active_node_keys(inst)}
     # Which node currently holds the PRIMARY role, so the UI can follow a failover
@@ -2356,7 +2520,7 @@ def api_caps():
                     break
         except Exception:
             pass
-    return jsonify({'api_mode': api_mode, 'nodes': nodes_data, 'mode': mode,
+    return jsonify({'api_mode': api_mode, 'nodes': nodes_data, 'node_order': list(nodes_data), 'mode': mode,
                     'api_detect': detect, 'primary_node': primary_node,
                     'instance': get_instance(inst).get('id')})
 
@@ -2397,7 +2561,7 @@ def api_ha_status():
         except Exception: return False
 
     hostnames = {}
-    for nk in active_node_keys(inst):
+    for nk in ([] if get_mode(inst) == 'cluster' else active_node_keys(inst)):   # cluster members carry their names
         try:
             nit = get_nitro(nk, inst)
             hn = nit._get('/config/nshostname', custom_timeout=2).get('nshostname', [{}])[0].get('hostname')
@@ -3281,6 +3445,10 @@ def _syslog_sender(ip):
             node = inst.get(k)
             if isinstance(node, dict) and str(node.get('ip') or '').strip() == ip and ip:
                 return str(inst.get('id'))
+        # a cluster member (the list last read through the CLIP - no network call here)
+        hit = _CLUSTER_CACHE.get(str(inst.get('id')))
+        if ip and hit and any(m['ip'] == ip for m in hit[1]):
+            return str(inst.get('id'))
     for pair in os.getenv('SYSLOG_EXTRA_SENDERS', '').split(','):
         a, _, b = pair.strip().partition('=')
         if a.strip() == ip and b.strip():
@@ -3293,8 +3461,8 @@ def _security_targets():
         iid = str(inst.get('id'))
         if str(inst.get('mode')) == 'sdx':
             continue                             # an SDX Management Service has none of this
-        for nk in active_node_keys(iid):
-            node = inst.get(nk) or {}
+        for nk in view_node_keys(iid):           # a cluster: the CLIP and each member's own audit log
+            node = node_cfg(nk, iid)
             if node.get('ip'):
                 try:
                     out.append((iid, nk, str(node['ip']), get_nitro(nk, iid)))
@@ -3303,6 +3471,8 @@ def _security_targets():
     return out
 
 def _security_facts(iid, nk, ip, nitro):
+    if MEMBER_KEY.fullmatch(str(nk)):
+        return {}                                # a cluster's configuration is read once, through the CLIP
     facts = security.collect_facts(nitro, cache_key=(iid, nk), fresh=True)
     if len(facts.get('errors', {})) >= len(security._FACT_SOURCES):
         return facts.get('errors', {})          # not reachable this time
@@ -3430,6 +3600,7 @@ def api_security_activity():
     waf_blocked = sum(v for a, v in summary['by_action'].items() if 'block' in a and 'not' not in a)
     recv = security.receiver.status()
     node_ips = {str((get_instance(inst).get(n) or {}).get('ip') or '') for n in ('primary', 'secondary')}
+    node_ips |= {m['ip'] for m in cluster_members(inst)}
     return jsonify({
         'instance': iid, 'range': request.args.get('range', '24h'), 'since': since, 'version': version,
         'kpi': {'waf': k.get('waf', 0) + k.get('bot', 0), 'waf_blocked': waf_blocked,
