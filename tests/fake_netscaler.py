@@ -65,6 +65,18 @@ class FakeNitro:
             r._content = b'{"errorcode": 1045, "message": "Not authorized to execute this command", "severity": "ERROR"}'
             raise requests.HTTPError("400 Client Error: Bad Request", response=r)
         data = self.data()
+        per = data.get("_per") or {}
+        if name in per:                               # a binding read per object: /config/<binding>/<object>
+            from urllib.parse import unquote
+            parts = path.split("?")[0].strip("/").split("/")
+            obj = unquote(parts[2]) if len(parts) > 2 else None
+            rows = per[name].get(obj) if obj else [x for v in per[name].values() for x in v]
+            if rows is None:
+                r = requests.Response()
+                r.status_code = 404
+                r._content = b'{"errorcode": 258, "message": "No such resource", "severity": "ERROR"}'
+                raise requests.HTTPError("404 Client Error: Not Found (errorcode 258)", response=r)
+            return {"errorcode": 0, "message": "Done", name: rows}
         if name not in data:
             r = requests.Response()
             r.status_code = 404
@@ -104,7 +116,8 @@ class FakeNitro:
             "responderpolicy": responders,
             "responderpolicy_binding": bind,
             "appfwpolicy": [{"name": "Gateway_WAF_Policy", "rule": "true", "profilename": "Gateway_WAF_Profile", "hits": str(44 + 5 * x)}] if c else [],
-            "appfwpolicy_binding": [{"name": "Gateway_WAF_Policy", "appfwpolicy_vpnvserver_binding": [{"boundto": "GW_VS", "priority": 100}]}] if c else [],
+            "appfwpolicy_binding": ([{"name": "Gateway_WAF_Policy", "appfwpolicy_vpnvserver_binding": [{"boundto": "GW_VS", "priority": 100}]}] if c else [])
+                                   + [{"name": "OWA_WAF_Policy", "appfwpolicy_lbvserver_binding": [{"boundto": "Exchange_OWA_LB", "priority": 100}]}],
             "appfwsettings": {"ceflogging": "OFF"},
             "rewriteaction": [{"name": "Gateway_CSP_Header_Action", "type": "insert_http_header", "target": "Content-Security-Policy",
                                "stringbuilderexpr": "\"default-src 'self'\""}] if c else [],
@@ -127,7 +140,38 @@ class FakeNitro:
                       "restrictaccess": "ENABLED" if c else "DISABLED", "telnet": "DISABLED", "ftp": "DISABLED" if c else "ENABLED"}],
             "sslvserver": [{"vservername": "GW_VS", "ssl3": "DISABLED", "tls1": "DISABLED" if c else "ENABLED",
                             "tls11": "DISABLED" if c else "ENABLED", "tls12": "ENABLED", "tls13": "ENABLED" if c else "DISABLED",
-                            "hsts": "DISABLED", "sslprofile": "Gateway_SSL" if c else ""}],
+                            "hsts": "DISABLED", "sslprofile": "Gateway_SSL" if c else ""},
+                           {"vservername": "StoreFront_LB", "ssl3": "ENABLED", "tls1": "ENABLED", "tls11": "ENABLED", "tls12": "ENABLED",
+                            "tls13": "DISABLED", "hsts": "DISABLED", "sslprofile": ""},
+                           {"vservername": "Exchange_OWA_LB", "ssl3": "DISABLED", "tls1": "DISABLED", "tls11": "DISABLED", "tls12": "ENABLED",
+                            "tls13": "ENABLED", "hsts": "ENABLED", "maxage": 31536000, "sslprofile": ""},
+                           {"vservername": "CS_Web", "ssl3": "DISABLED", "tls1": "DISABLED", "tls11": "DISABLED", "tls12": "ENABLED",
+                            "tls13": "ENABLED", "hsts": "ENABLED", "maxage": 31536000, "sslprofile": ""}],
+            "sslcertkey": [
+                {"certkey": "gw_cert", "subject": "C=IL, CN=gw.example.com", "issuer": "C=US, O=Example CA, CN=Example CA R3",
+                 "daystoexpiration": 200, "publickey": "RSA", "publickeysize": 2048, "signaturealg": "sha256WithRSAEncryption", "status": "Valid"},
+                {"certkey": "sf_cert", "subject": "CN=storefront.example.com", "issuer": "CN=storefront.example.com",
+                 "daystoexpiration": 20, "publickey": "RSA", "publickeysize": 1024, "signaturealg": "sha1WithRSAEncryption", "status": "Valid"},
+                {"certkey": "web_cert", "subject": "CN=www.example.com", "issuer": "C=US, O=Example CA, CN=Example CA R3",
+                 "daystoexpiration": -3, "publickey": "RSA", "publickeysize": 2048, "signaturealg": "sha256WithRSAEncryption", "status": "Expired"},
+                {"certkey": "example_ca", "subject": "C=US, O=Example CA, CN=Example CA R3", "issuer": "C=US, O=Example Root",
+                 "daystoexpiration": 2000, "publickey": "RSA", "publickeysize": 4096, "signaturealg": "sha256WithRSAEncryption"}],
+            "responderaction": [{"name": "Redirect_To_HTTPS_Action", "type": "redirect",
+                                 "target": '"https://" + HTTP.REQ.HOSTNAME + HTTP.REQ.URL'}],
+            "_per": {
+                "sslvserver_sslcertkey_binding": {
+                    "GW_VS": [{"certkeyname": "gw_cert"}, {"certkeyname": "example_ca", "ca": True}],
+                    "StoreFront_LB": [{"certkeyname": "sf_cert"}], "Exchange_OWA_LB": [{"certkeyname": "gw_cert"}],
+                    "CS_Web": [{"certkeyname": "web_cert"}]},
+                "lbvserver_service_binding": {
+                    "StoreFront_LB": [{"servicename": "svc_storefront_01", "curstate": "UP", "servicetype": "SSL"}],
+                    "Intranet_HTTP_LB": [{"servicename": "svc_intranet_01", "curstate": "DOWN", "servicetype": "HTTP"}],
+                    "Exchange_OWA_LB": []},
+                "lbvserver_servicegroup_binding": {"Exchange_OWA_LB": [{"servicegroupname": "sg_exchange"}],
+                                                   "StoreFront_LB": [], "Intranet_HTTP_LB": []},
+                "csvserver_cspolicy_binding": {"CS_Web": [{"policyname": "cs_owa", "targetlbvserver": "Exchange_OWA_LB"}]},
+                "csvserver_lbvserver_binding": {"CS_Web": [{"lbvserver": "StoreFront_LB"}]},
+            },
             "sslprofile": [{"name": "Gateway_SSL", "ssl3": "DISABLED", "tls1": "DISABLED", "tls11": "DISABLED", "tls12": "ENABLED",
                             "tls13": "ENABLED", "hsts": "ENABLED", "maxage": 31536000}] if c else [],
             "sslparameter": {"denysslreneg": "NONSECURE" if c else "NO", "defaultprofile": "DISABLED"},
@@ -155,14 +199,14 @@ class FakeNitro:
                                                  {"ciphername": "TLS1.2-ECDHE-RSA-AES256-GCM-SHA384"}],
             "vpnvserver": [{"name": "GW_VS", "ipv46": GW_IP, "port": 443}],
             "authenticationvserver": [{"name": "AAA_VS", "ipv46": "0.0.0.0", "port": 0}],
-            "csvserver": [],
+            "csvserver": [{"name": "CS_Web", "ipv46": "203.0.113.20", "port": 443, "servicetype": "SSL", "curstate": "UP"}],
             "lbvserver": [{"name": "StoreFront_LB", "ipv46": "192.0.2.90", "port": 443, "servicetype": "SSL", "curstate": "UP"},
                           {"name": "Exchange_OWA_LB", "ipv46": "192.0.2.91", "port": 443, "servicetype": "SSL", "curstate": "UP"},
                           {"name": "Intranet_HTTP_LB", "ipv46": "192.0.2.92", "port": 80, "servicetype": "HTTP", "curstate": "DOWN"}],
-            "service": [{"name": "svc_storefront_01", "ipaddress": "192.0.2.101", "port": 443, "svrstate": "UP"},
-                        {"name": "svc_intranet_01", "ipaddress": "192.0.2.111", "port": 80, "svrstate": "DOWN"}],
+            "service": [{"name": "svc_storefront_01", "ipaddress": "192.0.2.101", "port": 443, "svrstate": "UP", "servicetype": "SSL"},
+                        {"name": "svc_intranet_01", "ipaddress": "192.0.2.111", "port": 80, "svrstate": "DOWN", "servicetype": "HTTP"}],
             "servicegroup": [{"servicegroupname": "sg_exchange", "port": 443, "servicegroupeffectivestate": "UP",
-                              "numberofboundservices": 2}],
+                              "servicetype": "SSL", "numberofboundservices": 2}],
             "server": [{"name": "VDA-01", "ipaddress": VDA}],
             "aaasession": [
                 {"username": "dana", "groupname": "VPN-Users", "publicip": "198.51.100.7", "publicport": 50100,

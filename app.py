@@ -30,6 +30,7 @@ import appliance
 import db
 import ha_events
 import security
+from posture import netscaler as posture_ns, review as posture_review, tls_scan
 from flask import (
     Flask, render_template, jsonify, request, redirect, url_for,
     session, flash
@@ -101,6 +102,8 @@ LDAP_CONFIG_FILE = os.getenv('LDAP_CONFIG_FILE') or _data_path('ldap_config.json
 FAILOVER_HISTORY_FILE = os.getenv('FAILOVER_HISTORY_FILE') or _data_path('failover_history.json')
 HA_STATE_FILE = os.getenv('HA_STATE_FILE') or _data_path('ha_last_state.json')
 SECURITY_FILE = os.getenv('SECURITY_FILE') or _data_path('security_checklist.json')
+POSTURE_FILE = os.getenv('POSTURE_FILE') or _data_path('security_review.json')   # exposure + accepted risks
+TLS_SCANS_FILE = os.getenv('TLS_SCANS_FILE') or _data_path('tls_tests.json')     # the last TLS test per server
 APP_SECRET_FILE = os.getenv('APP_SECRET_FILE') or _data_path('.app_secret')
 LOG_FILE = os.getenv('APP_LOG_FILE') or _data_path('netscaler_complete.log')
 
@@ -138,6 +141,12 @@ _LDAP_ENV_DEFAULTS = {
     "server": os.getenv("LDAP_SERVER", ""),
     "port": _env_int("LDAP_PORT", 389, 1),
     "use_ssl": _as_bool(os.getenv("LDAP_USE_SSL", "0")),
+    # none | starttls | ldaps. Active Directory with "LDAP server signing
+    # requirements = Require signing" refuses a simple bind on a plain connection
+    # (strongerAuthRequired); StartTLS or LDAPS satisfies it.
+    "security": os.getenv("LDAP_SECURITY", "").strip().lower(),
+    "tls_verify": _as_bool(os.getenv("LDAP_TLS_VERIFY", "0")),
+    "ca_pem": "",
     "base_dn": os.getenv("LDAP_BASE_DN", ""),
     "bind_dn": os.getenv("LDAP_BIND_DN", ""),
     "bind_pw": os.getenv("LDAP_BIND_PASSWORD", ""),
@@ -146,8 +155,19 @@ _LDAP_ENV_DEFAULTS = {
     "timeout": _env_int("LDAP_TIMEOUT_SECS", 10, 1),
 }
 
+LDAP_SECURITY_MODES = ("none", "starttls", "ldaps")
+
+def _ldap_security(cfg: dict, explicit: bool = True) -> str:
+    """The connection security of an LDAP config. A config from before 1.27.0
+    has only use_ssl (LDAPS or nothing)."""
+    sec = str(cfg.get("security") or "").strip().lower()
+    if explicit and sec in LDAP_SECURITY_MODES:
+        return sec
+    return "ldaps" if _as_bool(cfg.get("use_ssl")) else "none"
+
 def load_ldap_config() -> dict:
     cfg = dict(_LDAP_ENV_DEFAULTS)
+    stored = {}
     try:
         src = _read_path(LDAP_CONFIG_FILE, 'ldap_config.json')
         if os.path.exists(src):
@@ -155,10 +175,16 @@ def load_ldap_config() -> dict:
                 stored = json.load(f)
             if isinstance(stored, dict):
                 cfg.update({k: v for k, v in stored.items() if k in cfg})
+            else:
+                stored = {}
     except Exception:
-        pass
+        stored = {}
     cfg["enabled"] = _as_bool(cfg.get("enabled"))
-    cfg["use_ssl"] = _as_bool(cfg.get("use_ssl"))
+    # A file saved by an older dashboard has only use_ssl: that decides, not the env default.
+    cfg["security"] = _ldap_security(cfg, explicit=("security" in stored) or not stored)
+    cfg["use_ssl"] = cfg["security"] == "ldaps"
+    cfg["tls_verify"] = _as_bool(cfg.get("tls_verify"))
+    cfg["ca_pem"] = str(cfg.get("ca_pem") or "")
     try: cfg["port"] = int(cfg.get("port") or 389)
     except Exception: cfg["port"] = 389
     try: cfg["timeout"] = int(cfg.get("timeout") or 10)
@@ -580,22 +606,81 @@ def _ldap_user_in_group(finder, user_dn, entry, allowed_group, cfg) -> bool:
     logger.info(f"LDAP: user not in group '{head}' (memberOf: {len(groups)} group(s))")
     return False
 
+_LDAP_SIGNING_HINT = ('The directory refuses a password sent over a plain connection - Active Directory '
+                      'with "LDAP server signing requirements" set to Require signing (the default on '
+                      'current Windows Server). Set Encryption to StartTLS (same port, 389) or LDAPS '
+                      '(port 636); the domain controller needs a certificate for either.')
+
+def _ldap_server(cfg: dict):
+    """An ldap3 Server for the config: LDAPS opens TLS at once, StartTLS upgrades
+    the plain connection before the bind (see _ldap_bind)."""
+    import ssl
+    from ldap3 import Server, Tls, ALL
+    sec = _ldap_security(cfg)
+    tls = None
+    if sec != "none":
+        ca = str(cfg.get("ca_pem") or "").strip()
+        verify = _as_bool(cfg.get("tls_verify"))
+        tls = Tls(validate=ssl.CERT_REQUIRED if verify else ssl.CERT_NONE,
+                  ca_certs_data=ca if (verify and ca) else None)
+    port = int(cfg.get("port") or (636 if sec == "ldaps" else 389))
+    return Server(cfg["server"], port=port, use_ssl=(sec == "ldaps"), tls=tls, get_info=ALL,
+                  connect_timeout=int(cfg.get("timeout") or 10))
+
+def _ldap_result_text(result) -> str:
+    result = result or {}
+    desc = str(result.get("description") or "")
+    msg = str(result.get("message") or "").strip()
+    if desc in ("strongerAuthRequired", "confidentialityRequired"):
+        return f"{desc} - {_LDAP_SIGNING_HINT}"
+    if desc == "invalidCredentials":
+        return "invalidCredentials - the bind DN or its password is wrong" + (f" ({msg[:120]})" if msg else "")
+    return (desc or "bind failed") + (f" - {msg[:160]}" if msg else "")
+
+def _ldap_bind(server, cfg: dict, user=None, password=None):
+    """Open, StartTLS when asked for, then bind. Returns the bound Connection or
+    raises an LDAP exception whose message says what to change."""
+    from ldap3 import Connection
+    from ldap3.core.exceptions import LDAPException, LDAPBindError
+    conn = Connection(server, user=user or None, password=password or None,
+                      receive_timeout=int(cfg.get("timeout") or 10), raise_exceptions=False)
+    try:
+        conn.open()
+        if _ldap_security(cfg) == "starttls" and not conn.start_tls():
+            raise LDAPException("StartTLS was refused: " + str((conn.result or {}).get("description") or conn.result))
+        if not conn.bind():
+            raise LDAPBindError(_ldap_result_text(conn.result))
+        return conn
+    except Exception:
+        try: conn.unbind()
+        except Exception: pass
+        raise
+
+def _ldap_error_text(e) -> str:
+    text = str(e)
+    if "strongerAuthRequired" in text or "confidentialityRequired" in text:
+        if _LDAP_SIGNING_HINT not in text:
+            text = f"{text.split(' - ')[0]} - {_LDAP_SIGNING_HINT}"
+    elif "CERTIFICATE_VERIFY_FAILED" in text or "certificate verify failed" in text:
+        text = ("the domain controller's certificate is not trusted - paste the CA that signed it, "
+                "or turn certificate checking off (" + text[:120] + ")")
+    elif "WRONG_VERSION_NUMBER" in text or "wrong version number" in text:
+        text = ("this port does not start with TLS - LDAPS is usually port 636; on port 389 choose StartTLS ("
+                + text[:100] + ")")
+    return f"{type(e).__name__}: {text[:420]}"
+
 def ldap_authenticate(username: str, password: str) -> bool:
     """Verify credentials against LDAP/AD by rebinding as the resolved user DN."""
     if not ldap_enabled(): return False
     if not username or not password: return False
     cfg = get_ldap_config()
     try:
-        from ldap3 import Server, Connection, ALL, SUBTREE
+        from ldap3 import SUBTREE
         from ldap3.utils.conv import escape_filter_chars
-        server = Server(cfg['server'], port=cfg['port'],
-                        use_ssl=cfg['use_ssl'], get_info=ALL,
-                        connect_timeout=cfg['timeout'])
+        server = _ldap_server(cfg)
         # Bind with the service account (or anonymously) to resolve the user's DN.
         # `with` guarantees the socket is unbound even if search() raises.
-        with Connection(server, user=cfg['bind_dn'] or None,
-                        password=cfg['bind_pw'] or None,
-                        auto_bind=True, receive_timeout=cfg['timeout']) as finder:
+        with _ldap_bind(server, cfg, cfg['bind_dn'], cfg['bind_pw']) as finder:
             flt = f"({cfg['user_attr']}={escape_filter_chars(username)})"
             finder.search(cfg['base_dn'], flt, search_scope=SUBTREE, attributes=['memberOf'])
             if not finder.entries:
@@ -611,11 +696,15 @@ def ldap_authenticate(username: str, password: str) -> bool:
         if not user_dn:
             return False
         # Rebind as the user to actually verify their password.
-        with Connection(server, user=user_dn, password=password,
-                        receive_timeout=cfg['timeout']) as user_conn:
-            return bool(user_conn.bind())
+        try:
+            with _ldap_bind(server, cfg, user_dn, password):
+                return True
+        except Exception as e:
+            if "invalidCredentials" not in str(e):
+                logger.warning(f"LDAP bind as '{username}' failed: {_ldap_error_text(e)}")
+            return False
     except Exception as e:
-        logger.warning(f"LDAP auth error for '{username}': {e}")
+        logger.warning(f"LDAP auth error for '{username}': {_ldap_error_text(e)}")
         return False
 
 def ldap_test_connection(cfg: dict) -> tuple[bool, str]:
@@ -624,24 +713,20 @@ def ldap_test_connection(cfg: dict) -> tuple[bool, str]:
     if not cfg.get('server'):
         return False, "LDAP server is required"
     try:
-        from ldap3 import Server, Connection, ALL, SUBTREE
+        import ldap3  # noqa: F401
     except Exception:
         return False, "ldap3 library not available"
+    label = {"none": "no encryption", "starttls": "StartTLS", "ldaps": "LDAPS"}[_ldap_security(cfg)]
     try:
-        server = Server(cfg['server'], port=int(cfg.get('port') or 389),
-                        use_ssl=_as_bool(cfg.get('use_ssl')), get_info=ALL,
-                        connect_timeout=int(cfg.get('timeout') or 10))
-        with Connection(server, user=cfg.get('bind_dn') or None,
-                        password=cfg.get('bind_pw') or None,
-                        auto_bind=True, receive_timeout=int(cfg.get('timeout') or 10)) as conn:
+        with _ldap_bind(_ldap_server(cfg), cfg, cfg.get('bind_dn'), cfg.get('bind_pw')) as conn:
             base = cfg.get('base_dn') or ''
             if base:
                 conn.search(base, '(objectClass=*)', search_scope='BASE', attributes=['objectClass'])
                 if not conn.entries:
-                    return True, "Connected and bound, but base DN returned no entry (check base_dn)"
-            return True, "Connection and bind succeeded"
+                    return True, f"Connected ({label}) and bound, but base DN returned no entry (check base_dn)"
+            return True, f"Connection and bind succeeded ({label})"
     except Exception as e:
-        return False, f"{type(e).__name__}: {str(e)[:160]}"
+        return False, _ldap_error_text(e)
 
 # ======================================================================================
 # NITRO Client
@@ -1656,8 +1741,8 @@ def dashboard():
 # ======================================================================================
 # LDAP settings API
 # ======================================================================================
-_LDAP_PUBLIC_FIELDS = ('enabled', 'server', 'port', 'use_ssl', 'base_dn',
-                       'bind_dn', 'user_attr', 'allowed_group_dn', 'timeout')
+_LDAP_PUBLIC_FIELDS = ('enabled', 'server', 'port', 'use_ssl', 'security', 'tls_verify', 'ca_pem',
+                       'base_dn', 'bind_dn', 'user_attr', 'allowed_group_dn', 'timeout')
 
 def _ldap_public_view(cfg: dict) -> dict:
     view = {k: cfg.get(k) for k in _LDAP_PUBLIC_FIELDS}
@@ -1668,6 +1753,17 @@ def _ldap_from_body(body: dict) -> dict:
     out = {}
     if 'enabled' in body: out['enabled'] = _as_bool(body.get('enabled'))
     if 'use_ssl' in body: out['use_ssl'] = _as_bool(body.get('use_ssl'))
+    if 'tls_verify' in body: out['tls_verify'] = _as_bool(body.get('tls_verify'))
+    if str(body.get('security') or '').lower() in LDAP_SECURITY_MODES:
+        out['security'] = str(body['security']).lower()
+        out['use_ssl'] = out['security'] == 'ldaps'
+    elif 'use_ssl' in body:
+        out['security'] = 'ldaps' if out['use_ssl'] else 'none'
+    if 'ca_pem' in body:
+        ca = str(body.get('ca_pem') or '').strip()
+        if ca and '-----BEGIN CERTIFICATE-----' not in ca:
+            raise ValueError("The CA must be a PEM certificate (-----BEGIN CERTIFICATE-----)")
+        out['ca_pem'] = ca[:20000]
     for k in ('server', 'base_dn', 'bind_dn', 'user_attr', 'allowed_group_dn'):
         if k in body: out[k] = str(body.get(k) or '').strip()
     for k in ('port', 'timeout'):
@@ -1687,6 +1783,8 @@ def api_ldap_settings():
             return jsonify({"success": False, "error": "Invalid payload"}), 400
         try:
             save_ldap_config(_ldap_from_body(body))
+        except ValueError as e:
+            return jsonify({"success": False, "error": str(e)}), 400
         except Exception as e:
             logger.error(f"LDAP settings save failed: {e}")
             return jsonify({"success": False, "error": "Could not save LDAP settings"}), 500
@@ -1699,11 +1797,23 @@ def api_ldap_test():
     body = request.get_json(force=True, silent=True) or {}
     # Test against the submitted values, filling blanks from the stored config.
     cfg = dict(get_ldap_config())
-    cfg.update(_ldap_from_body(body))
+    try:
+        cfg.update(_ldap_from_body(body))
+    except ValueError as e:
+        return jsonify({"success": False, "message": str(e)})
     if not body.get('bind_pw'):
         cfg['bind_pw'] = get_ldap_config().get('bind_pw', '')
     ok, msg = ldap_test_connection(cfg)
-    return jsonify({"success": ok, "message": msg})
+    out = {"success": ok, "message": msg}
+    # A directory that wants signing: see whether StartTLS on the same port works,
+    # so the answer can say which setting to pick instead of only what failed.
+    if not ok and _ldap_security(cfg) == 'none' and ('strongerAuthRequired' in msg or 'confidentialityRequired' in msg):
+        ok2, _ = ldap_test_connection(dict(cfg, security='starttls', use_ssl=False))
+        if ok2:
+            out["suggest"] = "starttls"
+            out["message"] = msg.split(' - ')[0] + (" - the directory requires signing. StartTLS on the same "
+                                                   "port works: Encryption is set to StartTLS - save to keep it.")
+    return jsonify(out)
 
 # ======================================================================================
 # External database (Settings -> Database)
@@ -1724,6 +1834,7 @@ def _db_documents():
         'ldap': (dict(LDAP_CFG), os.path.exists(LDAP_CONFIG_FILE)),
         'ha_state': (ha, isinstance(ha, dict) and bool(ha)),
         'security': (dict(SEC_MARKS), os.path.exists(SECURITY_FILE)),
+        'posture': (dict(POSTURE_MARKS), os.path.exists(POSTURE_FILE)),
     }
 
 def _detect_all_api_modes_soon():
@@ -1756,7 +1867,8 @@ def _db_apply_document(name, doc):
     elif name == 'ldap':
         # only the keys this dashboard knows, each in a simple type
         clean = {k: v for k, v in doc.items()
-                 if k in _LDAP_ENV_DEFAULTS and isinstance(v, (str, int, bool)) and len(str(v)) <= 1024}
+                 if k in _LDAP_ENV_DEFAULTS and isinstance(v, (str, int, bool))
+                 and len(str(v)) <= (20000 if k == 'ca_pem' else 1024)}
         if clean:
             _write_json(LDAP_CONFIG_FILE, clean, indent=2)
             LDAP_CFG = load_ldap_config()
@@ -1769,6 +1881,12 @@ def _db_apply_document(name, doc):
             _write_json(SECURITY_FILE, clean, indent=2)
             SEC_MARKS.clear()
             SEC_MARKS.update(clean)
+    elif name == 'posture':
+        clean = _clean_posture(doc)
+        with _posture_lock:
+            _write_json(POSTURE_FILE, clean, indent=2)
+            POSTURE_MARKS.clear()
+            POSTURE_MARKS.update(clean)
 
 db.register_documents(_db_documents, _db_apply_document)
 
@@ -3638,6 +3756,252 @@ def api_security_events():
         r['time'] = _fmt_ts(r['ts'])
         r['kind_label'] = security.KINDS.get(r['kind'], r['kind'])
     return jsonify({'events': rows, 'limit': limit, 'more': len(rows) >= limit})
+
+# ======================================================================================
+# Security review and TLS test (posture/)
+# ======================================================================================
+_posture_lock = threading.Lock()
+_posture_cache = {}                    # (instance, node) -> (time, NITRO data)
+_POSTURE_TTL = 45
+_HOST_RE = re.compile(r'^(?=.{1,253}$)([A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9_](?:[A-Za-z0-9_-]{0,61}[A-Za-z0-9])?\.?$')
+
+def _clean_posture(doc):
+    """{instance: {'exposure': {app key: 'internet'|'internal'},
+                   'accepted': {finding key: {'by', 'at', 'note'}}}}"""
+    out = {}
+    for inst, d in (doc.items() if isinstance(doc, dict) else []):
+        if not isinstance(d, dict):
+            continue
+        exp = {str(k)[:300]: v for k, v in (d.get('exposure') or {}).items()
+               if v in ('internet', 'internal')} if isinstance(d.get('exposure'), dict) else {}
+        acc = {}
+        for k, m in (d.get('accepted') or {}).items() if isinstance(d.get('accepted'), dict) else []:
+            if isinstance(m, dict):
+                acc[str(k)[:500]] = {'by': str(m.get('by') or '')[:120], 'at': str(m.get('at') or '')[:40],
+                                     'note': str(m.get('note') or '')[:500]}
+        if exp or acc:
+            out[str(inst)[:64]] = {'exposure': exp, 'accepted': acc}
+    return out
+
+def _load_json_file(path, clean, what):
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            return clean(json.load(f))
+    except FileNotFoundError:
+        return {}
+    except Exception as e:
+        logger.warning(f"{path} could not be read ({e}); {what} start empty")
+        return {}
+
+POSTURE_MARKS = _load_json_file(POSTURE_FILE, _clean_posture, 'security review marks')
+TLS_SCANS = _load_json_file(TLS_SCANS_FILE, lambda d: d if isinstance(d, dict) else {}, 'TLS tests')
+
+def _posture_data(inst, fresh=False):
+    iid = str(get_instance(inst).get('id'))
+    node, cfg = _sec_node(inst)
+    if not cfg.get('ip'):
+        raise ValueError('This node has no address configured.')
+    key = (iid, node)
+    hit = _posture_cache.get(key)
+    if hit and not fresh and time.time() - hit[0] < _POSTURE_TTL:
+        return iid, node, cfg, hit[1]
+    data = posture_ns.read(get_nitro(node, inst))
+    if len(data.get('errors', {})) >= len(posture_ns._SOURCES):
+        first = next(iter(data['errors'].values()), 'no answer')
+        raise RuntimeError(f'The appliance could not be read: {first}')
+    data['read_at'] = time.time()
+    _posture_cache[key] = (time.time(), data)
+    return iid, node, cfg, data
+
+def _scan_summary(res):
+    if not isinstance(res, dict):
+        return None
+    when = datetime.fromtimestamp(res.get('started') or 0, APP_TZ).strftime('%Y-%m-%d %H:%M') if res.get('started') else ''
+    return {'grade': res.get('grade'), 'when': when, 'findings': (res.get('findings') or [])[:6],
+            'http': res.get('http') or {}, 'sni': (res.get('target') or {}).get('sni', '')}
+
+@app.route('/api/posture/review')
+@login_required
+def api_posture_review():
+    inst = request.args.get('instance')
+    fresh = request.args.get('fresh') == '1'
+    try:
+        iid, node, cfg, data = _posture_data(inst, fresh)
+    except KeyError as e:
+        return jsonify({'error': str(e)}), 400
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 502
+    marks = POSTURE_MARKS.get(iid, {})
+    scans = {k: _scan_summary(v) for k, v in (TLS_SCANS.get(iid) or {}).items()}
+    apps = posture_ns.build_apps(data, exposure=marks.get('exposure'), scans=scans)
+    platform, checklist_score = [], None
+    try:
+        chk, err = _checklist(inst, fresh=False)
+        if chk:
+            platform = posture_review.checklist_findings(chk['checks'])
+            rel = [c for c in chk['checks'] if (c.get('mark') or {}).get('state') != 'irrelevant']
+            done = sum(1 for c in rel if (c.get('mark') or {}).get('state') == 'done'
+                       or (c.get('status') == 'configured'))
+            checklist_score = {'done': done, 'of': len(rel)}
+    except Exception as e:
+        logger.info(f"Security review: checklist not included ({e})")
+    i = get_instance(inst)
+    meta = {'instance': i.get('name') or iid, 'instance_id': iid, 'node': node, 'node_ip': cfg.get('ip'),
+            'version': security.ns_version({'version': data.get('version')}), 'vendor': 'NetScaler',
+            'read_at': data.get('read_at'), 'generated': datetime.now(APP_TZ).isoformat(timespec='seconds'),
+            'checklist': checklist_score, 'read_errors': data.get('errors', {})}
+    rep_ = posture_review.build(apps, platform, fixer=posture_ns.fix, accepted=marks.get('accepted'), meta=meta)
+    return jsonify(rep_)
+
+@app.route('/api/posture/mark', methods=['POST'])
+@login_required
+def api_posture_mark():
+    body = request.get_json(force=True, silent=True) or {}
+    iid = str(get_instance(request.args.get('instance')).get('id'))
+    with _posture_lock:
+        marks = _clean_posture(json.loads(json.dumps(POSTURE_MARKS)))
+        mine = marks.setdefault(iid, {'exposure': {}, 'accepted': {}})
+        if 'exposure' in body:
+            app_key = str(body.get('app') or '')[:300]
+            if not re.match(r'^(gateway|lb|cs|aaa):.+', app_key):
+                return jsonify({'error': 'Unknown application.'}), 400
+            if body['exposure'] in ('internet', 'internal'):
+                mine['exposure'][app_key] = body['exposure']
+            else:
+                mine['exposure'].pop(app_key, None)
+        elif 'accept' in body:
+            fkey = str(body.get('key') or '')[:500]
+            if not fkey:
+                return jsonify({'error': 'Which finding?'}), 400
+            if body['accept']:
+                mine['accepted'][fkey] = {'by': str(session.get('user') or '')[:120],
+                                          'at': datetime.now(APP_TZ).isoformat(timespec='seconds'),
+                                          'note': str(body.get('note') or '')[:500]}
+            else:
+                mine['accepted'].pop(fkey, None)
+        else:
+            return jsonify({'error': 'Nothing to change.'}), 400
+        marks = _clean_posture(marks)
+        try:
+            _write_json(POSTURE_FILE, marks, indent=2)
+        except OSError as e:
+            return jsonify({'error': f'The mark could not be saved: {e}'}), 500
+        POSTURE_MARKS.clear()
+        POSTURE_MARKS.update(marks)
+    db.documents_changed()
+    return jsonify({'ok': True})
+
+# TLS tests run in the background: a full test is 50-300 connections.
+_tls_jobs = {}
+_tls_jobs_lock = threading.Lock()
+_TLS_MAX_RUNNING = 3
+
+@app.route('/api/posture/tls/targets')
+@login_required
+def api_posture_tls_targets():
+    inst = request.args.get('instance')
+    try:
+        iid, node, cfg, data = _posture_data(inst, request.args.get('fresh') == '1')
+    except (KeyError, ValueError) as e:
+        return jsonify({'error': str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 502
+    saved = TLS_SCANS.get(iid) or {}
+    out = []
+    for t in posture_ns.scan_targets(data):
+        t['sni'] = posture_ns.sni_guess(data, t['name'])
+        t['last'] = _scan_summary(saved.get(t['key']))
+        out.append(t)
+    order = {'gateway': 0, 'cs': 1, 'lb': 2, 'aaa': 3}
+    out.sort(key=lambda t: (order.get(t['kind'], 9), t['name'].lower()))
+    with _tls_jobs_lock:
+        running = {j['key']: jid for jid, j in _tls_jobs.items() if j['iid'] == iid and j['state'] == 'running'}
+    return jsonify({'targets': out, 'running': running})
+
+@app.route('/api/posture/tls/result')
+@login_required
+def api_posture_tls_result():
+    iid = str(get_instance(request.args.get('instance')).get('id'))
+    key = str(request.args.get('key') or '')
+    res = (TLS_SCANS.get(iid) or {}).get(key)
+    if not res:
+        return jsonify({'error': 'This server has not been tested yet.'}), 404
+    res = json.loads(json.dumps(res))
+    # The commands that fix each finding, for this virtual server as it is configured now
+    try:
+        _, _, _, data = _posture_data(request.args.get('instance'))
+        app_ = next((a for a in posture_ns.build_apps(data) if a['key'] == key), None)
+        for f in res.get('findings') or []:
+            f['fix'] = posture_ns.scan_fix(f, app_)
+    except Exception as e:
+        logger.info(f"TLS test fixes not added: {e}")
+    return jsonify(res)
+
+@app.route('/api/posture/tls/scan', methods=['POST'])
+@login_required
+def api_posture_tls_scan():
+    inst = request.args.get('instance')
+    body = request.get_json(force=True, silent=True) or {}
+    key = str(body.get('key') or '')
+    sni = str(body.get('sni') or '').strip().rstrip('.')
+    if sni and not _HOST_RE.match(sni):
+        return jsonify({'error': 'The host name is not valid.'}), 400
+    try:
+        iid, node, cfg, data = _posture_data(inst)
+    except (KeyError, ValueError) as e:
+        return jsonify({'error': str(e)}), 400
+    except RuntimeError as e:
+        return jsonify({'error': str(e)}), 502
+    # Only a virtual server of this appliance, at the address its configuration
+    # gives - never an address the request names.
+    target = next((t for t in posture_ns.scan_targets(data) if t['key'] == key), None)
+    if not target:
+        return jsonify({'error': 'Unknown virtual server.'}), 400
+    with _tls_jobs_lock:
+        for jid, j in list(_tls_jobs.items()):
+            if j['state'] != 'running' and time.time() - j['started'] > 3600:
+                _tls_jobs.pop(jid, None)
+        same = next((jid for jid, j in _tls_jobs.items() if j['iid'] == iid and j['key'] == key and j['state'] == 'running'), None)
+        if same:
+            return jsonify({'job': same, 'already': True})
+        if sum(1 for j in _tls_jobs.values() if j['state'] == 'running') >= _TLS_MAX_RUNNING:
+            return jsonify({'error': f'{_TLS_MAX_RUNNING} TLS tests are running already - try again in a minute.'}), 429
+        jid = secrets.token_hex(8)
+        _tls_jobs[jid] = {'iid': iid, 'key': key, 'state': 'running', 'started': time.time(), 'by': session.get('user')}
+
+    def run():
+        try:
+            res = tls_scan.scan(target['ip'], target['port'], sni=sni)
+            res['vserver'] = {'key': key, 'name': target['name'], 'kind': target['kind']}
+            res['by'] = _tls_jobs[jid]['by']
+            with _posture_lock:
+                scans = json.loads(json.dumps(TLS_SCANS))
+                scans.setdefault(iid, {})[key] = res
+                try:
+                    _write_json(TLS_SCANS_FILE, scans)
+                except OSError as e:
+                    logger.warning(f"TLS test result not saved: {e}")
+                TLS_SCANS.clear()
+                TLS_SCANS.update(scans)
+            _tls_jobs[jid]['state'] = 'done'
+            logger.info(f"TLS test of {target['name']} ({target['ip']}:{target['port']}): {res.get('grade')} "
+                        f"in {res.get('duration')} s, {res.get('connections', 0)} connections")
+        except Exception as e:
+            logger.warning(f"TLS test of {target['name']} failed: {e}")
+            _tls_jobs[jid].update(state='failed', error=str(e)[:200])
+    threading.Thread(target=run, name=f'tls-test-{jid}', daemon=True).start()
+    return jsonify({'job': jid})
+
+@app.route('/api/posture/tls/job/<jid>')
+@login_required
+def api_posture_tls_job(jid):
+    j = _tls_jobs.get(str(jid))
+    if not j:
+        return jsonify({'error': 'No such test.'}), 404
+    return jsonify({'state': j['state'], 'key': j['key'], 'error': j.get('error', ''),
+                    'elapsed': round(time.time() - j['started'], 1)})
 
 # ======================================================================================
 # Error Handlers

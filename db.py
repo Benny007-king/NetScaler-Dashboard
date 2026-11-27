@@ -82,7 +82,7 @@ _URL_SCHEMES = {
     "mssql": "mssql", "sqlserver": "mssql",
 }
 # Settings documents mirrored into the external database.
-DOC_NAMES = ("nodes", "auth", "ldap", "ha_state", "security")
+DOC_NAMES = ("nodes", "auth", "ldap", "ha_state", "security", "posture")
 _META = "meta"
 # Format of the settings documents. Raised when a dashboard starts writing
 # something older dashboards cannot read; a dashboard refuses to load settings

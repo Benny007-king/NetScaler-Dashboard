@@ -6,6 +6,51 @@ Versioning: **major.minor.patch**, starting at `1.0.0`.
 
 Each release is tagged in git as `vX.Y.Z`.
 
+## 1.27.0
+**TLS test and security review; LDAP over StartTLS; Settings and Security laid out in sections**
+- **LDAP: "automatic bind not successful - strongerAuthRequired" fixed.** Active
+  Directory with *LDAP server signing requirements = Require signing* (the default
+  on current Windows Server) refuses a password sent over plain LDAP. Settings ->
+  LDAP has an **Encryption** choice - None, **StartTLS** (389, the same connection
+  encrypted) or **LDAPS** (636) - with optional verification of the domain
+  controller's certificate (public CAs or a pasted CA). **Test Connection** says
+  what to change, and when the directory refuses a plain bind it tries StartTLS on
+  the same port and selects it when that works. Sign-in uses the same setting.
+  Settings saved by an earlier version keep working (SSL on = LDAPS).
+- **Settings** is one section at a time with a menu on the left - General,
+  NetScaler instances, LDAP / Active Directory, Database, TLS certificate, Software
+  & upgrade - instead of one long scrolling dialog.
+- **Security tab in sections**: Hardening policies, Hardening settings,
+  Management & platform, Activity, **TLS test** and **Security review** - one at a
+  time, each with its own count, instead of scrolling from section to section.
+- **TLS test** (new): an SSL Labs style test of any SSL virtual server with an
+  address (Gateway, content switching, load balancing, authentication). It speaks
+  TLS to the virtual server's address from the dashboard - every protocol from SSL
+  3.0 to TLS 1.3 and every cipher suite the server takes, in its order, with
+  hand-built handshakes so the result does not depend on the dashboard's own
+  OpenSSL - and reads the certificate and chain, trust and name, key exchange
+  strength, secure renegotiation, compression, downgrade protection
+  (TLS_FALLBACK_SCSV), OCSP stapling, HSTS and the security headers. Graded A+ to
+  F (T when not trusted, with the grade if trusted) on the structure of the SSL
+  Labs rating guide, with every finding and the NetScaler commands that fix it for
+  that virtual server. Runs in the background; PDF export. Only a virtual server of
+  the selected appliance, at its configured address, can be tested.
+- **Security review** (new): a CISO-level report over every load balancing,
+  content switching, Gateway and authentication virtual server - TLS versions,
+  cipher suites, certificates (expiry, key size, signature, self-signed), HSTS,
+  plain HTTP without a redirect, Web App Firewall and bot policies (bound, global
+  or on the servers behind a content switch), security headers, the HTTP profile's
+  handling of malformed requests, clear-text back ends, state - plus the Gateway
+  and management-plane items of the hardening checklist (never counted twice).
+  Each application gets a score and grade; the estate gets a grade, a risk level,
+  an executive summary, *Fix first* and findings by area. Every finding has its
+  impact, the recommendation and the commands. Set per application whether it faces
+  the internet (severities follow), and **accept a risk** with a note - listed, not
+  counted. **CISO report (PDF)** and Excel export. Marks are kept in
+  `security_review.json` and copied to an external database.
+- Built to take other vendors later: the TLS test, the rules, the scoring and the
+  report are vendor-neutral (`posture/`); NetScaler is one adapter.
+
 ## 1.26.0
 **Clusters: every node, the coordinator, and cluster events**
 - **Every member is a node of its own.** The node list at the top shows the

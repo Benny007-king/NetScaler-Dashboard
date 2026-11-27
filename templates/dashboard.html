@@ -79,6 +79,43 @@
     .mark-btn.on-irrelevant { background: rgba(148,163,184,.18); border-color: rgba(148,163,184,.5); color: #e2e8f0; }
     .cmd-block { white-space: pre-wrap; word-break: break-all; }
     .cmd-ph { color: #fbbf24; background: rgba(245,158,11,.12); border-radius: .25rem; padding: 0 .15rem; }
+    .sec-tab { display: inline-flex; align-items: center; gap: .45rem; padding: .55rem .95rem; border-radius: .7rem; font-size: .85rem; font-weight: 500; color: #94a3b8; white-space: nowrap; border: 1px solid transparent; transition: background .15s, color .15s, border-color .15s; }
+    .sec-tab:hover { color: #fff; background: rgba(51, 65, 85, .45); }
+    .sec-tab.active { color: #fff; background: rgba(59, 130, 246, .16); border-color: rgba(59, 130, 246, .4); }
+    .sec-tab:focus-visible { outline: 2px solid #60a5fa; outline-offset: 1px; }
+    .sec-tab-count:empty { display: none; }
+    .sec-tab-count { font-size: .68rem; font-weight: 600; padding: .08rem .45rem; border-radius: 9999px; background: rgba(148,163,184,.16); color: #cbd5e1; font-variant-numeric: tabular-nums; }
+    .sec-tab-count.full { background: rgba(16,185,129,.18); color: #6ee7b7; }
+    .grade { display: inline-flex; align-items: center; justify-content: center; font-weight: 800; border-radius: .9rem; color: #fff; font-variant-numeric: tabular-nums; letter-spacing: -.02em; }
+    .grade-lg { width: 5.5rem; height: 5.5rem; font-size: 2.6rem; border-radius: 1.2rem; }
+    .grade-md { width: 2.6rem; height: 2.6rem; font-size: 1.15rem; border-radius: .7rem; }
+    .grade-sm { width: 1.9rem; height: 1.9rem; font-size: .85rem; border-radius: .5rem; }
+    .g-Aplus, .g-A { background: #059669; } .g-Aminus { background: #65a30d; } .g-B { background: #d97706; }
+    .g-C { background: #ea580c; } .g-D, .g-E, .g-F, .g-T { background: #dc2626; } .g-none { background: #475569; }
+    .sev { display: inline-flex; align-items: center; font-size: .66rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: .18rem .5rem; border-radius: .4rem; white-space: nowrap; }
+    .sev-critical { background: rgba(220,38,38,.22); color: #fca5a5; } .sev-high { background: rgba(234,88,12,.22); color: #fdba74; }
+    .sev-medium { background: rgba(217,119,6,.2); color: #fcd34d; } .sev-low { background: rgba(59,130,246,.18); color: #93c5fd; }
+    .sev-info { background: rgba(148,163,184,.15); color: #cbd5e1; }
+    .finding { background: rgba(15,23,42,.45); border: 1px solid rgba(51,65,85,.65); border-radius: .8rem; padding: .8rem .95rem; }
+    .finding.accepted { opacity: .62; }
+    .meter { height: .55rem; border-radius: 9999px; background: rgba(30,41,59,.9); overflow: hidden; }
+    .meter > div { height: 100%; border-radius: 9999px; }
+    .tls-target { width: 100%; text-align: left; display: flex; align-items: center; gap: .75rem; padding: .65rem .75rem; border-radius: .8rem; border: 1px solid rgba(51,65,85,.6); background: rgba(15,23,42,.4); transition: border-color .15s, background .15s; }
+    .tls-target:hover { border-color: rgba(148,163,184,.5); }
+    .tls-target.active { border-color: rgba(59,130,246,.6); background: rgba(59,130,246,.1); }
+    .yes { color: #6ee7b7; } .no { color: #fca5a5; } .meh { color: #fcd34d; }
+    .rev-table td { vertical-align: middle; }
+    .set-nav { display: flex; align-items: center; gap: .7rem; width: 100%; min-width: 12rem; padding: .6rem .75rem; border-radius: .7rem; color: #cbd5e1; border: 1px solid transparent; transition: background .15s, border-color .15s, color .15s; }
+    .set-nav:hover { background: rgba(51, 65, 85, .45); color: #fff; }
+    .set-nav.active { background: rgba(59, 130, 246, .14); border-color: rgba(59, 130, 246, .35); color: #fff; }
+    .set-nav.active svg { color: #60a5fa; }
+    .set-nav:focus-visible { outline: 2px solid #60a5fa; outline-offset: 1px; }
+    .set-nav-chip:empty { display: none; }
+    .set-nav-chip { font-size: .65rem; font-weight: 600; padding: .1rem .45rem; border-radius: 9999px; background: rgba(148,163,184,.15); color: #cbd5e1; white-space: nowrap; }
+    .set-nav-chip.on { background: rgba(16,185,129,.18); color: #6ee7b7; }
+    .set-nav-chip.warn { background: rgba(245,158,11,.18); color: #fcd34d; }
+    .set-card { background: rgba(15, 23, 42, .45); border: 1px solid rgba(51, 65, 85, .7); border-radius: .9rem; padding: 1.1rem 1.2rem; }
+    @media (max-width: 767px) { .set-nav { min-width: auto; width: auto; } .set-nav-sub { display: none; } }
     .kpi { background: rgba(15, 23, 42, .55); border: 1px solid rgba(51, 65, 85, .6); border-radius: .9rem; padding: .9rem 1rem; }
     .range-btn.active { background: #2563eb; color: #fff; border-color: #2563eb; }
     .status-dot { width: 10px; height: 10px; border-radius: 9999px; display: inline-block; flex-shrink: 0; }
@@ -121,56 +158,127 @@
   </div>
 </div>
 
-<div id="settingsModal" class="hidden fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center fade-in">
-  <div class="glass-panel p-6 rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto">
-      <div class="flex justify-between items-center mb-6 border-b border-slate-700 pb-4">
-          <h2 class="text-2xl font-bold text-white">Dashboard Settings</h2>
-          <button onclick="closeSettings()" class="text-slate-400 hover:text-white">✕</button>
+<div id="settingsModal" class="hidden fixed inset-0 bg-black/60 backdrop-blur-sm z-[100] flex items-center justify-center p-2 md:p-6 fade-in" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+  <div class="glass-panel rounded-2xl w-full max-w-6xl h-[92vh] md:h-[86vh] flex flex-col overflow-hidden">
+    <div class="flex items-center justify-between px-6 py-4 border-b border-slate-700/70 shrink-0">
+      <div>
+        <h2 id="settingsTitle" class="text-xl font-bold text-white">Dashboard Settings</h2>
+        <p class="text-xs text-slate-500 mt-0.5">One section at a time &mdash; pick it on the left.</p>
       </div>
-      
-      <div class="space-y-6">
-          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-              <label class="block text-sm font-semibold text-white mb-2">Session Timeout</label>
+      <button onclick="closeSettings()" class="text-slate-400 hover:text-white w-9 h-9 rounded-lg hover:bg-slate-700/60" aria-label="Close settings">✕</button>
+    </div>
+    <div class="flex flex-col md:flex-row flex-1 min-h-0">
+      <nav class="set-navbar md:w-72 shrink-0 border-b md:border-b-0 md:border-r border-slate-700/70 p-2 md:p-3 flex md:flex-col gap-1 overflow-x-auto md:overflow-y-auto" role="tablist" aria-label="Settings sections">
+        <button type="button" class="set-nav" data-pane="general" onclick="setSettingsPane('general')" role="tab" aria-controls="setpane-general">
+          <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8v4l3 2"/><circle cx="12" cy="12" r="9"/></svg>
+          <span class="min-w-0 text-left"><span class="block text-sm font-medium truncate">General</span><span class="set-nav-sub block text-[11px] text-slate-500 truncate">Session timeout, admin password</span></span>
+          <span class="set-nav-chip ml-auto" id="setChip-general"></span>
+        </button>
+        <button type="button" class="set-nav" data-pane="instances" onclick="setSettingsPane('instances')" role="tab" aria-controls="setpane-instances">
+          <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.5"/><rect x="3" y="14" width="18" height="6" rx="1.5"/><path d="M7 7h.01M7 17h.01"/></svg>
+          <span class="min-w-0 text-left"><span class="block text-sm font-medium truncate">NetScaler instances</span><span class="set-nav-sub block text-[11px] text-slate-500 truncate">Appliances, HA pairs, clusters</span></span>
+          <span class="set-nav-chip ml-auto" id="setChip-instances"></span>
+        </button>
+        <button type="button" class="set-nav" data-pane="ldap" onclick="setSettingsPane('ldap')" role="tab" aria-controls="setpane-ldap">
+          <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.8-3.5 3.4-5.5 6.5-5.5s5.7 2 6.5 5.5"/><path d="M17 11h4M19 9v4"/></svg>
+          <span class="min-w-0 text-left"><span class="block text-sm font-medium truncate">LDAP / Active Directory</span><span class="set-nav-sub block text-[11px] text-slate-500 truncate">Directory sign-in</span></span>
+          <span class="set-nav-chip ml-auto" id="setChip-ldap"></span>
+        </button>
+        <button type="button" class="set-nav" data-pane="database" onclick="setSettingsPane('database')" role="tab" aria-controls="setpane-database">
+          <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><ellipse cx="12" cy="5.5" rx="7.5" ry="2.5"/><path d="M4.5 5.5v13c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5v-13"/><path d="M4.5 12c0 1.4 3.4 2.5 7.5 2.5s7.5-1.1 7.5-2.5"/></svg>
+          <span class="min-w-0 text-left"><span class="block text-sm font-medium truncate">Database</span><span class="set-nav-sub block text-[11px] text-slate-500 truncate">History and a copy of the settings</span></span>
+          <span class="set-nav-chip ml-auto" id="setChip-database"></span>
+        </button>
+        <button type="button" class="set-nav" data-pane="certificate" onclick="setSettingsPane('certificate')" role="tab" aria-controls="setpane-certificate">
+          <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg>
+          <span class="min-w-0 text-left"><span class="block text-sm font-medium truncate">TLS certificate</span><span class="set-nav-sub block text-[11px] text-slate-500 truncate">The dashboard's own HTTPS</span></span>
+          <span class="set-nav-chip ml-auto" id="setChip-certificate"></span>
+        </button>
+        <button type="button" class="set-nav" data-pane="software" onclick="setSettingsPane('software')" role="tab" aria-controls="setpane-software">
+          <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+          <span class="min-w-0 text-left"><span class="block text-sm font-medium truncate">Software &amp; upgrade</span><span class="set-nav-sub block text-[11px] text-slate-500 truncate">Version, upload an upgrade</span></span>
+          <span class="set-nav-chip ml-auto" id="setChip-software"></span>
+        </button>
+      </nav>
+      <div id="settingsBody" class="flex-1 min-w-0 overflow-y-auto p-5 md:p-7">
+      <div class="set-pane hidden" id="setpane-general" data-pane="general" role="tabpanel">
+        <div class="mb-5">
+          <h3 class="text-xl font-semibold text-white">General</h3>
+          <p class="text-sm text-slate-400 mt-1">How the dashboard behaves for everyone who signs in.</p>
+        </div>
+        <div class="set-card"><label class="block text-sm font-semibold text-white mb-2">Session Timeout</label>
               <div class="flex items-center gap-2">
                   <input type="number" id="setSessionTimeout" min="1" max="1440" class="w-28 bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm">
                   <span class="text-sm text-slate-400">minutes of inactivity before automatic logout</span>
-              </div>
-          </div>
-
-          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700">
-              <div class="flex items-center justify-between mb-1">
-                  <h3 class="text-lg font-semibold text-blue-400">NetScaler Instances</h3>
+              </div></div>
+        <div class="set-card mt-4"><div class="text-sm font-semibold text-white mb-1">Dashboard administrator</div><p class="text-xs text-slate-400 mb-3">The local administrator account always works, also when LDAP is on or the directory is down.</p>
+            <a href="/change-password" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm inline-block border border-slate-600 transition-colors">Change Admin Password</a></div>
+      </div>
+      <div class="set-pane hidden" id="setpane-instances" data-pane="instances" role="tabpanel">
+        <div class="mb-5">
+          <h3 class="text-xl font-semibold text-white">NetScaler instances</h3>
+          <p class="text-sm text-slate-400 mt-1">The appliances this dashboard reads. Save &amp; Apply below keeps the changes.</p>
+        </div>
+        <div>
+              <div class="flex items-center justify-between gap-4 mb-4">
+                  <p class="text-xs text-slate-400">Add every deployment you manage &mdash; e.g. two HA pairs and three standalones. Each is picked from the <strong>Instance</strong> switcher at the top.</p>
                   <button type="button" onclick="addInstance()" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white rounded-lg text-sm font-medium">+ Add instance</button>
               </div>
-              <p class="text-xs text-slate-400 mb-4">Add every deployment you manage — e.g. two HA pairs and three standalones. Each is picked from the <strong>Instance</strong> switcher at the top.</p>
+              
               <div id="instanceList" class="space-y-4"></div>
           </div>
-
-          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
-            <h3 class="text-lg font-semibold text-green-400 mb-2">Dashboard Administration</h3>
-            <p class="text-xs text-slate-400 mb-4">Manage the local dashboard administrator account password directly.</p>
-            <a href="/change-password" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm inline-block border border-slate-600 transition-colors">Change Admin Password</a>
+      </div>
+      <div class="set-pane hidden" id="setpane-ldap" data-pane="ldap" role="tabpanel">
+        <div class="mb-5">
+          <h3 class="text-xl font-semibold text-white">LDAP / Active Directory</h3>
+          <p class="text-sm text-slate-400 mt-1">Let directory users sign in. The local admin account always works regardless.</p>
         </div>
-
-          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
+        <div class="set-card">
             <div class="flex items-center justify-between mb-2">
-              <h3 class="text-lg font-semibold text-violet-400">Software &amp; Upgrade</h3>
-              <span id="swVersionBadge" class="badge badge-info">&hellip;</span>
+              <span class="text-sm text-slate-300">Directory sign-in</span>
+              <span id="ldapStatusBadge" class="badge badge-warning">Disabled</span>
             </div>
-            <p id="swBlurb" class="text-xs text-slate-400 mb-3"></p>
-            <div id="upgradeControls" class="hidden">
-              <div class="flex flex-wrap items-center gap-3">
-                <input type="file" id="upgradeFile" accept=".nsu" aria-label="Upgrade file (.nsu)" class="text-xs text-slate-300 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-slate-700 file:text-white hover:file:bg-slate-600 file:cursor-pointer">
-                <button onclick="startUpgrade()" id="upgradeBtn" class="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-sm border border-violet-500 transition-colors disabled:opacity-50">Upload &amp; install</button>
+                        <label for="setLdapEnabled" class="flex items-center gap-3 mb-4 p-3 rounded-lg bg-slate-900/60 border border-slate-700 hover:border-cyan-500/50 cursor-pointer transition-colors">
+              <input type="checkbox" id="setLdapEnabled" onchange="onLdapToggle()" class="w-5 h-5 accent-cyan-500 shrink-0">
+              <span class="text-sm text-white font-semibold">Enable LDAP authentication</span>
+              <span class="text-xs text-slate-400 ml-auto text-right">Required — the LDAP button stays greyed out on the login page until this is ticked <em>and</em> saved.</span>
+            </label>
+            <div id="ldapFields" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div><label class="block text-xs text-slate-400 mb-1">Server (host or IP)</label><input type="text" id="setLdapServer" placeholder="ldap.example.com" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div class="grid grid-cols-[6rem_1fr] gap-2">
+                <div><label for="setLdapPort" class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setLdapPort" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+                <div><label for="setLdapSec" class="block text-xs text-slate-400 mb-1">Encryption</label><select id="setLdapSec" onchange="onLdapSec(true)" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm">
+                  <option value="none">None (389)</option>
+                  <option value="starttls">StartTLS (389)</option>
+                  <option value="ldaps">LDAPS (636)</option></select></div>
               </div>
-              <div id="upgradeBarWrap" class="hidden mt-3 h-2 rounded-full bg-slate-900 overflow-hidden"><div id="upgradeBar" class="h-full bg-violet-500" style="width:0%;transition:width .2s"></div></div>
-              <div id="upgradeMsg" class="text-xs mt-3" role="status" aria-live="polite"></div>
+              <div id="ldapTlsBox" class="md:col-span-2 hidden rounded-lg bg-slate-900/60 border border-slate-700 p-3 space-y-3">
+                <label class="flex items-center gap-2 text-sm text-white cursor-pointer"><input type="checkbox" id="setLdapVerify" onchange="onLdapSec(false)" class="w-4 h-4 accent-cyan-500"> Verify the domain controller&rsquo;s certificate</label>
+                <div id="ldapCaBox" class="hidden"><label for="setLdapCa" class="block text-xs text-slate-400 mb-1">CA certificate (PEM) that signed it &mdash; leave blank to use the public CAs</label><textarea id="setLdapCa" rows="3" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs font-mono" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
+                <p class="text-[11px] text-slate-500">Active Directory with &ldquo;LDAP server signing requirements&rdquo; set to <em>Require signing</em> refuses a plain bind (<span class="font-mono">strongerAuthRequired</span>); <b class="text-slate-400">StartTLS</b> encrypts the same connection on 389, <b class="text-slate-400">LDAPS</b> uses TLS from the start on 636 StartTLS or LDAPS satisfy it. The domain controller needs a certificate for either.</p>mdash; either satisfies it; the domain controller needs a certificate for both.</p>
+              </div>
+              <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Base DN</label><input type="text" id="setLdapBaseDn" placeholder="dc=example,dc=com" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div><label class="block text-xs text-slate-400 mb-1">Bind DN (service account)</label><input type="text" id="setLdapBindDn" placeholder="cn=svc,dc=example,dc=com" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div><label class="block text-xs text-slate-400 mb-1">Bind Password <span id="ldapPwHint" class="text-slate-500"></span></label><input type="password" id="setLdapBindPw" placeholder="leave blank to keep" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div><label class="block text-xs text-slate-400 mb-1">User Attribute</label><input type="text" id="setLdapUserAttr" placeholder="sAMAccountName" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div><label class="block text-xs text-slate-400 mb-1">Timeout (s)</label><input type="number" id="setLdapTimeout" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
+              <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Allowed Group DN (optional)</label><input type="text" id="setLdapGroupDn" placeholder="cn=NetScalerAdmins,ou=Groups,dc=example,dc=com" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
             </div>
-          </div>
-
-          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
+            <div class="mt-4 flex flex-wrap items-center gap-3">
+              <button onclick="testLdap()" id="ldapTestBtn" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm border border-slate-600 transition-colors">Test Connection</button>
+              <button onclick="saveLdap()" id="ldapSaveBtn" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm border border-cyan-500 transition-colors">Save LDAP Settings</button>
+              <span id="ldapMsg" class="text-xs basis-full" role="status" aria-live="polite"></span>
+            </div>
+        </div>
+      </div>
+      <div class="set-pane hidden" id="setpane-database" data-pane="database" role="tabpanel">
+        <div class="mb-5">
+          <h3 class="text-xl font-semibold text-white">Database</h3>
+          <p class="text-sm text-slate-400 mt-1">Built-in, or your own PostgreSQL, MySQL / MariaDB or SQL Server.</p>
+        </div>
+        <div class="set-card">
             <div class="flex items-center justify-between mb-2">
-              <h3 class="text-lg font-semibold text-emerald-400">Database</h3>
+              <span class="text-sm text-slate-300">Status</span>
               <span id="dbStatusBadge" class="badge badge-info">&hellip;</span>
             </div>
             <p class="text-xs text-slate-400 mb-3">Where session and failover history are kept, together with a copy of these settings (instances, logins, LDAP). The built-in store lives on this dashboard; an external database keeps the data on your own server, so a new appliance can be pointed at it and pick everything up.</p>
@@ -211,41 +319,13 @@
               <span id="dbMsg" class="text-xs" role="status" aria-live="polite"></span>
             </div>
           </div>
-
-          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
-            <div class="flex items-center justify-between mb-2">
-              <h3 class="text-lg font-semibold text-cyan-400">LDAP / Active Directory</h3>
-              <span id="ldapStatusBadge" class="badge badge-warning">Disabled</span>
-            </div>
-            <p class="text-xs text-slate-400 mb-3">Let directory users sign in. The local admin account always works regardless.</p>
-            <label for="setLdapEnabled" class="flex items-center gap-3 mb-4 p-3 rounded-lg bg-slate-900/60 border border-slate-700 hover:border-cyan-500/50 cursor-pointer transition-colors">
-              <input type="checkbox" id="setLdapEnabled" onchange="onLdapToggle()" class="w-5 h-5 accent-cyan-500 shrink-0">
-              <span class="text-sm text-white font-semibold">Enable LDAP authentication</span>
-              <span class="text-xs text-slate-400 ml-auto text-right">Required — the LDAP button stays greyed out on the login page until this is ticked <em>and</em> saved.</span>
-            </label>
-            <div id="ldapFields" class="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div><label class="block text-xs text-slate-400 mb-1">Server (host or IP)</label><input type="text" id="setLdapServer" placeholder="ldap.example.com" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-              <div class="grid grid-cols-2 gap-2">
-                <div><label class="block text-xs text-slate-400 mb-1">Port</label><input type="number" id="setLdapPort" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-                <div><label class="block text-xs text-slate-400 mb-1">SSL</label><select id="setLdapSsl" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"><option value="false">No (389)</option><option value="true">Yes (636)</option></select></div>
-              </div>
-              <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Base DN</label><input type="text" id="setLdapBaseDn" placeholder="dc=example,dc=com" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-              <div><label class="block text-xs text-slate-400 mb-1">Bind DN (service account)</label><input type="text" id="setLdapBindDn" placeholder="cn=svc,dc=example,dc=com" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-              <div><label class="block text-xs text-slate-400 mb-1">Bind Password <span id="ldapPwHint" class="text-slate-500"></span></label><input type="password" id="setLdapBindPw" placeholder="leave blank to keep" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-              <div><label class="block text-xs text-slate-400 mb-1">User Attribute</label><input type="text" id="setLdapUserAttr" placeholder="sAMAccountName" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-              <div><label class="block text-xs text-slate-400 mb-1">Timeout (s)</label><input type="number" id="setLdapTimeout" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-              <div class="md:col-span-2"><label class="block text-xs text-slate-400 mb-1">Allowed Group DN (optional)</label><input type="text" id="setLdapGroupDn" placeholder="cn=NetScalerAdmins,ou=Groups,dc=example,dc=com" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
-            </div>
-            <div class="mt-4 flex items-center gap-3">
-              <button onclick="testLdap()" id="ldapTestBtn" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg text-sm border border-slate-600 transition-colors">Test Connection</button>
-              <button onclick="saveLdap()" id="ldapSaveBtn" class="px-4 py-2 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-sm border border-cyan-500 transition-colors">Save LDAP Settings</button>
-              <span id="ldapMsg" class="text-xs"></span>
-            </div>
+      </div>
+      <div class="set-pane hidden" id="setpane-certificate" data-pane="certificate" role="tabpanel">
+        <div class="mb-5">
+          <h3 class="text-xl font-semibold text-white">TLS certificate</h3>
+          <p class="text-sm text-slate-400 mt-1">The certificate this dashboard serves HTTPS with.</p>
         </div>
-
-          <div class="bg-slate-800/50 p-4 rounded-xl border border-slate-700 mt-6">
-            <h3 class="text-lg font-semibold text-amber-400 mb-2">TLS Certificate</h3>
-            <p class="text-xs text-slate-400 mb-4">The dashboard serves HTTPS on 443 with a certificate signed by a local CA generated on first boot. <strong>Install the CA</strong> on client machines for warning-free HTTPS, or replace the certificate with your own below.</p>
+        <div class="set-card"><p class="text-xs text-slate-400 mb-4">The dashboard serves HTTPS on 443 with a certificate signed by a local CA generated on first boot. <strong>Install the CA</strong> on client machines for warning-free HTTPS, or replace the certificate with your own below.</p>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mb-3">
               <div><label for="csrName" class="block text-xs text-slate-400 mb-1">Host name for a signing request (CSR)</label><input type="text" id="csrName" placeholder="dashboard.example.com" autocomplete="off" spellcheck="false" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-sm"></div>
@@ -265,14 +345,38 @@
               <div><label class="block text-xs text-slate-400 mb-1">Certificate (PEM)</label><textarea id="setTlsCert" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs font-mono" placeholder="-----BEGIN CERTIFICATE-----"></textarea></div>
               <div><label class="block text-xs text-slate-400 mb-1">Private Key (PEM) — leave blank if the cert was signed from a generated CSR</label><textarea id="setTlsKey" rows="4" class="w-full bg-slate-900 border border-slate-700 rounded p-2 text-white text-xs font-mono" placeholder="-----BEGIN PRIVATE KEY-----"></textarea></div>
               <div><button onclick="saveTlsCert()" id="saveTlsBtn" class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white rounded-lg text-sm border border-amber-500 transition-colors">Upload Certificate</button> <span id="tlsMsg" class="text-xs ml-2"></span></div>
-            </div>
+            </div></div>
+      </div>
+      <div class="set-pane hidden" id="setpane-software" data-pane="software" role="tabpanel">
+        <div class="mb-5">
+          <h3 class="text-xl font-semibold text-white">Software &amp; upgrade</h3>
+          <p class="text-sm text-slate-400 mt-1">The installed version, and upgrades by uploading one file.</p>
         </div>
+        <div class="set-card">
+            <div class="flex items-center justify-between mb-2">
+              <span class="text-sm text-slate-300">Installed version</span>
+              <span id="swVersionBadge" class="badge badge-info">&hellip;</span>
+            </div>
+            <p id="swBlurb" class="text-xs text-slate-400 mb-3"></p>
+            <div id="upgradeControls" class="hidden">
+              <div class="flex flex-wrap items-center gap-3">
+                <input type="file" id="upgradeFile" accept=".nsu" aria-label="Upgrade file (.nsu)" class="text-xs text-slate-300 file:mr-3 file:px-3 file:py-2 file:rounded-lg file:border-0 file:bg-slate-700 file:text-white hover:file:bg-slate-600 file:cursor-pointer">
+                <button onclick="startUpgrade()" id="upgradeBtn" class="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-lg text-sm border border-violet-500 transition-colors disabled:opacity-50">Upload &amp; install</button>
+              </div>
+              <div id="upgradeBarWrap" class="hidden mt-3 h-2 rounded-full bg-slate-900 overflow-hidden"><div id="upgradeBar" class="h-full bg-violet-500" style="width:0%;transition:width .2s"></div></div>
+              <div id="upgradeMsg" class="text-xs mt-3" role="status" aria-live="polite"></div>
+            </div>
+          </div>
       </div>
-      
-      <div class="mt-6 flex justify-end gap-3 pt-4 border-t border-slate-700">
-          <button onclick="closeSettings()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg">Cancel</button>
-          <button onclick="saveSettings()" id="saveSettingsBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">Save & Apply</button>
       </div>
+    </div>
+    <div class="flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-t border-slate-700/70 shrink-0 bg-slate-900/40">
+      <p id="setFooterHint" class="text-xs text-slate-500">Save &amp; Apply keeps General and NetScaler instances.</p>
+      <div class="flex gap-3">
+        <button onclick="closeSettings()" class="px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg">Close</button>
+        <button onclick="saveSettings()" id="saveSettingsBtn" class="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium">Save &amp; Apply</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -572,15 +676,26 @@
   </section>
 
   <section class="panel hidden fade-in" id="panel-security">
-    <div class="glass-panel rounded-2xl p-6 mb-6">
+    <nav class="sec-subnav glass-panel rounded-2xl p-1.5 mb-6 flex gap-1 overflow-x-auto" role="tablist" aria-label="Security sections">
+      <button type="button" class="sec-tab" data-sview="policies" role="tab" onclick="setSecView('policies')">Hardening policies <span class="sec-tab-count" id="secCount-policies"></span></button>
+      <button type="button" class="sec-tab" data-sview="settings" role="tab" onclick="setSecView('settings')">Hardening settings <span class="sec-tab-count" id="secCount-settings"></span></button>
+      <button type="button" class="sec-tab" data-sview="platform" role="tab" onclick="setSecView('platform')">Management &amp; platform <span class="sec-tab-count" id="secCount-platform"></span></button>
+      <span class="w-px my-2 bg-white/10 shrink-0" aria-hidden="true"></span>
+      <button type="button" class="sec-tab" data-sview="activity" role="tab" onclick="setSecView('activity')">Activity</button>
+      <span class="w-px my-2 bg-white/10 shrink-0" aria-hidden="true"></span>
+      <button type="button" class="sec-tab" data-sview="tls" role="tab" onclick="setSecView('tls')">TLS test</button>
+      <button type="button" class="sec-tab" data-sview="review" role="tab" onclick="setSecView('review')">Security review</button>
+    </nav>
+
+    <div class="sec-view glass-panel rounded-2xl p-6 mb-6" data-sview="checklist">
       <div class="flex flex-wrap items-start justify-between gap-4 mb-5">
         <div>
-          <h2 class="text-lg font-semibold text-white">Hardening checklist</h2>
+          <h2 id="secListTitle" class="text-lg font-semibold text-white">Hardening checklist</h2>
           <p id="secMeta" class="text-xs text-slate-400 mt-1">Reading the appliance…</p>
         </div>
         <div class="flex items-center gap-5">
           <div class="min-w-[12rem]">
-            <div class="flex items-baseline justify-between text-xs text-slate-400 mb-1"><span>In place</span><span id="secScoreText" class="text-white font-semibold">—</span></div>
+            <div class="flex items-baseline justify-between text-xs text-slate-400 mb-1"><span>In place, all sections</span><span id="secScoreText" class="text-white font-semibold">—</span></div>
             <div class="h-2 rounded-full bg-slate-800 overflow-hidden"><div id="secScoreBar" class="h-full bg-emerald-500 transition-all" style="width:0%"></div></div>
           </div>
           <button onclick="loadSecurity(true)" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg border border-slate-600">Check again</button>
@@ -597,7 +712,7 @@
       <div id="secChecklist" class="space-y-6"><div class="text-slate-500 text-sm py-6 text-center">Loading…</div></div>
     </div>
 
-    <div class="glass-panel rounded-2xl p-6">
+    <div class="sec-view glass-panel rounded-2xl p-6 hidden" data-sview="activity">
       <div class="flex flex-wrap items-start justify-between gap-4 mb-5">
         <div>
           <h2 class="text-lg font-semibold text-white">Activity</h2>
@@ -646,6 +761,79 @@
         </table>
       </div>
       <p id="secEvMore" class="text-xs text-slate-500 mt-2"></p>
+    </div>
+
+    <div class="sec-view hidden" data-sview="tls">
+      <div class="grid grid-cols-1 xl:grid-cols-[21rem_minmax(0,1fr)] gap-6 items-start">
+        <div class="glass-panel rounded-2xl p-4 xl:sticky xl:top-28">
+          <div class="flex items-center justify-between gap-2 mb-1">
+            <h2 class="text-lg font-semibold text-white">Virtual servers</h2>
+            <button onclick="loadTls(true)" class="text-xs px-3 py-1.5 rounded-lg border border-slate-600 text-slate-300 hover:text-white hover:border-slate-400">Reload</button>
+          </div>
+          <p class="text-xs text-slate-400 mb-3">SSL virtual servers with an address. The test connects from this dashboard to that address.</p>
+          <div id="tlsTargets" class="space-y-2 xl:max-h-[calc(100vh-16rem)] xl:overflow-y-auto pr-1"><div class="text-slate-500 text-sm py-6 text-center">Loading…</div></div>
+        </div>
+        <div id="tlsMain" class="glass-panel rounded-2xl p-6 min-h-[24rem]"><div class="text-slate-500 text-sm py-16 text-center">Pick a virtual server on the left.</div></div>
+      </div>
+    </div>
+
+    <div class="sec-view hidden" data-sview="review">
+      <div class="glass-panel rounded-2xl p-6 mb-6">
+        <div class="flex flex-wrap items-start justify-between gap-4 mb-6">
+          <div>
+            <h2 class="text-lg font-semibold text-white">Security review</h2>
+            <p id="revMeta" class="text-xs text-slate-400 mt-1">Load balancing, content switching and Gateway virtual servers, the Gateway hardening and the management plane &mdash; scored, with what to do first.</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <button onclick="loadReview(true)" class="bg-slate-700 hover:bg-slate-600 text-white text-sm px-4 py-2 rounded-lg border border-slate-600">Review again</button>
+            <button onclick="exportReview('pdf')" class="bg-red-700 hover:bg-red-600 text-white text-sm px-4 py-2 rounded-lg border border-red-600">CISO report (PDF)</button>
+            <button onclick="exportReview('xlsx')" class="bg-green-700 hover:bg-green-600 text-white text-sm px-4 py-2 rounded-lg border border-green-600">Excel</button>
+          </div>
+        </div>
+        <div id="revHead"><div class="text-slate-500 text-sm py-10 text-center">Loading…</div></div>
+      </div>
+      <div class="grid grid-cols-1 xl:grid-cols-3 gap-6 mb-6">
+        <div class="glass-panel rounded-2xl p-6 xl:col-span-2">
+          <h3 class="text-base font-semibold text-white mb-1">Fix first</h3>
+          <p class="text-xs text-slate-400 mb-4">The most severe open findings, internet-facing first.</p>
+          <div id="revTop" class="space-y-2"></div>
+        </div>
+        <div class="glass-panel rounded-2xl p-6">
+          <h3 class="text-base font-semibold text-white mb-4">Open findings by area</h3>
+          <div id="revCats" class="space-y-3"></div>
+          <h3 class="text-base font-semibold text-white mt-6 mb-3">Applications by grade</h3>
+          <div id="revGrades" class="flex items-end gap-2 h-28"></div>
+        </div>
+      </div>
+      <div class="glass-panel rounded-2xl p-6 mb-6">
+        <div class="flex flex-wrap items-end justify-between gap-3 mb-4">
+          <div>
+            <h3 class="text-base font-semibold text-white">Applications</h3>
+            <p class="text-xs text-slate-400">Click a row for its findings, the impact and the commands. Set whether it faces the internet &mdash; severities follow it.</p>
+          </div>
+          <div class="flex flex-wrap gap-2">
+            <input id="revQ" type="search" oninput="renderReviewApps()" placeholder="Search name or address" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3 w-56" aria-label="Search applications">
+            <select id="revKind" onchange="renderReviewApps()" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3" aria-label="Type">
+              <option value="">All types</option><option value="gateway">Gateway</option><option value="cs">Content switching</option><option value="lb">Load balancing</option><option value="aaa">Authentication</option></select>
+            <select id="revSev" onchange="renderReviewApps()" class="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg py-2 px-3" aria-label="Severity">
+              <option value="">Any finding</option><option value="critical">With critical</option><option value="high">High or worse</option><option value="medium">Medium or worse</option></select>
+          </div>
+        </div>
+        <div class="table-container">
+          <table class="rev-table">
+            <thead><tr><th class="w-8"></th><th>Grade</th><th>Application</th><th>Type</th><th>Address</th><th>Exposure</th><th>TLS</th><th>WAF</th><th>TLS test</th><th class="text-right">Findings</th></tr></thead>
+            <tbody id="revApps" class="text-slate-300"></tbody>
+          </table>
+        </div>
+      </div>
+      <div class="glass-panel rounded-2xl p-6">
+        <div class="flex flex-wrap items-baseline justify-between gap-3 mb-1">
+          <h3 class="text-base font-semibold text-white">Gateway hardening and management plane</h3>
+          <span id="revPlatScore" class="text-xs text-slate-400"></span>
+        </div>
+        <p class="text-xs text-slate-400 mb-4">From the hardening checklist: what is not in place and not marked. Marking an item Done or Not relevant there removes it here.</p>
+        <div id="revPlatform" class="space-y-2"></div>
+      </div>
     </div>
   </section>
 
@@ -939,7 +1127,38 @@ async function openSettings() {
     loadLdapSettings();
     loadAppliance();
     loadDatabase();
+    let pane = 'general';
+    try { pane = localStorage.getItem('nsd.settingsPane') || 'general'; } catch (e) { /* storage blocked */ }
+    setSettingsPane(pane);
     $('settingsModal').classList.remove('hidden');
+}
+
+function setSettingsPane(name) {
+    if (!document.getElementById('setpane-' + name)) name = 'general';
+    document.querySelectorAll('#settingsModal .set-pane').forEach(p => {
+        const on = p.dataset.pane === name;
+        p.classList.toggle('hidden', !on);
+        if (on) { p.classList.remove('fade-in'); void p.offsetWidth; p.classList.add('fade-in'); }
+    });
+    document.querySelectorAll('#settingsModal .set-nav').forEach(b => {
+        const on = b.dataset.pane === name;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const own = { ldap: 'LDAP saves with its own button.', database: 'The database saves with its own button.',
+                  certificate: 'The certificate is uploaded with its own button.', software: 'An upgrade installs with its own button.' };
+    const hint = $('setFooterHint');
+    if (hint) hint.textContent = (own[name] ? own[name] + ' ' : '') + 'Save & Apply keeps General and NetScaler instances.';
+    const body = $('settingsBody');
+    if (body) body.scrollTop = 0;
+    try { localStorage.setItem('nsd.settingsPane', name); } catch (e) { /* storage blocked */ }
+}
+
+function setChip(name, text, cls) {
+    const c = $('setChip-' + name);
+    if (!c) return;
+    c.textContent = text || '';
+    c.className = 'set-nav-chip ml-auto' + (cls ? ' ' + cls : '');
 }
 
 function closeSettings() {
@@ -979,18 +1198,18 @@ function renderDatabaseStatus(d) {
     const badge = $('dbStatusBadge'), line = $('dbStatusLine');
     if (!badge || !line) return;
     if (d.backend !== 'external') {
-        badge.textContent = 'Built-in'; badge.className = 'badge badge-info';
+        badge.textContent = 'Built-in'; badge.className = 'badge badge-info'; setChip('database', 'Built-in');
         line.className = 'text-xs mb-3 text-slate-400';
         line.textContent = `Stored on this dashboard: ${dbCounts(d.counts)}, kept for ${d.retention_days} days.`;
         if (d.error) { line.className = 'text-xs mb-3 text-amber-300'; line.textContent = d.error + ' ' + line.textContent; }
     } else if (d.connected) {
-        badge.textContent = 'Connected'; badge.className = 'badge badge-success';
+        badge.textContent = 'Connected'; badge.className = 'badge badge-success'; setChip('database', 'External', 'on');
         line.className = 'text-xs mb-3 text-green-400';
         line.textContent = `Connected to ${d.server || 'the database'}` + (d.counts ? ` — it holds ${dbCounts(d.counts)}, kept for ${d.retention_days} days.` : '.');
         if (d.note) { line.className = 'text-xs mb-3 text-amber-300'; line.textContent += ' ' + d.note; }
     } else {
         const w = d.waiting || { sessions: 0, failover_events: 0 };
-        badge.textContent = 'Unreachable'; badge.className = 'badge badge-danger';
+        badge.textContent = 'Unreachable'; badge.className = 'badge badge-danger'; setChip('database', 'Unreachable', 'warn');
         line.className = 'text-xs mb-3 text-amber-300';
         line.textContent = `Not reachable: ${d.error || 'no answer'}. New history is kept on this dashboard (${dbCounts(w)} waiting) and is moved into the database automatically when it answers again.`;
     }
@@ -1117,6 +1336,15 @@ function onLdapToggle() {
         b.textContent = on ? 'Enabled' : 'Disabled';
         b.className = 'badge ' + (on ? 'badge-success' : 'badge-warning');
     }
+    setChip('ldap', on ? 'On' : 'Off', on ? 'on' : '');
+}
+
+// The port follows the encryption while it is still a standard one.
+function onLdapSec(changed) {
+    const sec = $('setLdapSec').value, port = $('setLdapPort');
+    if (changed && (['', '389', '636'].includes(port.value.trim()))) port.value = sec === 'ldaps' ? 636 : 389;
+    $('ldapTlsBox').classList.toggle('hidden', sec === 'none');
+    $('ldapCaBox').classList.toggle('hidden', sec === 'none' || !$('setLdapVerify').checked);
 }
 
 async function loadLdapSettings() {
@@ -1127,7 +1355,10 @@ async function loadLdapSettings() {
     $('setLdapEnabled').checked = !!d.enabled;
     $('setLdapServer').value = d.server || '';
     $('setLdapPort').value = d.port || 389;
-    $('setLdapSsl').value = d.use_ssl ? 'true' : 'false';
+    $('setLdapSec').value = ['none', 'starttls', 'ldaps'].includes(d.security) ? d.security : (d.use_ssl ? 'ldaps' : 'none');
+    $('setLdapVerify').checked = !!d.tls_verify;
+    $('setLdapCa').value = d.ca_pem || '';
+    onLdapSec(false);
     $('setLdapBaseDn').value = d.base_dn || '';
     $('setLdapBindDn').value = d.bind_dn || '';
     $('setLdapBindPw').value = '';
@@ -1143,7 +1374,10 @@ function ldapPayload() {
         enabled: $('setLdapEnabled').checked,
         server: $('setLdapServer').value.trim(),
         port: parseInt($('setLdapPort').value) || 389,
-        use_ssl: $('setLdapSsl').value === 'true',
+        security: $('setLdapSec').value,
+        use_ssl: $('setLdapSec').value === 'ldaps',
+        tls_verify: $('setLdapVerify').checked,
+        ca_pem: $('setLdapVerify').checked ? $('setLdapCa').value.trim() : '',
         base_dn: $('setLdapBaseDn').value.trim(),
         bind_dn: $('setLdapBindDn').value.trim(),
         bind_pw: $('setLdapBindPw').value,
@@ -1181,6 +1415,12 @@ async function testLdap() {
     const r = await getJSON('/api/ldap-test', { method: 'POST', body: JSON.stringify(ldapPayload()) });
     btn.disabled = false; btn.textContent = 'Test Connection';
     if (r.expired) return;
+    if (r.data && r.data.suggest) {          // the directory wants signing and StartTLS works
+        $('setLdapSec').value = r.data.suggest;
+        onLdapSec(false);
+        msg.innerHTML = `<span class="text-amber-300">⚠ ${escapeHtml(r.data.message)}</span>`;
+        return;
+    }
     msg.innerHTML = (r.ok && r.data.success)
         ? `<span class="text-green-400">✔ ${escapeHtml(r.data.message || 'OK')}</span>`
         : `<span class="text-red-400">✖ ${escapeHtml((r.data && r.data.message) || 'Failed')}</span>`;
@@ -1268,6 +1508,7 @@ async function loadAppliance() {
     const d = r.data;
     const tag = $('appVersionTag'); if (tag) tag.textContent = '· v' + d.version;
     const badge = $('swVersionBadge'); if (badge) badge.textContent = 'v' + d.version;
+    if (typeof setChip === 'function') setChip('software', 'v' + d.version);
     const blurb = $('swBlurb'), ctl = $('upgradeControls');
     if (!blurb || !ctl) return;
     if (d.appliance) {
@@ -2373,12 +2614,592 @@ const SEC_STATUS = {
 };
 const SEC_KIND_COLORS = { waf: '#f87171', bot: '#fb923c', brute_force: '#fbbf24', cookie_hijack: '#a78bfa', login_failed: '#60a5fa', lockout: '#f472b6' };
 
+// ===================================================================== Security sections
+const SEC_GROUPS = { policies: 'Gateway protection policies', settings: 'Gateway settings', platform: 'Management and platform' };
+const SEC_TITLES = { policies: 'Hardening policies', settings: 'Hardening settings', platform: 'Management and platform' };
+SEC.view = (() => { try { return localStorage.getItem('nsd.secView') || 'policies'; } catch (e) { return 'policies'; } })();
+
+function setSecView(view, quiet) {
+    const views = ['policies', 'settings', 'platform', 'activity', 'tls', 'review'];
+    if (!views.includes(view)) view = 'policies';
+    SEC.view = view;
+    try { localStorage.setItem('nsd.secView', view); } catch (e) { /* storage blocked */ }
+    document.querySelectorAll('#panel-security .sec-tab').forEach(b => {
+        const on = b.dataset.sview === view;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    const shown = SEC_GROUPS[view] ? 'checklist' : view;
+    document.querySelectorAll('#panel-security .sec-view').forEach(v => {
+        const on = v.dataset.sview === shown;
+        if (on && v.classList.contains('hidden')) { v.classList.remove('fade-in'); void v.offsetWidth; v.classList.add('fade-in'); }
+        v.classList.toggle('hidden', !on);
+    });
+    if (SEC_GROUPS[view] && SEC.data) renderChecklist();
+    if (view === 'activity') Object.values(SEC.charts || {}).forEach(ch => { try { ch.resize(); } catch (e) {} });
+    if (quiet) return;
+    if (view === 'tls' && TLS.for !== state.instance) loadTls();
+    if (view === 'review' && REV.for !== state.instance) loadReview();
+}
+
+const SEV_ORDER = ['critical', 'high', 'medium', 'low', 'info'];
+const SEV_LABEL = { critical: 'Critical', high: 'High', medium: 'Medium', low: 'Low', info: 'Info' };
+const KIND_LABEL = { gateway: 'Gateway', lb: 'Load balancing', cs: 'Content switching', aaa: 'Authentication', platform: 'Platform' };
+function gradeClass(g) { return g === 'A+' ? 'g-Aplus' : g === 'A-' ? 'g-Aminus' : (g && /^[A-FT]$/.test(g)) ? 'g-' + g : 'g-none'; }
+function gradeTile(g, size) { return `<span class="grade grade-${size || 'md'} ${gradeClass(g)}" aria-label="Grade ${escapeHtml(g || 'none')}">${escapeHtml(g || '–')}</span>`; }
+function sevPill(s) { return `<span class="sev sev-${s}">${SEV_LABEL[s] || s}</span>`; }
+function cmdBlock(lines, id) {
+    if (!lines || !lines.length) return '';
+    const text = lines.join('\n');
+    return `<div class="relative mt-2"><pre class="cmd-block font-mono text-[12px] leading-relaxed text-emerald-200 bg-slate-950/70 border border-slate-800 rounded-lg p-3 pr-16" id="${id}">${escapeHtml(text)}</pre>
+        <button type="button" class="absolute top-2 right-2 text-[11px] px-2 py-1 rounded-md bg-slate-800 border border-slate-700 text-slate-300 hover:text-white" onclick="copyText('${id}', this)">Copy</button></div>`;
+}
+async function copyText(id, btn) {
+    const el = $(id);
+    if (!el) return;
+    try { await navigator.clipboard.writeText(el.textContent); btn.textContent = 'Copied'; }
+    catch (e) {
+        const r = document.createRange(); r.selectNodeContents(el);
+        const sel = getSelection(); sel.removeAllRanges(); sel.addRange(r); btn.textContent = 'Selected';
+    }
+    setTimeout(() => { btn.textContent = 'Copy'; }, 1500);
+}
+
+// ===================================================================== TLS test
+const TLS = { for: null, targets: [], running: {}, sel: null, result: null, polls: {} };
+
+async function loadTls(fresh) {
+    TLS.for = state.instance;
+    $('tlsTargets').innerHTML = '<div class="text-slate-500 text-sm py-6 text-center">Reading the virtual servers…</div>';
+    const r = await getJSON(`/api/posture/tls/targets?${qs({ node: state.node, fresh: fresh ? '1' : '' })}`);
+    if (!r.ok) {
+        $('tlsTargets').innerHTML = `<div class="text-red-400 text-sm py-6 text-center">${escapeHtml(r.data.error || 'Could not be read.')}</div>`;
+        return;
+    }
+    TLS.targets = r.data.targets || [];
+    TLS.running = r.data.running || {};
+    Object.entries(TLS.running).forEach(([key, jid]) => pollTls(key, jid));
+    if (!TLS.targets.find(t => t.key === TLS.sel)) TLS.sel = (TLS.targets.find(t => t.kind === 'gateway') || TLS.targets[0] || {}).key || null;
+    renderTlsTargets();
+    if (TLS.sel) selectTls(TLS.sel);
+    else $('tlsMain').innerHTML = '<div class="text-slate-400 text-sm py-16 text-center">No SSL virtual server with an address on this appliance.</div>';
+}
+
+function renderTlsTargets() {
+    $('tlsTargets').innerHTML = TLS.targets.length ? TLS.targets.map(t => {
+        const run = TLS.running[t.key];
+        return `<button type="button" class="tls-target ${t.key === TLS.sel ? 'active' : ''}" onclick="selectTls('${escapeHtml(t.key)}')">
+            ${run ? '<span class="grade grade-sm g-none"><svg class="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path></svg></span>' : gradeTile(t.last?.grade, 'sm')}
+            <span class="min-w-0 flex-1">
+              <span class="block text-sm text-white font-medium truncate">${escapeHtml(t.name)}</span>
+              <span class="block text-[11px] text-slate-400 font-mono truncate">${escapeHtml(t.ip)}:${t.port} · ${escapeHtml(KIND_LABEL[t.kind] || t.kind)}</span>
+            </span>
+            <span class="text-[10px] text-slate-500 text-right shrink-0">${run ? 'testing…' : (t.last?.when ? escapeHtml(t.last.when.slice(5)) : 'not tested')}</span>
+          </button>`;
+    }).join('') : '<div class="text-slate-500 text-sm py-6 text-center">No SSL virtual server with an address.</div>';
+}
+
+async function selectTls(key) {
+    TLS.sel = key;
+    renderTlsTargets();
+    const t = TLS.targets.find(x => x.key === key);
+    if (!t) return;
+    TLS.result = null;
+    renderTlsMain(t);
+    if (t.last) {
+        const r = await getJSON(`/api/posture/tls/result?${qs({ key, node: state.node })}`);
+        if (r.ok && TLS.sel === key) { TLS.result = r.data; renderTlsMain(t); }
+    }
+}
+
+async function runTls() {
+    const t = TLS.targets.find(x => x.key === TLS.sel);
+    if (!t) return;
+    const sni = ($('tlsSni')?.value || '').trim();
+    t.sni = sni;
+    const r = await getJSON(`/api/posture/tls/scan?${qs({ node: state.node })}`, { method: 'POST', body: JSON.stringify({ key: t.key, sni }) });
+    if (!r.ok) { alert(r.data.error || 'The test could not start.'); return; }
+    TLS.running[t.key] = r.data.job;
+    renderTlsTargets();
+    renderTlsMain(t);
+    pollTls(t.key, r.data.job);
+}
+
+function pollTls(key, jid) {
+    if (TLS.polls[jid]) return;
+    TLS.polls[jid] = setInterval(async () => {
+        const r = await getJSON(`/api/posture/tls/job/${encodeURIComponent(jid)}`, { headers: { 'X-Idle-Refresh': '1' } });
+        if (r.ok && r.data.state === 'running') {
+            const el = $('tlsElapsed'); if (el && TLS.sel === key) el.textContent = `${Math.round(r.data.elapsed)} s`;
+            return;
+        }
+        clearInterval(TLS.polls[jid]); delete TLS.polls[jid];
+        delete TLS.running[key];
+        if (r.ok && r.data.state === 'failed') alert('The TLS test failed: ' + (r.data.error || 'unknown error'));
+        const keep = TLS.sel;
+        await loadTls();
+        if (keep) selectTls(keep);
+        if (REV.data) REV.for = null;            // the review shows the new grade next time
+    }, 2000);
+}
+
+function tlsMeter(label, v) {
+    const c = v >= 80 ? '#10b981' : v >= 50 ? '#f59e0b' : '#ef4444';
+    return `<div class="grid grid-cols-[8.5rem_1fr_2.5rem] items-center gap-3 text-sm"><span class="text-slate-300">${label}</span>
+        <div class="meter"><div style="width:${Math.max(2, v || 0)}%;background:${c}"></div></div><span class="text-right text-white font-semibold tabular-nums">${v ?? '–'}</span></div>`;
+}
+function yn(v, good) {
+    if (v === null || v === undefined) return '<span class="text-slate-500">n/a</span>';
+    const ok = good === undefined ? v : (v === good);
+    return `<span class="${ok ? 'yes' : 'no'} font-medium">${v === true ? 'Yes' : v === false ? 'No' : escapeHtml(String(v))}</span>`;
+}
+
+function renderTlsMain(t) {
+    const res = TLS.result, run = TLS.running[t.key];
+    const head = `<div class="flex flex-wrap items-end justify-between gap-4 mb-6 pb-5 border-b border-slate-700/60">
+        <div class="min-w-0">
+          <div class="text-[11px] uppercase tracking-wider text-slate-500">${escapeHtml(KIND_LABEL[t.kind] || t.kind)} virtual server</div>
+          <h2 class="text-xl font-semibold text-white truncate">${escapeHtml(t.name)}</h2>
+          <div class="text-xs text-slate-400 font-mono mt-0.5">${escapeHtml(t.ip)}:${t.port}${t.state ? ' · ' + escapeHtml(t.state) : ''}</div>
+        </div>
+        <div class="flex flex-wrap items-end gap-2">
+          <div><label for="tlsSni" class="block text-[11px] text-slate-400 mb-1">Host name (SNI) &mdash; optional</label>
+            <input id="tlsSni" type="text" value="${escapeHtml(t.sni || res?.target?.sni || '')}" placeholder="gateway.example.com" spellcheck="false" autocomplete="off" class="bg-slate-900 border border-slate-700 text-white text-sm rounded-lg py-2 px-3 w-64" onkeydown="if(event.key==='Enter')runTls()"></div>
+          <button onclick="runTls()" ${run ? 'disabled' : ''} class="bg-blue-600 hover:bg-blue-500 disabled:opacity-60 text-white text-sm px-5 py-2 rounded-lg font-medium">${run ? 'Testing… <span id="tlsElapsed"></span>' : (t.last ? 'Test again' : 'Run the test')}</button>
+          ${res ? '<button onclick="exportTls()" class="bg-red-700 hover:bg-red-600 text-white text-sm px-4 py-2 rounded-lg border border-red-600">PDF</button>' : ''}
+        </div>
+      </div>`;
+    if (run && !res) {
+        $('tlsMain').innerHTML = head + `<div class="py-12 text-center text-slate-400 text-sm">Testing every protocol and cipher suite &mdash; usually 20&ndash;60 seconds.</div>`;
+        return;
+    }
+    if (!res) {
+        $('tlsMain').innerHTML = head + `<div class="py-10 max-w-2xl mx-auto text-sm text-slate-400 space-y-3">
+            <p class="text-slate-300">Not tested yet. The test speaks TLS to <span class="font-mono">${escapeHtml(t.ip)}:${t.port}</span> the way SSL Labs does and grades it A+ to F:</p>
+            <ul class="list-disc pl-5 space-y-1"><li>every protocol from SSL 3.0 to TLS 1.3, and every cipher suite the server takes, in its order;</li>
+            <li>the certificate and its chain, whether the public CAs trust it and whether it covers the host name;</li>
+            <li>key exchange strength, secure renegotiation, compression, downgrade protection, OCSP stapling;</li>
+            <li>HSTS and the security headers on one HTTPS request.</li></ul>
+            <p>It only starts handshakes (about 50&ndash;300 connections) and sends one GET request; nothing is changed. Give the public host name for the certificate name check.</p></div>`;
+        return;
+    }
+    if (!res.reachable || res.grade === '-') {
+        $('tlsMain').innerHTML = head + `<div class="py-10 text-center"><div class="text-amber-300 font-medium">${escapeHtml(res.error || 'Not reachable')}</div>
+            <p class="text-xs text-slate-400 mt-2">The test runs from this dashboard: it needs to reach the virtual server&rsquo;s address on port ${t.port}.</p></div>`;
+        return;
+    }
+    const g = res.grade, s = res.score || {};
+    const when = res.started ? new Date(res.started * 1000).toLocaleString('en-GB', { timeZone: APP_TZ, hour12: false }) : '';
+    const caps = (res.caps || []).filter(c => c.grade);
+    const fsort = (res.findings || []);
+    const counts = SEV_ORDER.map(sv => [sv, fsort.filter(f => f.severity === sv).length]).filter(x => x[1]);
+    const summary = `<div class="grid grid-cols-1 lg:grid-cols-[auto_minmax(0,1fr)] gap-6 items-center mb-6">
+        <div class="flex items-center gap-4">${gradeTile(g, 'lg')}
+          <div><div class="text-sm text-white font-semibold">${g === 'T' ? 'Not trusted' : 'Overall rating'}</div>
+            ${res.grade_if_trusted ? `<div class="text-xs text-slate-300 mt-1">If the certificate were trusted: <b class="text-white">${escapeHtml(res.grade_if_trusted)}</b></div>` : ''}
+            <div class="text-[11px] text-slate-500 mt-1">${escapeHtml(when)} · ${res.duration ?? '?'} s · ${res.connections ?? '?'} connections${res.by ? ' · by ' + escapeHtml(res.by) : ''}</div>
+            <div class="flex flex-wrap gap-1 mt-2">${counts.map(([sv, n]) => `<span class="sev sev-${sv}">${n} ${SEV_LABEL[sv]}</span>`).join('')}</div></div></div>
+        <div class="space-y-2.5">${tlsMeter('Protocol support', s.protocol)}${tlsMeter('Key exchange', s.key_exchange)}${tlsMeter('Cipher strength', s.cipher)}
+          ${caps.length ? `<div class="text-[11px] text-slate-400 pt-1">Grade capped: ${caps.map(c => `<span class="text-slate-200">${escapeHtml(c.why)}</span> (${escapeHtml(c.grade)})`).join(' · ')}</div>` : ''}</div>
+      </div>`;
+    const findings = fsort.length ? `<h3 class="text-sm font-semibold text-white mb-2">Findings</h3><div class="space-y-2 mb-6">${fsort.map((f, i) => `
+        <div class="finding"><div class="flex flex-wrap items-center gap-2">${sevPill(f.severity)}<span class="text-white text-sm font-medium">${escapeHtml(f.title)}</span></div>
+          ${f.detail ? `<div class="text-xs text-slate-400 mt-1 break-words">${escapeHtml(f.detail)}</div>` : ''}
+          ${f.fix && f.fix.length ? `<details class="mt-1"><summary class="text-xs text-sky-300 cursor-pointer select-none">How to fix on the NetScaler</summary>${cmdBlock(f.fix, 'tlsfix' + i)}</details>` : ''}</div>`).join('')}</div>`
+        : '<div class="text-emerald-300 text-sm mb-6">No findings.</div>';
+    const c = res.cert || {}, tr = res.trust || {}, ft = res.features || {}, http = res.http || {}, hs = http.hsts || {};
+    const certCard = `<div class="kpi"><div class="text-xs uppercase tracking-wider text-slate-400 mb-3">Certificate</div>
+        <dl class="grid grid-cols-[7rem_1fr] gap-x-3 gap-y-1.5 text-xs">
+          <dt class="text-slate-500">Subject</dt><dd class="text-white break-all">${escapeHtml(c.subject || '—')}</dd>
+          <dt class="text-slate-500">Names</dt><dd class="text-slate-300 break-all">${escapeHtml((c.san || []).slice(0, 8).join(', ') || '—')}${(c.san || []).length > 8 ? ' …' : ''}</dd>
+          <dt class="text-slate-500">Issuer</dt><dd class="text-slate-300 break-all">${escapeHtml(c.issuer || '—')}</dd>
+          <dt class="text-slate-500">Valid until</dt><dd class="${(c.days_left ?? 99) < 30 ? 'no' : (c.days_left ?? 99) < 60 ? 'meh' : 'text-slate-300'}">${escapeHtml((c.not_after || '').slice(0, 10))} (${c.days_left ?? '?'} days)</dd>
+          <dt class="text-slate-500">Key</dt><dd class="text-slate-300">${escapeHtml((c.key || {}).type || '?')} ${(c.key || {}).bits || ''} bits${(c.key || {}).curve ? ' (' + escapeHtml(c.key.curve) + ')' : ''}</dd>
+          <dt class="text-slate-500">Signature</dt><dd class="${/sha1|md5/i.test(c.signature || '') ? 'no' : 'text-slate-300'}">${escapeHtml((c.signature || '').toUpperCase())}</dd>
+          <dt class="text-slate-500">Trusted</dt><dd>${yn(tr.trusted)}${tr.error ? ` <span class="text-slate-500">— ${escapeHtml(tr.error)}</span>` : ''}</dd>
+          <dt class="text-slate-500">Name matches</dt><dd>${c.name_ok === null || c.name_ok === undefined ? '<span class="text-slate-500">no host name given</span>' : yn(c.name_ok)}</dd>
+          <dt class="text-slate-500">Chain sent</dt><dd class="text-slate-300">${(res.chain || []).map(x => escapeHtml(x.subject)).join(' → ') || '—'}</dd>
+        </dl></div>`;
+    const protoCard = `<div class="kpi"><div class="text-xs uppercase tracking-wider text-slate-400 mb-3">Protocols</div>
+        <table class="text-sm w-auto"><tbody>${(res.protocols || []).map(p => {
+            const good = (p.name === 'TLS 1.2' || p.name === 'TLS 1.3') ? true : false;
+            return `<tr><td class="!p-1 !border-0 pr-6 text-slate-300">${escapeHtml(p.name)}</td><td class="!p-1 !border-0">${p.supported ? `<span class="${good ? 'yes' : 'no'} font-medium">Yes</span>` : `<span class="${good && p.name === 'TLS 1.2' ? 'no' : 'text-slate-500'}">No</span>`}</td></tr>`; }).join('')}</tbody></table></div>`;
+    const featCard = `<div class="kpi"><div class="text-xs uppercase tracking-wider text-slate-400 mb-3">Handshake</div>
+        <dl class="grid grid-cols-[11rem_1fr] gap-x-3 gap-y-1.5 text-xs">
+          <dt class="text-slate-500">Secure renegotiation</dt><dd>${yn(ft.secure_renegotiation, true)}</dd>
+          <dt class="text-slate-500">TLS compression (CRIME)</dt><dd>${yn(ft.compression, false)}</dd>
+          <dt class="text-slate-500">Downgrade protection</dt><dd>${ft.fallback_scsv === null || ft.fallback_scsv === undefined ? '<span class="text-slate-500">not needed (one protocol)</span>' : yn(ft.fallback_scsv, true)}</dd>
+          <dt class="text-slate-500">OCSP stapling</dt><dd>${yn(ft.ocsp_stapling, true)}</dd>
+          <dt class="text-slate-500">Session tickets</dt><dd class="text-slate-300">${ft.session_tickets ? 'Yes' : 'No'}</dd>
+          <dt class="text-slate-500">Extended master secret</dt><dd>${yn(ft.extended_master_secret, true)}</dd>
+          <dt class="text-slate-500">ALPN</dt><dd class="text-slate-300">${escapeHtml(ft.alpn || 'none')}</dd>
+          ${Object.entries(res.kx || {}).map(([k, v]) => `<dt class="text-slate-500">Key exchange ${escapeHtml(k)}</dt><dd class="text-slate-300">${v.curve ? 'ECDHE ' + escapeHtml(v.curve) : 'DH ' + v.dh_bits + ' bits'}</dd>`).join('')}
+        </dl></div>`;
+    const hdr = http.headers || {};
+    const httpCard = `<div class="kpi"><div class="text-xs uppercase tracking-wider text-slate-400 mb-3">HTTP</div>
+        ${http.error ? `<div class="text-xs text-amber-300">${escapeHtml(http.error)}</div>` : `
+        <dl class="grid grid-cols-[11rem_1fr] gap-x-3 gap-y-1.5 text-xs">
+          <dt class="text-slate-500">Answer</dt><dd class="text-slate-300 break-all">${escapeHtml(http.status || '—')}</dd>
+          <dt class="text-slate-500">HSTS</dt><dd>${hs.present ? `<span class="${(hs.max_age || 0) >= 15552000 ? 'yes' : 'meh'} font-medium">max-age ${hs.max_age}</span>${hs.include_subdomains ? ' · subdomains' : ''}${hs.preload ? ' · preload' : ''}` : '<span class="no font-medium">No</span>'}</dd>
+          ${['content-security-policy', 'x-frame-options', 'x-content-type-options', 'referrer-policy'].map(h => `<dt class="text-slate-500">${escapeHtml(h)}</dt><dd class="${hdr[h] ? 'text-slate-300' : 'text-slate-500'} break-all">${escapeHtml(hdr[h] ? hdr[h].slice(0, 90) : 'not sent')}</dd>`).join('')}
+          ${hdr.location ? `<dt class="text-slate-500">Redirects to</dt><dd class="text-slate-300 break-all">${escapeHtml(hdr.location)}</dd>` : ''}
+        </dl>`}</div>`;
+    const suites = Object.entries(res.ciphers || {}).map(([p, list]) => `
+        <div class="mb-4"><div class="text-xs text-slate-300 font-semibold mb-1">${escapeHtml(p)} <span class="text-slate-500 font-normal">· ${list.length} suites${res.server_order?.[p] === true ? ' · server order' : res.server_order?.[p] === false ? ' · client order' : ''}</span></div>
+          <div class="table-container"><table><thead><tr><th>Suite</th><th class="text-right">Bits</th><th>Key exchange</th><th>Forward secrecy</th><th>AEAD</th><th>Rating</th></tr></thead><tbody>
+          ${list.map(x => `<tr><td class="!py-1.5 font-mono text-xs text-white">${escapeHtml(x.name)} <span class="text-slate-500">${escapeHtml(x.code)}</span></td><td class="!py-1.5 text-right text-xs">${x.bits}</td><td class="!py-1.5 text-xs">${escapeHtml(x.kx)}</td>
+            <td class="!py-1.5 text-xs">${x.fs ? '<span class="yes">Yes</span>' : '<span class="no">No</span>'}</td><td class="!py-1.5 text-xs">${x.aead ? '<span class="yes">Yes</span>' : '<span class="meh">No</span>'}</td>
+            <td class="!py-1.5 text-xs"><span class="${x.strength === 'strong' ? 'yes' : x.strength === 'weak' ? 'meh' : 'no'} font-medium">${x.strength === 'strong' ? 'Strong' : x.strength === 'weak' ? 'Weak' : 'Insecure'}</span></td></tr>`).join('')}
+          </tbody></table></div></div>`).join('');
+    $('tlsMain').innerHTML = head + summary + findings
+        + `<div class="grid grid-cols-1 2xl:grid-cols-2 gap-4 mb-6">${certCard}${featCard}${protoCard}${httpCard}</div>`
+        + `<h3 class="text-sm font-semibold text-white mb-2">Cipher suites</h3>${suites || '<div class="text-slate-500 text-sm">None.</div>'}`
+        + `<p class="text-[11px] text-slate-500 mt-4">Rated with the structure of the SSL Labs rating guide (protocol 30%, key exchange 30%, cipher strength 40%, then caps). It is this dashboard&rsquo;s own test, not an SSL Labs result.</p>`;
+}
+
+// jsPDF's built-in font has no glyphs beyond Latin-1
+function pdfText(s) {
+    return String(s ?? '').replace(/[‘’]/g, "'").replace(/[“”]/g, '"').replace(/[–—]/g, '-')
+        .replace(/…/g, '...').replace(/→/g, '->').replace(/≥/g, '>=').replace(/≤/g, '<=').replace(/·/g, '-')
+        .replace(/[^\x00-\xFF]/g, '?');
+}
+const PDF_GRADE = { 'A+': [5, 150, 105], A: [5, 150, 105], 'A-': [101, 163, 13], B: [217, 119, 6], C: [234, 88, 12], D: [220, 38, 38], E: [220, 38, 38], F: [220, 38, 38], T: [220, 38, 38] };
+const PDF_SEV = { critical: [220, 38, 38], high: [234, 88, 12], medium: [202, 138, 4], low: [37, 99, 235], info: [100, 116, 139] };
+function pdfFooter(doc, title) {
+    const n = doc.internal.getNumberOfPages(), w = doc.internal.pageSize.getWidth(), h = doc.internal.pageSize.getHeight();
+    for (let i = 1; i <= n; i++) {
+        doc.setPage(i);
+        doc.setFontSize(7); doc.setTextColor(120);
+        doc.text(pdfText(title), 14, h - 7);
+        doc.text(`Page ${i} of ${n}`, w - 14, h - 7, { align: 'right' });
+    }
+}
+function pdfGrade(doc, g, x, y, size) {
+    doc.setFillColor(...(PDF_GRADE[g] || [71, 85, 105]));
+    doc.roundedRect(x, y, size, size, 3, 3, 'F');
+    doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(size * 1.25);
+    doc.text(pdfText(g || '-'), x + size / 2, y + size * 0.68, { align: 'center' });
+    doc.setFont('helvetica', 'normal');
+}
+
+function exportTls() {
+    const res = TLS.result, t = TLS.targets.find(x => x.key === TLS.sel);
+    if (!res || !t) return;
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    doc.setFontSize(16); doc.setTextColor(15, 23, 42); doc.text('TLS test report', 14, 18);
+    doc.setFontSize(9); doc.setTextColor(90);
+    const inst = (state.instances || []).find(x => x.id === state.instance) || {};
+    doc.text(pdfText(`${inst.name || ''}  |  ${t.name}  ${t.ip}:${t.port}${res.target?.sni ? '  |  ' + res.target.sni : ''}`), 14, 24);
+    doc.text(pdfText(`Tested ${new Date(res.started * 1000).toLocaleString('en-GB', { timeZone: APP_TZ, hour12: false })}  |  ${res.connections} connections in ${res.duration} s`), 14, 29);
+    pdfGrade(doc, res.grade, 14, 34, 22);
+    doc.setTextColor(30); doc.setFontSize(10);
+    const s = res.score || {};
+    doc.text(pdfText(`Protocol support ${s.protocol}   Key exchange ${s.key_exchange}   Cipher strength ${s.cipher}`), 42, 41);
+    if (res.grade_if_trusted) doc.text(pdfText(`If the certificate were trusted: ${res.grade_if_trusted}`), 42, 47);
+    const caps = (res.caps || []).map(c => `${c.why} (${c.grade})`).join(', ');
+    if (caps) { doc.setFontSize(8); doc.setTextColor(90); doc.text(doc.splitTextToSize(pdfText('Capped: ' + caps), 150), 42, 53); }
+    doc.autoTable({ startY: 62, head: [['Severity', 'Finding', 'Detail', 'Fix (NetScaler CLI)']],
+        body: (res.findings || []).map(f => [{ content: SEV_LABEL[f.severity] || f.severity, _sev: f.severity }, pdfText(f.title), pdfText(f.detail), pdfText((f.fix || []).join('\n'))]),
+        styles: { fontSize: 7.5, cellPadding: 1.6, overflow: 'linebreak', valign: 'top' }, headStyles: { fillColor: [15, 23, 42] },
+        columnStyles: { 0: { cellWidth: 18, fontStyle: 'bold' }, 1: { cellWidth: 45 }, 3: { font: 'courier', fontSize: 6.5, cellWidth: 62 } },
+        didParseCell: h => { const sv = h.section === 'body' && h.cell.raw && h.cell.raw._sev; if (sv) h.cell.styles.textColor = PDF_SEV[sv]; } });
+    const c = res.cert || {};
+    doc.autoTable({ startY: doc.lastAutoTable.finalY + 6, head: [['Certificate', '']], theme: 'grid',
+        body: [['Subject', c.subject], ['Names', (c.san || []).join(', ')], ['Issuer', c.issuer], ['Valid until', `${(c.not_after || '').slice(0, 10)} (${c.days_left} days)`],
+               ['Key', `${(c.key || {}).type} ${(c.key || {}).bits} bits`], ['Signature', c.signature], ['Trusted', res.trust?.trusted ? 'Yes' : `No - ${res.trust?.error || ''}`]].map(r => r.map(pdfText)),
+        styles: { fontSize: 7.5, cellPadding: 1.4 }, headStyles: { fillColor: [51, 65, 85] }, columnStyles: { 0: { cellWidth: 30, fontStyle: 'bold' } } });
+    doc.autoTable({ startY: doc.lastAutoTable.finalY + 6, head: [['Protocol', 'Supported']], body: (res.protocols || []).map(p => [p.name, p.supported ? 'Yes' : 'No']),
+        styles: { fontSize: 7.5, cellPadding: 1.4 }, headStyles: { fillColor: [51, 65, 85] }, tableWidth: 70 });
+    Object.entries(res.ciphers || {}).forEach(([p, list]) => {
+        doc.autoTable({ startY: doc.lastAutoTable.finalY + 5, head: [[`${p} cipher suites`, 'Bits', 'FS', 'AEAD', 'Rating']],
+            body: list.map(x => [x.name, x.bits, x.fs ? 'Yes' : 'No', x.aead ? 'Yes' : 'No', x.strength]),
+            styles: { fontSize: 7, cellPadding: 1.2 }, headStyles: { fillColor: [51, 65, 85] }, columnStyles: { 0: { font: 'courier' } } });
+    });
+    pdfFooter(doc, `TLS test - ${t.name} - NetScaler Dashboard`);
+    doc.save(`TLS_Test_${t.name.replace(/[^A-Za-z0-9._-]+/g, '_')}_${new Date().toISOString().slice(0, 10)}.pdf`);
+}
+
+// ===================================================================== Security review
+const REV = { for: null, data: null, open: {} };
+
+async function loadReview(fresh) {
+    REV.for = state.instance;
+    if (!REV.data) $('revHead').innerHTML = '<div class="text-slate-500 text-sm py-10 text-center">Reading the virtual servers, certificates and policies…</div>';
+    const r = await getJSON(`/api/posture/review?${qs({ node: state.node, fresh: fresh ? '1' : '' })}`);
+    if (!r.ok) {
+        $('revHead').innerHTML = `<div class="text-red-400 text-sm py-10 text-center">${escapeHtml(r.data.error || 'The review could not be built.')}</div>`;
+        return;
+    }
+    REV.data = r.data;
+    renderReview();
+}
+
+function revSummaryText(d) {
+    const s = d.summary, c = d.counts, inst = d.meta.instance || 'this appliance';
+    const web = d.apps.filter(a => a.protocol === 'HTTP' || a.protocol === 'SSL').length;
+    const expiring = d.apps.filter(a => a.tls && a.tls.cert_days !== null && a.tls.cert_days < 60).length;
+    const parts = [];
+    parts.push(`${s.apps} application${s.apps === 1 ? '' : 's'} on ${inst} were reviewed (${s.internet} internet-facing). The overall posture is ${d.grade} (${d.score}/100) and the risk is rated ${d.risk.toLowerCase()}.`);
+    if (c.critical || c.high) parts.push(`${c.critical} critical and ${c.high} high finding${c.critical + c.high === 1 ? '' : 's'} need attention${d.top.length ? '; the most urgent: ' + d.top.slice(0, 2).map(f => `“${f.title}” (${f.app})`).join(' and ') : ''}.`);
+    else parts.push('No critical or high finding is open.');
+    if (web) parts.push(`${s.waf} of ${web} web application${web === 1 ? '' : 's'} ${s.waf === 1 ? 'has' : 'have'} a Web App Firewall policy.`);
+    if (expiring) parts.push(`${expiring} application${expiring === 1 ? '' : 's'} ${expiring === 1 ? 'has a certificate' : 'have certificates'} that expire${expiring === 1 ? 's' : ''} within 60 days or already expired.`);
+    if (d.meta.checklist) parts.push(`The Gateway and platform hardening checklist has ${d.meta.checklist.done} of ${d.meta.checklist.of} items in place.`);
+    if (d.accepted) parts.push(`${d.accepted} finding${d.accepted === 1 ? ' is' : 's are'} accepted as a risk and not counted.`);
+    return parts.join(' ');
+}
+
+function renderReview() {
+    const d = REV.data;
+    const when = d.meta.generated ? new Date(d.meta.generated).toLocaleString('en-GB', { timeZone: APP_TZ, hour12: false }) : '';
+    $('revMeta').textContent = `${d.meta.instance || ''} · node ${d.meta.node_ip || ''}${d.meta.version ? ' · NetScaler ' + d.meta.version : ''} · ${when}`;
+    const riskCls = { Critical: 'sev-critical', High: 'sev-high', Moderate: 'sev-medium', Low: 'sev-low' }[d.risk] || 'sev-info';
+    const errs = Object.keys(d.meta.read_errors || {});
+    $('revHead').innerHTML = `
+      <div class="grid grid-cols-1 lg:grid-cols-[auto_minmax(0,1fr)] gap-8 items-center">
+        <div class="flex items-center gap-5">${gradeTile(d.grade, 'lg')}
+          <div><div class="text-3xl font-bold text-white tabular-nums">${d.score}<span class="text-base text-slate-500 font-normal"> / 100</span></div>
+            <div class="mt-1 flex items-center gap-2 text-xs text-slate-400">Risk <span class="sev ${riskCls}">${escapeHtml(d.risk)}</span></div></div></div>
+        <div class="grid grid-cols-2 sm:grid-cols-5 gap-3">
+          ${SEV_ORDER.slice(0, 4).map(sv => `<div class="kpi"><div class="text-[11px] uppercase tracking-wider text-slate-400">${SEV_LABEL[sv]}</div><div class="text-2xl font-bold tabular-nums mt-1 ${d.counts[sv] ? ({ critical: 'text-red-400', high: 'text-orange-400', medium: 'text-amber-300', low: 'text-blue-300' })[sv] : 'text-slate-500'}">${d.counts[sv]}</div></div>`).join('')}
+          <div class="kpi"><div class="text-[11px] uppercase tracking-wider text-slate-400">Applications</div><div class="text-2xl font-bold text-white tabular-nums mt-1">${d.summary.apps}</div><div class="text-[11px] text-slate-500">${d.summary.internet} internet-facing</div></div>
+        </div>
+      </div>
+      <p class="text-sm text-slate-300 leading-relaxed mt-6 max-w-5xl">${escapeHtml(revSummaryText(d))}</p>
+      ${errs.length ? `<p class="text-xs text-amber-300 mt-3">Not read: ${escapeHtml(errs.join(', '))} &mdash; the findings that need them are missing (the NetScaler user may lack the rights).</p>` : ''}`;
+    // fix first
+    $('revTop').innerHTML = d.top.length ? d.top.map((f, i) => revFinding(f, 'top' + i, true)).join('')
+        : '<div class="text-emerald-300 text-sm">Nothing critical, high or medium is open.</div>';
+    // by category
+    const cats = Object.entries(d.by_category || {});
+    const maxN = Math.max(1, ...cats.map(([, v]) => SEV_ORDER.reduce((n, s) => n + (v[s] || 0), 0)));
+    $('revCats').innerHTML = cats.length ? cats.sort((a, b) => SEV_ORDER.reduce((n, s, i) => n + (b[1][s] || 0) * (10 ** (4 - i)), 0) - SEV_ORDER.reduce((n, s, i) => n + (a[1][s] || 0) * (10 ** (4 - i)), 0)).map(([cat, v]) => {
+        const total = SEV_ORDER.reduce((n, s) => n + (v[s] || 0), 0);
+        return `<div><div class="flex justify-between text-xs mb-1"><span class="text-slate-300">${escapeHtml(cat)}</span><span class="text-slate-400 tabular-nums">${total}</span></div>
+          <div class="flex h-2.5 rounded-full overflow-hidden bg-slate-800" style="width:${Math.max(8, total * 100 / maxN)}%">${SEV_ORDER.slice(0, 4).map(s => v[s] ? `<div title="${v[s]} ${SEV_LABEL[s]}" style="flex:${v[s]};background:rgb(${PDF_SEV[s].join(',')})"></div>` : '').join('')}</div></div>`;
+    }).join('') : '<div class="text-emerald-300 text-sm">No open findings.</div>';
+    const gr = d.summary.graded, gmax = Math.max(1, ...Object.values(gr));
+    $('revGrades').innerHTML = 'ABCDF'.split('').map(g => `<div class="flex-1 flex flex-col items-center justify-end gap-1 h-full">
+        <span class="text-xs text-slate-300 tabular-nums">${gr[g]}</span>
+        <div class="w-full rounded-t-md ${gradeClass(g)}" style="height:${gr[g] ? Math.max(8, gr[g] * 70 / gmax) : 2}%;opacity:${gr[g] ? 1 : .25}"></div>
+        <span class="text-xs font-semibold text-slate-400">${g}</span></div>`).join('');
+    renderReviewApps();
+    const p = d.platform;
+    $('revPlatScore').innerHTML = `${gradeTile(p.grade, 'sm')} <span class="ml-1 align-middle">${p.score}/100${d.meta.checklist ? ` · checklist ${d.meta.checklist.done} of ${d.meta.checklist.of} in place` : ''}</span>`;
+    $('revPlatform').innerHTML = p.findings.length ? p.findings.map((f, i) => revFinding(f, 'plat' + i)).join('')
+        : '<div class="text-emerald-300 text-sm">Everything on the checklist is in place or marked.</div>';
+}
+
+function revFinding(f, id, showApp) {
+    const acc = f.accepted;
+    return `<div class="finding ${acc ? 'accepted' : ''}" id="rf-${id}">
+        <div class="flex flex-wrap items-center gap-2">${sevPill(f.severity)}
+          <span class="text-white text-sm font-medium">${escapeHtml(f.title)}</span>
+          ${showApp ? `<span class="text-[11px] text-slate-400 font-mono">${escapeHtml(f.app)}</span>${f.exposure === 'internet' ? '<span class="text-[10px] text-sky-300 border border-sky-500/30 rounded px-1">internet</span>' : ''}` : ''}
+          <span class="text-[11px] text-slate-500">${escapeHtml(f.category)}</span>
+          <span class="ml-auto">${acc ? `<button class="mark-btn" onclick="acceptFinding('${id}', false)">Undo accept</button>` : `<button class="mark-btn" onclick="showAccept('${id}')">Accept risk</button>`}</span>
+        </div>
+        ${f.detail ? `<div class="text-xs text-slate-400 mt-1 break-words">${escapeHtml(f.detail)}</div>` : ''}
+        ${(f.evidence || []).length && f.rule.startsWith('checklist.') ? `<div class="text-[11px] text-slate-500 mt-1 break-words">${escapeHtml(f.evidence.join(' · '))}</div>` : ''}
+        ${f.impact || f.recommendation ? `<div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2 text-xs">
+          ${f.impact ? `<div><span class="text-slate-500">Impact </span><span class="text-slate-300">${escapeHtml(f.impact)}</span></div>` : ''}
+          ${f.recommendation ? `<div><span class="text-slate-500">Recommendation </span><span class="text-slate-300">${escapeHtml(f.recommendation)}</span></div>` : ''}</div>` : ''}
+        ${(f.fix || []).length ? `<details class="mt-1"><summary class="text-xs text-sky-300 cursor-pointer select-none">Commands</summary>${cmdBlock(f.fix, 'rfx-' + id)}</details>` : ''}
+        ${acc ? `<div class="text-[11px] text-slate-400 mt-2">Accepted by ${escapeHtml(acc.by || '?')} ${acc.at ? 'on ' + escapeHtml(formatILTime(acc.at)) : ''}${acc.note ? ': ' + escapeHtml(acc.note) : ''}</div>` : ''}
+        <div id="ra-${id}" class="hidden mt-2 flex flex-wrap gap-2 items-center">
+          <input id="ran-${id}" type="text" maxlength="500" placeholder="Why it is accepted (e.g. internal only, compensating control)" class="flex-1 min-w-[14rem] bg-slate-900 border border-slate-700 text-white text-xs rounded-lg py-1.5 px-2" onkeydown="if(event.key==='Enter')acceptFinding('${id}', true)">
+          <button class="mark-btn on-done" onclick="acceptFinding('${id}', true)">Accept</button><button class="mark-btn" onclick="$('ra-${id}').classList.add('hidden')">Cancel</button>
+        </div>
+      </div>`;
+}
+
+function revFindingById(id) {
+    const d = REV.data;
+    if (id.startsWith('top')) return d.top[+id.slice(3)];
+    if (id.startsWith('plat')) return d.platform.findings[+id.slice(4)];
+    const m = id.match(/^a(\d+)f(\d+)$/);
+    return m ? d.apps[+m[1]].findings[+m[2]] : null;
+}
+function showAccept(id) { $('ra-' + id).classList.remove('hidden'); $('ran-' + id).focus(); }
+async function acceptFinding(id, on) {
+    const f = revFindingById(id);
+    if (!f) return;
+    const note = on ? ($('ran-' + id)?.value || '').trim() : '';
+    const r = await getJSON('/api/posture/mark', { method: 'POST', body: JSON.stringify({ key: f.key, accept: on, note }) });
+    if (!r.ok) { alert(r.data.error || 'Could not be saved.'); return; }
+    loadReview();
+}
+async function setExposure(key, value) {
+    const r = await getJSON('/api/posture/mark', { method: 'POST', body: JSON.stringify({ app: key, exposure: value }) });
+    if (!r.ok) { alert(r.data.error || 'Could not be saved.'); return; }
+    loadReview();
+}
+
+function renderReviewApps() {
+    const d = REV.data;
+    if (!d) return;
+    const q = ($('revQ').value || '').toLowerCase(), kind = $('revKind').value, sev = $('revSev').value;
+    const worst = { critical: ['critical'], high: ['critical', 'high'], medium: ['critical', 'high', 'medium'] }[sev];
+    const rows = d.apps.map((a, i) => [a, i]).filter(([a]) => (!q || a.name.toLowerCase().includes(q) || String(a.vip).includes(q))
+        && (!kind || a.kind === kind) && (!worst || worst.some(s => a.counts[s])));
+    $('revApps').innerHTML = rows.length ? rows.map(([a, i]) => {
+        const key = `${a.kind}:${a.name}`, open = !!REV.open[key];
+        const n = SEV_ORDER.slice(0, 4).filter(s => a.counts[s]).map(s => `<span class="sev sev-${s}">${a.counts[s]}</span>`).join(' ');
+        const tls = a.tls ? `<span class="text-xs">${escapeHtml(a.tls.protocols.map(p => p.replace('TLS ', '')).join(' · ') || 'none')}</span>${a.tls.cert_days !== null ? `<span class="block text-[11px] ${a.tls.cert_days < 30 ? 'no' : a.tls.cert_days < 60 ? 'meh' : 'text-slate-500'}">cert ${a.tls.cert_days < 0 ? 'expired' : a.tls.cert_days + ' days'}</span>` : ''}`
+            : (a.protocol === 'HTTP' ? '<span class="no text-xs font-medium">Plain HTTP</span>' : '<span class="text-slate-500 text-xs">—</span>');
+        return `<tr class="cursor-pointer hover:bg-white/5" onclick="toggleRevApp('${escapeHtml(key)}')">
+            <td><svg class="w-4 h-4 transition-transform text-slate-400" style="${open ? 'transform:rotate(90deg)' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"></path></svg></td>
+            <td>${gradeTile(a.grade, 'sm')}<span class="text-[11px] text-slate-500 ml-1.5 tabular-nums">${a.score}</span></td>
+            <td class="text-white font-medium">${escapeHtml(a.name)}${a.behind && a.behind.length ? `<span class="block text-[11px] text-slate-500 font-normal">→ ${escapeHtml(a.behind.slice(0, 3).join(', '))}${a.behind.length > 3 ? ' …' : ''}</span>` : ''}</td>
+            <td class="text-xs">${escapeHtml(KIND_LABEL[a.kind] || a.kind)}</td>
+            <td class="font-mono text-xs text-blue-300">${escapeHtml(a.vip)}:${a.port} <span class="text-slate-500">${escapeHtml(a.protocol || '')}</span></td>
+            <td onclick="event.stopPropagation()"><select class="bg-slate-800 border border-slate-700 text-xs rounded-md py-1 px-1.5 ${a.exposure === 'internet' ? 'text-sky-300' : 'text-slate-300'}" onchange="setExposure('${escapeHtml(key)}', this.value)" aria-label="Exposure of ${escapeHtml(a.name)}">
+                <option value="internet" ${a.exposure === 'internet' ? 'selected' : ''}>Internet-facing</option><option value="internal" ${a.exposure === 'internal' ? 'selected' : ''}>Internal</option>
+                ${a.exposure_set ? '<option value="">(guess again)</option>' : ''}</select>${a.exposure_set ? '' : '<span class="block text-[10px] text-slate-500">guessed</span>'}</td>
+            <td>${tls}</td>
+            <td>${a.protocol === 'HTTP' || a.protocol === 'SSL' ? (a.waf ? '<span class="yes text-xs font-medium">Yes</span>' : '<span class="no text-xs font-medium">No</span>') : '<span class="text-slate-500 text-xs">—</span>'}</td>
+            <td>${a.scan ? `${gradeTile(a.scan.grade, 'sm')}<span class="block text-[10px] text-slate-500">${escapeHtml((a.scan.when || '').slice(5))}</span>` : (a.tls ? `<button class="text-[11px] text-sky-300 hover:underline" onclick="event.stopPropagation();openTlsFor('${escapeHtml(key)}')">Test</button>` : '<span class="text-slate-500 text-xs">—</span>')}</td>
+            <td class="text-right whitespace-nowrap">${n || '<span class="yes text-xs">none</span>'}</td>
+          </tr>
+          <tr class="${open ? '' : 'hidden'}"><td colspan="10" class="bg-slate-900/50 !p-4"><div class="space-y-2">${a.findings.length ? a.findings.map((f, j) => revFinding(f, `a${i}f${j}`)).join('') : '<div class="text-emerald-300 text-sm">No findings.</div>'}</div></td></tr>`;
+    }).join('') : '<tr><td colspan="10" class="text-center py-8 text-slate-500">No application matches.</td></tr>';
+}
+function toggleRevApp(key) { REV.open[key] = !REV.open[key]; renderReviewApps(); }
+function openTlsFor(key) { TLS.sel = key; setSecView('tls'); if (TLS.for === state.instance) selectTls(key); }
+
+function revRows(d) {
+    const rows = [];
+    d.apps.forEach(a => a.findings.forEach(f => rows.push(f)));
+    d.platform.findings.forEach(f => rows.push(f));
+    return rows;
+}
+
+function exportReview(kind) {
+    const d = REV.data;
+    if (!d) { alert('The review has not been built yet.'); return; }
+    const stamp = new Date().toISOString().slice(0, 10);
+    const name = `Security_Review_${(d.meta.instance || 'NetScaler').replace(/[^A-Za-z0-9._-]+/g, '_')}_${stamp}`;
+    const findings = revRows(d);
+    if (kind === 'xlsx') {
+        const wb = XLSX.utils.book_new();
+        const sum = [['Security review'], ['Instance', d.meta.instance], ['Node', d.meta.node_ip], ['NetScaler', d.meta.version],
+            ['Generated', d.meta.generated], ['Grade', d.grade], ['Score', d.score], ['Risk', d.risk], [],
+            ['Critical', d.counts.critical], ['High', d.counts.high], ['Medium', d.counts.medium], ['Low', d.counts.low], ['Info', d.counts.info],
+            ['Accepted risks', d.accepted], [], ['Summary', revSummaryText(d)]];
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(sum), 'Summary');
+        const apps = [['Grade', 'Score', 'Application', 'Type', 'Address', 'Protocol', 'Exposure', 'TLS versions', 'Certificate days', 'WAF', 'TLS test', 'Critical', 'High', 'Medium', 'Low']]
+            .concat(d.apps.map(a => [a.grade, a.score, a.name, KIND_LABEL[a.kind], `${a.vip}:${a.port}`, a.protocol, a.exposure,
+                a.tls ? a.tls.protocols.join(', ') : '', a.tls ? a.tls.cert_days : '', a.waf ? 'Yes' : 'No', a.scan ? a.scan.grade : '',
+                a.counts.critical, a.counts.high, a.counts.medium, a.counts.low]));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(apps), 'Applications');
+        const fx = [['Severity', 'Application', 'Area', 'Finding', 'Detail', 'Impact', 'Recommendation', 'Commands', 'Accepted', 'Accepted by', 'Note']]
+            .concat(findings.map(f => [SEV_LABEL[f.severity], f.app, f.category, f.title, f.detail, f.impact, f.recommendation, (f.fix || []).join('\n'),
+                f.accepted ? 'Yes' : '', f.accepted?.by || '', f.accepted?.note || '']));
+        XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(fx), 'Findings');
+        XLSX.writeFile(wb, name + '.xlsx');
+        return;
+    }
+    const { jsPDF } = window.jspdf;
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+    const W = doc.internal.pageSize.getWidth();
+    // ---- cover / executive summary
+    doc.setFillColor(15, 23, 42); doc.rect(0, 0, W, 38, 'F');
+    doc.setTextColor(255); doc.setFontSize(20); doc.setFont('helvetica', 'bold');
+    doc.text('Security posture report', 14, 18);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(203, 213, 225);
+    doc.text(pdfText(`${d.meta.instance || ''}  |  ${d.meta.vendor || 'NetScaler'} ${d.meta.version || ''}  |  node ${d.meta.node_ip || ''}`), 14, 26);
+    doc.text(pdfText(`Generated ${new Date(d.meta.generated).toLocaleString('en-GB', { timeZone: APP_TZ, hour12: false })}`), 14, 32);
+    pdfGrade(doc, d.grade, 14, 46, 28);
+    doc.setTextColor(15, 23, 42); doc.setFontSize(22); doc.setFont('helvetica', 'bold');
+    doc.text(`${d.score} / 100`, 48, 58);
+    doc.setFontSize(11); doc.setFont('helvetica', 'normal');
+    doc.setTextColor(...({ Critical: PDF_SEV.critical, High: PDF_SEV.high, Moderate: PDF_SEV.medium, Low: PDF_SEV.low })[d.risk] || [60, 60, 60]);
+    doc.text(pdfText(`Risk: ${d.risk}`), 48, 66);
+    doc.setTextColor(60);
+    doc.text(pdfText(`${d.summary.apps} applications, ${d.summary.internet} internet-facing  |  ${d.accepted} accepted risks`), 48, 72);
+    // severity boxes
+    let x = 14;
+    SEV_ORDER.forEach(sv => {
+        doc.setFillColor(...PDF_SEV[sv]); doc.roundedRect(x, 82, 34, 18, 2, 2, 'F');
+        doc.setTextColor(255); doc.setFontSize(15); doc.setFont('helvetica', 'bold'); doc.text(String(d.counts[sv]), x + 17, 91, { align: 'center' });
+        doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); doc.text(SEV_LABEL[sv].toUpperCase(), x + 17, 97, { align: 'center' });
+        x += 37;
+    });
+    doc.setTextColor(15, 23, 42); doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text('Executive summary', 14, 112);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(40);
+    const summ = doc.splitTextToSize(pdfText(revSummaryText(d)), W - 28);
+    doc.text(summ, 14, 119);
+    let y = 119 + summ.length * 4.6 + 6;
+    doc.setTextColor(15, 23, 42); doc.setFontSize(12); doc.setFont('helvetica', 'bold'); doc.text('Fix first', 14, y);
+    doc.setFont('helvetica', 'normal');
+    doc.autoTable({ startY: y + 3, head: [['#', 'Severity', 'Finding', 'Application', 'Recommendation']],
+        body: d.top.map((f, i) => [i + 1, { content: SEV_LABEL[f.severity], _sev: f.severity }, pdfText(f.title), pdfText(f.app + (f.exposure === 'internet' ? ' (internet)' : '')), pdfText(f.recommendation)]),
+        styles: { fontSize: 8, cellPadding: 1.8, overflow: 'linebreak', valign: 'top' }, headStyles: { fillColor: [15, 23, 42] },
+        columnStyles: { 0: { cellWidth: 7 }, 1: { cellWidth: 18, fontStyle: 'bold' }, 2: { cellWidth: 55 }, 3: { cellWidth: 38 } },
+        didParseCell: h => { const sv = h.section === 'body' && h.cell.raw && h.cell.raw._sev; if (sv) h.cell.styles.textColor = PDF_SEV[sv]; } });
+    const cats = Object.entries(d.by_category || {});
+    if (cats.length) {
+        doc.autoTable({ startY: doc.lastAutoTable.finalY + 6, head: [['Area', 'Critical', 'High', 'Medium', 'Low']],
+            body: cats.map(([c, v]) => [pdfText(c), v.critical, v.high, v.medium, v.low]),
+            styles: { fontSize: 8, cellPadding: 1.6, halign: 'center' }, columnStyles: { 0: { halign: 'left', cellWidth: 60 } }, headStyles: { fillColor: [51, 65, 85] } });
+    }
+    // ---- applications
+    doc.addPage();
+    doc.setTextColor(15, 23, 42); doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.text('Applications', 14, 18); doc.setFont('helvetica', 'normal');
+    doc.autoTable({ startY: 22, head: [['Grade', 'Application', 'Type', 'Address', 'Exposure', 'TLS', 'WAF', 'Test', 'C', 'H', 'M', 'L']],
+        body: d.apps.map(a => [{ content: a.grade, _grade: a.grade }, pdfText(a.name), pdfText(KIND_LABEL[a.kind]), pdfText(`${a.vip}:${a.port} ${a.protocol}`), a.exposure === 'internet' ? 'Internet' : 'Internal',
+            a.tls ? pdfText(a.tls.protocols.join(', ') + (a.tls.cert_days !== null ? `; cert ${a.tls.cert_days} d` : '')) : (a.protocol === 'HTTP' ? 'Plain HTTP' : '-'),
+            (a.protocol === 'HTTP' || a.protocol === 'SSL') ? (a.waf ? 'Yes' : 'No') : '-', a.scan ? a.scan.grade : '-',
+            a.counts.critical, a.counts.high, a.counts.medium, a.counts.low]),
+        styles: { fontSize: 7.5, cellPadding: 1.5, overflow: 'linebreak', valign: 'middle' }, headStyles: { fillColor: [15, 23, 42] },
+        columnStyles: { 0: { cellWidth: 12, halign: 'center', fontStyle: 'bold' }, 1: { cellWidth: 36 }, 8: { halign: 'center' }, 9: { halign: 'center' }, 10: { halign: 'center' }, 11: { halign: 'center' } },
+        didParseCell: h => { const g = h.section === 'body' && h.cell.raw && h.cell.raw._grade; if (g) { h.cell.styles.fillColor = PDF_GRADE[g] || [71, 85, 105]; h.cell.styles.textColor = 255; } } });
+    // ---- findings in detail
+    const detail = (title, list) => {
+        if (!list.length) return;
+        doc.addPage();
+        doc.setTextColor(15, 23, 42); doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.text(pdfText(title), 14, 18); doc.setFont('helvetica', 'normal');
+        doc.autoTable({ startY: 22, head: [['Severity', 'Finding', 'Impact and recommendation', 'Commands']],
+            body: list.map(f => [{ content: SEV_LABEL[f.severity] + (f.accepted ? '\n(accepted)' : ''), _sev: f.severity },
+                pdfText(`${f.title}\n${f.app} - ${f.category}${f.detail ? '\n' + f.detail : ''}`),
+                pdfText([f.impact, f.recommendation].filter(Boolean).join('\n\n') + (f.accepted ? `\n\nAccepted by ${f.accepted.by}${f.accepted.note ? ': ' + f.accepted.note : ''}` : '')),
+                pdfText((f.fix || []).join('\n'))]),
+            styles: { fontSize: 7.2, cellPadding: 1.6, overflow: 'linebreak', valign: 'top' }, headStyles: { fillColor: [15, 23, 42] },
+            columnStyles: { 0: { cellWidth: 17, fontStyle: 'bold' }, 1: { cellWidth: 52 }, 2: { cellWidth: 55 }, 3: { font: 'courier', fontSize: 6.2 } },
+            didParseCell: h => { const sv = h.section === 'body' && h.cell.raw && h.cell.raw._sev; if (sv) h.cell.styles.textColor = PDF_SEV[sv]; } });
+    };
+    const sevRank = f => SEV_ORDER.indexOf(f.severity) + (f.accepted ? 10 : 0);
+    detail('Findings by application', d.apps.flatMap(a => a.findings).filter(f => f.severity !== 'info').sort((a, b) => sevRank(a) - sevRank(b)));
+    detail('Gateway hardening and management plane', d.platform.findings.slice().sort((a, b) => sevRank(a) - sevRank(b)));
+    // ---- method
+    doc.addPage();
+    doc.setTextColor(15, 23, 42); doc.setFontSize(14); doc.setFont('helvetica', 'bold'); doc.text('How this report is scored', 14, 18);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(40);
+    const method = [
+        'Every load balancing, content switching, Gateway and authentication virtual server with an address is one application. Its configuration is read from the appliance (read-only): TLS versions, cipher suites, certificates, HSTS, the Web App Firewall, bot and rewrite policies that apply to it, its HTTP profile and its back end.',
+        'Each application starts at 100 and loses 40 points per critical, 20 per high, 8 per medium and 3 per low finding (info findings cost nothing). A: 90 and above, B: 75, C: 60, D: 40, F below 40; an open critical finding caps the grade at D.',
+        'Severities depend on exposure: a weakness on an internet-facing application rates higher than the same on an internal one. Exposure is guessed from the address (the Gateway always counts as internet-facing) and can be set per application.',
+        'The Gateway hardening and management plane findings come from the hardening checklist; items marked Done or Not relevant there are not counted.',
+        'The overall score averages the applications and the platform, internet-facing applications and the platform counting twice. Findings accepted as a risk are listed but not counted.',
+        'A TLS test, where one was run, connects to the virtual server like SSL Labs and grades the answer A+ to F; a grade below A- adds a finding.',
+    ];
+    let my = 26;
+    method.forEach(p => { const l = doc.splitTextToSize(pdfText(p), W - 28); doc.text(l, 14, my); my += l.length * 4.4 + 3; });
+    pdfFooter(doc, `Security posture report - ${d.meta.instance || ''} - NetScaler Dashboard - confidential`);
+    doc.save(name + '.pdf');
+}
+
+
 function secMd(text) {   // `code` in the notes
     return escapeHtml(text).replace(/`([^`]+)`/g, '<code class="font-mono text-[12px] text-sky-300 bg-slate-950/60 px-1 rounded">$1</code>');
 }
 function secDone(c) { return c.mark?.state === 'done' || (c.status === 'configured' && c.mark?.state !== 'irrelevant'); }
 
 async function loadSecurity(fresh) {
+    setSecView(SEC.view, true);
+    if (SEC.view === 'tls' && TLS.for !== state.instance) loadTls();
+    if (SEC.view === 'review') loadReview(fresh);
     const r = await getJSON(`/api/security/checklist?${qs({ node: state.node, fresh: fresh ? '1' : '' })}`);
     if (!r.ok) {
         $('secChecklist').innerHTML = `<div class="text-red-400 text-sm py-6 text-center">${escapeHtml(r.data.error || 'The checklist could not be read.')}</div>`;
@@ -2401,17 +3222,17 @@ function renderChecklist() {
     const done = relevant.filter(secDone).length;
     $('secScoreText').textContent = `${done} of ${relevant.length}`;
     $('secScoreBar').style.width = relevant.length ? `${Math.round(done * 100 / relevant.length)}%` : '0%';
-    const groups = [];
-    d.checks.forEach((c, i) => {
-        let g = groups.find(x => x.name === c.group);
-        if (!g) groups.push(g = { name: c.group, items: [] });
-        g.items.push([c, i]);
+    Object.entries(SEC_GROUPS).forEach(([v, g]) => {
+        const items = d.checks.filter(c => c.group === g && c.mark?.state !== 'irrelevant');
+        const n = items.filter(secDone).length, el = $('secCount-' + v);
+        if (el) { el.textContent = `${n}/${items.length}`; el.classList.toggle('full', !!items.length && n === items.length); }
     });
-    $('secChecklist').innerHTML = groups.map(g => `
-        <div>
-          <div class="text-xs uppercase tracking-wider text-slate-500 mb-2">${escapeHtml(g.name)}</div>
-          <div class="grid grid-cols-1 xl:grid-cols-2 gap-2">${g.items.map(([c, i]) => secRow(c, i)).join('')}</div>
-        </div>`).join('');
+    const view = SEC_GROUPS[SEC.view] ? SEC.view : 'policies';
+    $('secListTitle').textContent = SEC_TITLES[view];
+    const items = d.checks.map((c, i) => [c, i]).filter(([c]) => c.group === SEC_GROUPS[view]);
+    $('secChecklist').innerHTML = items.length
+        ? `<div class="grid grid-cols-1 xl:grid-cols-2 gap-2">${items.map(([c, i]) => secRow(c, i)).join('')}</div>`
+        : '<div class="text-slate-500 text-sm py-6 text-center">Nothing in this section.</div>';
 }
 
 function secRow(c, i) {

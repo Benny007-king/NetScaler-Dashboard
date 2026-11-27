@@ -36,14 +36,16 @@ Both are attached to every [GitHub Release](https://github.com/Benny007-king/Net
 - **Dual-Stack** runtime: auto-detect Next-Gen per node, fall back to NITRO. Detection is explainable — the capability line shows *why* a node is on NITRO — and **re-runs automatically** every `API_DETECT_INTERVAL_SECS` (default 600s), so enabling Next-Gen on an appliance, or a node that was unreachable at boot, is picked up without a restart. `GET /api/nextgen-debug` reports the version, which management paths answer and the real login error; `NEXTGEN_BASE_PATH` overrides the path.
 - **Honest health colours**: service/application states render `UP` green, `DOWN` red, and `OUT OF SERVICE` / `PARTIAL-UP` / `DISABLED` / `UNKNOWN` amber.
 - **HTTPS on 443** with a cert signed by a **local CA** generated on first boot. Install the CA for warning-free HTTPS, upload your own PEM cert/key, or generate a CSR for your corporate CA — all from **Settings → TLS Certificate**.
-- **Authentication**: local admin account and/or **LDAP/Active Directory** (`AUTH_BACKENDS=local,ldap`), with optional allowed-group enforcement.
+- **Authentication**: local admin account and/or **LDAP/Active Directory** (`AUTH_BACKENDS=local,ldap`) over plain LDAP, **StartTLS** or **LDAPS** (with optional certificate verification), with optional allowed-group enforcement.
 - **Applications / Services**: one search box over both tables (name, IP, port, type, state) and a state filter; shows Next-Gen Applications when a node has them, and falls back to classic **LB vServers** otherwise; **Services and Service Groups** are listed with their real runtime state (`UP` / `DOWN` / `OUT OF SERVICE` / `PARTIAL-UP`) and bound-member counts.
 - **Tabs follow the live primary**: Applications, Failover, Sessions, Security, Certificates and Unlock User open on the node currently holding the PRIMARY role, so they track a failover automatically.
 - **Failover details**: click a failover event to open it. It shows which address became what (`192.0.2.11 Secondary → Primary`, `192.0.2.10 Primary → Unknown`), **why** - an administrator's `force ha failover` / `set ha node -hastatus` / `reboot` with the user, address and GUI/CLI/API (from the appliance's CMD_EXECUTED lines), a forced change, a health failure (partial failure with the interface, complete failure, SSL card, route monitor, restart), **heartbeats lost** (the node stopped answering, or the link between the nodes failed while both still answer), both nodes primary - and both nodes **before and after**: role, health, HA status, how the peer saw it, whether the dashboard could reach it, heartbeats received, sync, interfaces, time in the role, the HA settings and the appliance's log lines around it. Both nodes are read every `HA_POLL_SECS` (15 s) in the background, so a failover is recorded with the state it happened in even when nobody has the dashboard open. See [Failover tab](#failover-tab).
 - **Failover History & User Sessions**: date-range filters with a pop-up picker (a session is shown when it overlaps the range); **Excel/PDF** export (client-side). The Sessions tab is about **Gateway / AAA end users** only - management logins and system accounts never appear. Live sessions come from NITRO `aaasession` (one row per user, address and virtual server; the Gateway named from its virtual server address; group, intranet IP, destinations) and the live ICA connections (application server by name, TCP or EDT). The Gateway's own log lines - received by [syslog](#security-tab) or read from the audit log - add the real **login and logout time**, duration and **why it ended** (logoff, idle timeout, forced logoff), the Gateway and AAA **session ids**, the **client type** (ICA proxy, clientless, full VPN), **OS** and **Workspace app or browser** (from the login audit policy on the Security tab), the Gateway FQDN, user agent, bytes, and each **published application** with its server, start and end. Sessions that ended before the dashboard saw them appear from their log lines. **Failed sign-ins** (status `Failed`, attempt time, source IP, failure reason) and **locked accounts** (`Locked`) are kept for the retention period. `GET /api/session-debug` dumps per-node reachability and the raw (redacted) NITRO session and audit fields.
 - **SDX**: an instance in `sdx` mode points at the SDX **Management Service** (NITRO v2, read-only) and shows the platform, its hardware health (power supplies, fans, temperatures, voltages, interfaces, disks), the platform license, and every NetScaler (VPX) instance on it with state, role, version, load and allocation. An instance that is also added to the dashboard opens from there, and its own overview says which SDX it runs on.
 - **License & Capacity**: edition, license type (LAS fixed bandwidth, LAS online, pooled, local file, vCPU), capacity, expiry date and grace period - amber within 30 days or in grace, red within 7 days - also flagged on the All Instances card.
-- **Security tab**: a hardening checklist for the Gateway (36 items) - login audit logging, brute-force rate limiter, session cookie hijack prevention, IP reputation, EPA Referer check, SAML hardening, built-in WAF protection for Auth/VPN/Portal, CSP header, HttpOnly cookies, cookie version 1, enhanced TCP ISN generation, secure-only management, syslog to the dashboard - each detected on the node, markable **Done** / **Not relevant**, with an explanation and the commands for the node's version, exportable to Excel or PDF with the marks. Below it, the **activity**: WAF violations and policy hits over time, the hit counters of the checklist's policies, top source addresses and URLs, and every event with all its fields. See [Security tab](#security-tab).
+- **Security tab**: a hardening checklist for the Gateway (36 items) - login audit logging, brute-force rate limiter, session cookie hijack prevention, IP reputation, EPA Referer check, SAML hardening, built-in WAF protection for Auth/VPN/Portal, CSP header, HttpOnly cookies, cookie version 1, enhanced TCP ISN generation, secure-only management, syslog to the dashboard - each detected on the node, markable **Done** / **Not relevant**, with an explanation and the commands for the node's version, exportable to Excel or PDF with the marks. The tab is in sections, one at a time: hardening policies, hardening settings, management & platform, the **activity** (WAF violations and policy hits over time, the hit counters of the checklist's policies, top source addresses and URLs, and every event with all its fields), the **TLS test** and the **security review**. See [Security tab](#security-tab).
+- **TLS test**: an SSL Labs style test of any SSL virtual server - protocols, every cipher suite, certificate and trust, key exchange, renegotiation, downgrade protection, OCSP stapling, HSTS and headers - graded A+ to F with the NetScaler commands for every finding. See [TLS test](#tls-test).
+- **Security review**: a CISO-level report over every LB, content switching, Gateway and authentication virtual server plus the Gateway and management plane - a grade and risk level for the estate and each application, an executive summary, what to fix first, impact, recommendation and commands per finding, exposure and accepted risks; PDF and Excel. See [Security review](#security-review).
 - **Unlock Users**: unlock a locked AAA user (NITRO, with automatic `?action=unlock` fallback).
 - **External database (optional)**: keep session and failover history, plus a copy of the settings, in your own **PostgreSQL, MySQL / MariaDB or Microsoft SQL Server** — set up in **Settings → Database**. The dashboard keeps working when that database is unreachable and catches up by itself when it returns.
 
@@ -58,6 +60,12 @@ netscaler-dashboard/
 ├── db.py                      # History + settings store: built-in SQLite or an external database
 ├── security.py                # Security tab: checklist detection, log-line parsing, syslog receiver
 ├── security_catalog.py        # The checklist entries: explanation, commands, how each is detected
+├── posture/                   # TLS test and security review
+│   ├── tls_scan.py            #   SSL Labs style test of one address (vendor-neutral)
+│   ├── review.py              #   rules, scoring and the report over applications (vendor-neutral)
+│   └── netscaler.py           #   NITRO -> applications, and the CLI that fixes a finding
+├── tests/test_tls_scan.py     # The TLS test against local TLS servers
+├── tests/test_posture.py      # The security review and the TLS test API against tests/fake_netscaler.py
 ├── tests/test_security.py     # Checklist, log lines, syslog, sessions - against tests/fake_netscaler.py
 ├── tests/test_platform.py     # License & Capacity, SDX - against the same stand-ins
 ├── tests/test_storage.py      # Storage tests, run against real database servers
@@ -162,7 +170,7 @@ Copy `.env.example` → `.env`. Notable keys: `APP_PORT` (default `443`), `APP_S
 - Default local admin is `admin` / `admin`; you are forced to change it on first login.
 - Reset it by deleting `auth_config.json` and restarting (on the appliance: console menu → *Reset the web admin password*).
 - The password is stored in `auth_config.json` only as a salted scrypt hash. A hash written by 1.16.0 or earlier (unsalted SHA-256) still signs in and is replaced on the first successful sign-in.
-- **LDAP/AD is configured in the UI** — open **Settings → LDAP / Active Directory**, enable it, fill in server / base DN / bind account / user attribute (and optional allowed-group DN), and use **Test Connection** before saving. Settings persist to `ldap_config.json` (gitignored). The `LDAP_*` env vars in `.env` act as initial defaults. The local admin account always works regardless.
+- **LDAP/AD is configured in the UI** — open **Settings → LDAP / Active Directory**, enable it, fill in server / base DN / bind account / user attribute (and optional allowed-group DN), choose the **Encryption** (None, **StartTLS** on 389 or **LDAPS** on 636; optionally verify the domain controller's certificate against the public CAs or a CA you paste), and use **Test Connection** before saving. Active Directory with *LDAP server signing requirements = Require signing* refuses a plain bind with `strongerAuthRequired`: choose StartTLS or LDAPS (the domain controller needs a certificate). Test Connection notices this, tries StartTLS on the same port and selects it when it works. Settings persist to `ldap_config.json` (gitignored). The `LDAP_*` env vars in `.env` act as initial defaults. The local admin account always works regardless.
 
 ### Session timeout
 
@@ -244,6 +252,34 @@ The commands come from the appliance's log, so the reason names a user only when
 
 Events are kept like the other history: `RETENTION_DAYS`, at most `SECURITY_MAX_EVENTS` (default 200,000), in the external database when one is connected.
 
+### TLS test
+
+**Security → TLS test** lists the SSL virtual servers of the selected appliance that have an address (Gateway first). **Run the test** connects from the dashboard to that address - nothing else can be tested, and nothing is changed: it starts TLS handshakes (about 50-300 connections, 20-60 seconds) and sends one `GET /`.
+
+- **Protocols** SSL 3.0 to TLS 1.3 and **every cipher suite** the server takes, in the order it picks them (server or client preference). The handshakes are built byte by byte, so SSL 3.0, export and RC4 suites are tested even though the dashboard's own OpenSSL no longer speaks them.
+- **Certificate**: subject, names, issuer, validity, key, signature, the chain as sent, trust by the public CAs (certifi) and whether it covers the host name given for SNI (default: the bound certificate's name).
+- **Handshake**: ECDHE curve and DH size, secure renegotiation, TLS compression (CRIME), downgrade protection (TLS_FALLBACK_SCSV), OCSP stapling, session tickets, extended master secret, ALPN.
+- **HTTP**: HSTS (max-age, subdomains, preload) and the security headers of the answer.
+
+The grade follows the structure of the SSL Labs rating guide - protocol support 30%, key exchange 30%, cipher strength 40%, then caps (SSL 3.0 or RC4 -> C, TLS 1.0 / 1.1 -> B, 3DES -> C, no forward secrecy -> B, export or NULL suites -> F, ...); **A+** needs HSTS of at least 180 days and nothing medium or worse; **T** means not trusted, with the grade it would have otherwise. It is the dashboard's own test, not an SSL Labs result. Every finding carries the NetScaler commands for that virtual server (its SSL profile when one applies). The last result per virtual server is kept in `tls_tests.json`; **PDF** exports it.
+
+### Security review
+
+**Security → Security review** reads every load balancing, content switching, Gateway and authentication virtual server with an address (read-only NITRO, cached 45 s) and rates it:
+
+| Area | What is checked |
+|---|---|
+| Encryption | plain HTTP without a redirect to HTTPS, SSL 3.0 / TLS 1.0 / 1.1 on, TLS 1.3 off, weak cipher suites (RC4, DES/3DES, export, NULL, MD5) or the DEFAULT group, HSTS, a clear-text back end behind TLS, the last TLS test's grade |
+| Certificates | expired or expiring (30 / 60 days), RSA under 2048 bits, SHA-1 / MD5 signature, self-signed, none bound |
+| Web protection | Web App Firewall policy (bound, global, or on every server behind a content switch), bot management (internet-facing), security headers added |
+| Protocol hygiene | the HTTP profile drops invalid requests, marks HTTP/0.9 and CONNECT invalid |
+| Availability | the virtual server or back-end services down (information only) |
+| Gateway hardening, Management plane | the hardening checklist's open items (not those the per-application rules already cover, and not those marked Done or Not relevant) |
+
+Each finding has a severity (critical, high, medium, low, info), the impact, the recommendation and the commands. Severities follow **exposure**: the Gateway counts as internet-facing, other servers by their address - set it per application. An application starts at 100 and loses 40 / 20 / 8 / 3 points per critical / high / medium / low finding (A >= 90, B >= 75, C >= 60, D >= 40, else F; an open critical caps it at D). The estate's score averages the applications and the platform, internet-facing applications and the platform counting twice. A finding can be **accepted as a risk** with a note: it stays in the report, marked, and is not counted. Exposure and accepted risks are kept per instance in `security_review.json` (copied to an external database). **CISO report (PDF)** - cover with the grade, risk and severity counts, executive summary, fix first, findings by area, the applications, every finding with impact, recommendation and commands, and how the score is made - and **Excel** (summary, applications, findings).
+
+**Other vendors.** The scanner (`posture/tls_scan.py`), the rules and the scoring (`posture/review.py`) are vendor-neutral and work on *applications* (a virtual server with its TLS settings, certificates, policies, back end). `posture/netscaler.py` reads NITRO into applications and supplies the NetScaler commands; an F5 BIG-IP or Avi adapter only has to do the same.
+
 ### External database
 
 **Settings → Database** connects the dashboard to a database server of your own. Supported: **PostgreSQL**, **MySQL / MariaDB** and **Microsoft SQL Server**, entered as server / port / database / user / password or as one connection URL.
@@ -254,7 +290,7 @@ What goes into it:
 |---|---|---|
 | Session history | `nsd_sessions` | one row per session, same retention as the built-in store |
 | Failover history | `nsd_failover_events` | one row per HA change; `detail` holds both nodes before and after (JSON) |
-| A copy of the settings | `nsd_settings` | instances (**including NetScaler passwords**), the admin login (hash), LDAP settings, last HA state |
+| A copy of the settings | `nsd_settings` | instances (**including NetScaler passwords**), the admin login (hash), LDAP settings, last HA state, checklist marks, security review marks |
 
 Not stored there: the TLS certificate and its CA, the session secret, and the database connection itself — those belong to one appliance.
 
@@ -376,6 +412,10 @@ python app.py            # serves HTTPS on :443 by default
 - `POST /api/security/mark` — `{ "id": "epa_referer", "state": "done" | "irrelevant" | "" }`
 - `GET  /api/security/activity?range=1h|24h|7d` — counts, charts, policy hit counters, syslog receiver state
 - `GET  /api/security/events?range=...&kind=...&q=...` — the events, newest first
+- `GET  /api/posture/review?node=...` — the security review (`fresh=1` reads the appliance again)
+- `POST /api/posture/mark` — `{ "app": "lb:Web_LB", "exposure": "internet" | "internal" | "" }` or `{ "key": "<finding key>", "accept": true, "note": "..." }`
+- `GET  /api/posture/tls/targets` — SSL virtual servers that can be tested, with their last result
+- `POST /api/posture/tls/scan` — `{ "key": "gateway:GW_VS", "sni": "gw.example.com" }`, returns a job · `GET /api/posture/tls/job/<id>` · `GET /api/posture/tls/result?key=...`
 - `POST /api/unlock-user` — `{ "node": "primary", "username": "user1" }`
 - `GET/POST /api/settings` — read/update nodes + mode
 - `GET  /api/database` — where data is stored, connection state, row counts
@@ -433,6 +473,8 @@ This runs the app with `APP_SSL=0`, `APP_PORT=8080`, `TRUST_PROXY=1` (so it hono
 - **No failover/sessions:** check the selected date range; empty windows are normal.
 - **TLS warning in browser:** expected with the default self-signed cert; upload a trusted cert from Settings.
 - **Cluster shows no nodes:** confirm `primary` points at the CLIP and NITRO is reachable there. The members are read at their own NSIPs with the same account - the dashboard must reach those addresses too.
+- **LDAP: `strongerAuthRequired` (or `confidentialityRequired`):** the directory requires signing or encryption - set Encryption to StartTLS or LDAPS in Settings → LDAP. The domain controller needs a certificate; with *Verify* on, paste the CA that signed it.
+- **TLS test says the address cannot be reached:** the test runs from the dashboard; it needs a route to the virtual server's address and port.
 - **CPU shows "—":** the appliance has no CPU reading at that moment (NetScaler reports 4294967295 then, typically right after a role change); it comes back by itself.
 
 ---

@@ -77,5 +77,39 @@ check(member(PlainFinder(), [], ""), True, "no allowed group configured: every d
 print("-- Active Directory (tokenGroups)")
 check(member(ADFinder([b"SID-RIGHT"]), [], RIGHT), True, "user's token holds the allowed group's SID")
 check(member(ADFinder([b"SID-OTHER"]), [], RIGHT), False, "user's token holds only the same-named group in another OU")
+print("-- connection security (1.27.0)")
+import json  # noqa: E402
+
+
+def stored(doc):
+    with open(app.LDAP_CONFIG_FILE, "w", encoding="utf-8") as f:
+        json.dump(doc, f)
+    return app.load_ldap_config()
+
+
+def same(got, want, what):
+    global bad
+    ok = got == want
+    bad += not ok
+    print("   %s  %s%s" % ("ok   " if ok else "FAIL ", what, "" if ok else " (got %r)" % (got,)))
+
+
+same(stored({"server": "dc1", "use_ssl": True})["security"], "ldaps", "a config from before 1.27.0 with SSL on is LDAPS")
+same(stored({"server": "dc1", "use_ssl": False})["security"], "none", "... with SSL off is no encryption")
+same(stored({"server": "dc1", "use_ssl": False, "security": "starttls"})["security"], "starttls", "StartTLS is kept")
+same(stored({"server": "dc1", "security": "bogus", "use_ssl": True})["security"], "ldaps", "an unknown mode falls back to use_ssl")
+same(app._ldap_from_body({"security": "starttls"}), {"security": "starttls", "use_ssl": False}, "body: StartTLS is not LDAPS")
+same(app._ldap_from_body({"use_ssl": True})["security"], "ldaps", "body from an older page: use_ssl alone")
+try:
+    app._ldap_from_body({"ca_pem": "not a certificate"})
+    refused = False
+except ValueError:
+    refused = True
+same(refused, True, "a CA that is not PEM is refused")
+msg = app._ldap_result_text({"description": "strongerAuthRequired", "message": "00002028: LdapErr: DSID-0C090259"})
+same("StartTLS" in msg and "LDAPS" in msg and msg.startswith("strongerAuthRequired"), True,
+     "AD's strongerAuthRequired says what to change")
+same("not trusted" in app._ldap_error_text(Exception("[SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed")), True,
+     "an untrusted DC certificate is named")
 print("\n%s" % ("all LDAP group checks passed" if not bad else "%d FAILED" % bad))
 sys.exit(1 if bad else 0)
